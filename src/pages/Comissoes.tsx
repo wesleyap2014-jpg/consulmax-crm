@@ -1,36 +1,145 @@
 // src/pages/Comissoes.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, RefreshCcw, Settings, FileText, PlusCircle, DollarSign, ShieldCheck } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Loader2,
+  Filter as FilterIcon,
+  Settings,
+  Save,
+  DollarSign,
+  FileText,
+  PlusCircle,
+  RotateCcw,
+  Pencil,
+  Eye,
+} from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+/* ========================= Tipos ========================= */
 type UUID = string;
-type AnyRow = Record<string, any>;
 
-type User = AnyRow & {
+type User = {
   id: UUID;
-  auth_user_id: UUID;
-  nome: string;
-  email?: string | null;
-  role?: string | null;
-  user_role?: string | null;
+  auth_user_id?: UUID | null;
+  nome: string | null;
+  email: string | null;
+  phone?: string | null;
+  cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  pix_key?: string | null;
+  pix_type?: string | null;
+  login?: string | null;
+  role?: "admin" | "vendedor" | string | null;
   scopes?: string[] | null;
+  avatar_url?: string | null;
+  pix_kind?: string | null;
   is_active?: boolean | null;
   unit_id?: UUID | null;
   hierarchy_level?: "usuario" | "gestor_filial" | string | null;
-  pix_key?: string | null;
-  pix_type?: string | null;
 };
 
-type Unit = AnyRow & {
+type UserSecure = {
+  id: UUID;
+  nome: string | null;
+  email: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  pix_key: string | null;
+  cpf: string | null;
+  cpf_mascarado: string | null;
+};
+
+type SimTable = {
+  id: UUID;
+  segmento: string;
+  nome_tabela: string;
+  admin_id?: UUID | null;
+};
+
+type Venda = {
+  id: UUID;
+  data_venda: string;
+  vendedor_id: UUID;
+  segmento: string | null;
+  tabela: string | null;
+  administradora: string | null;
+  valor_venda: number | null;
+  numero_proposta?: string | null;
+  cliente_lead_id?: string | null;
+  lead_id?: string | null;
+  encarteirada_em?: string | null;
+  codigo?: string | null;
+  cancelada_em?: string | null;
+};
+
+type Commission = {
+  id: UUID;
+  venda_id: UUID;
+  vendedor_id: UUID;
+  sim_table_id: UUID | null;
+  data_venda: string | null;
+  segmento: string | null;
+  tabela: string | null;
+  administradora: string | null;
+  valor_venda: number | null;
+  base_calculo: number | null;
+  percent_aplicado: number | null;
+  valor_total: number | null;
+  status: "a_pagar" | "pago" | "estorno";
+  data_pagamento: string | null;
+  recibo_url: string | null;
+  comprovante_url: string | null;
+  cliente_nome?: string | null;
+  numero_proposta?: string | null;
+  venda_cancelada?: boolean;
+  venda_codigo?: string | null;
+  venda_cancelada_em?: string | null;
+};
+
+type CommissionFlow = {
+  id: UUID;
+  commission_id: UUID;
+  mes: number;
+  percentual: number;
+  valor_previsto: number | null;
+  valor_recebido_admin: number | null;
+  data_recebimento_admin: string | null;
+  valor_pago_vendedor: number | null;
+  data_pagamento_vendedor: string | null;
+  recibo_vendedor_url: string | null;
+  comprovante_pagto_url: string | null;
+};
+
+type CommissionWithFlow = Commission & {
+  flow?: CommissionFlow[];
+};
+
+type CommissionRule = {
+  vendedor_id: string;
+  sim_table_id: string;
+  percent_padrao: number;
+  fluxo_meses: number;
+  fluxo_percentuais: number[];
+  obs: string | null;
+};
+
+type Unit = {
   id: UUID;
   nome: string;
   tipo: "matriz" | "filial" | string;
@@ -40,70 +149,11 @@ type Unit = AnyRow & {
   manager_user_id?: UUID | null;
 };
 
-type SimTable = AnyRow & {
+type CommissionTableRule = {
   id: UUID;
-  admin_id?: UUID | null;
-  administradora?: string | null;
-  segmento?: string | null;
-  nome_tabela?: string | null;
-  name?: string | null;
-};
-
-type Venda = AnyRow & {
-  id: UUID;
-  data_venda?: string | null;
-  vendedor_id?: UUID | null;
-  segmento?: string | null;
-  tabela?: string | null;
-  administradora?: string | null;
-  valor_venda?: number | null;
-  numero_proposta?: string | null;
-  lead_id?: UUID | null;
-  cliente_lead_id?: UUID | null;
-  grupo?: string | null;
-  cota?: string | null;
-  codigo?: string | null;
-  cancelada_em?: string | null;
-  encarteirada_em?: string | null;
-  status?: string | null;
-};
-
-type Lead = { id: UUID; nome?: string | null; name?: string | null };
-
-type LegacyCommission = AnyRow & {
-  id: UUID;
-  venda_id: UUID;
-  vendedor_id: UUID;
-  sim_table_id?: UUID | null;
-  data_venda?: string | null;
-  segmento?: string | null;
-  tabela?: string | null;
-  administradora?: string | null;
-  valor_venda?: number | null;
-  base_calculo?: number | null;
-  percent_aplicado?: number | null;
-  valor_total?: number | null;
-  status?: string | null;
-  data_pagamento?: string | null;
-  cliente_nome?: string | null;
-  numero_proposta?: string | null;
-};
-
-type LegacyFlow = AnyRow & {
-  id: UUID;
-  commission_id: UUID;
-  mes: number;
-  percentual: number;
-  valor_previsto?: number | null;
-  valor_pago_vendedor?: number | null;
-  data_pagamento_vendedor?: string | null;
-};
-
-type TableRule = AnyRow & {
-  id: UUID;
-  sim_table_id?: UUID | null;
-  administradora?: string | null;
-  segmento?: string | null;
+  sim_table_id: UUID | null;
+  administradora: string | null;
+  segmento: string | null;
   nome_tabela: string;
   percent_total: number;
   fluxo_meses: number;
@@ -111,48 +161,48 @@ type TableRule = AnyRow & {
   is_active: boolean;
 };
 
-type SplitRule = AnyRow & {
+type CommissionSplitRule = {
   id: UUID;
   table_rule_id: UUID;
-  business_unit_id?: UUID | null;
+  business_unit_id: UUID | null;
   recipient_type: "vendedor" | "unidade" | "empresa" | "gestor" | "indicador" | "outro";
-  recipient_user_id?: UUID | null;
-  recipient_unit_id?: UUID | null;
+  recipient_user_id: UUID | null;
+  recipient_unit_id: UUID | null;
   split_percent: number;
   is_active: boolean;
 };
 
-type Batch = AnyRow & {
+type CommissionBatch = {
   id: UUID;
   venda_id: UUID;
-  sim_table_id?: UUID | null;
-  table_rule_id?: UUID | null;
-  business_unit_id?: UUID | null;
+  sim_table_id: UUID | null;
+  table_rule_id: UUID | null;
+  business_unit_id: UUID | null;
   vendedor_id: UUID;
-  data_venda?: string | null;
+  data_venda: string | null;
   valor_venda: number;
   percent_total: number;
   commission_total_gross: number;
-  status: string;
-  legacy?: boolean;
+  status: "a_pagar" | "parcial" | "pago" | "estornado" | "cancelado" | string;
+  legacy?: boolean | null;
 };
 
-type Entry = AnyRow & {
+type CommissionEntry = {
   id: UUID;
   batch_id: UUID;
   venda_id: UUID;
-  recipient_type: string;
-  recipient_user_id?: UUID | null;
-  recipient_unit_id?: UUID | null;
-  business_unit_id?: UUID | null;
+  recipient_type: "vendedor" | "unidade" | "empresa" | "gestor" | "indicador" | "outro" | string;
+  recipient_user_id: UUID | null;
+  recipient_unit_id: UUID | null;
+  business_unit_id: UUID | null;
   split_percent: number;
   gross_amount: number;
   tax_amount: number;
   net_amount: number;
-  status: string;
+  status: "a_pagar" | "parcial" | "pago" | "estornado" | "cancelado" | string;
 };
 
-type EntryFlow = AnyRow & {
+type CommissionEntryFlow = {
   id: UUID;
   entry_id: UUID;
   batch_id: UUID;
@@ -160,1040 +210,4016 @@ type EntryFlow = AnyRow & {
   percentual: number;
   valor_previsto: number;
   valor_pago: number;
-  data_pagamento?: string | null;
+  data_pagamento: string | null;
   comprovante_url?: string | null;
   demonstrativo_url?: string | null;
-  status: string;
+  status: "a_pagar" | "pago" | "estornado" | "cancelado" | string;
 };
 
-type Adjustment = AnyRow & {
+type CommissionAdjustment = {
   id: UUID;
   entry_id: UUID;
   batch_id: UUID;
-  venda_id?: UUID | null;
+  venda_id: UUID | null;
   adjustment_type: "estorno" | "desconto" | "ajuste_manual" | "bonus" | string;
   amount: number;
-  description?: string | null;
+  description: string | null;
   grupo?: string | null;
   cota?: string | null;
   parcela?: string | null;
   created_at?: string | null;
 };
 
-type Kpi = {
-  vendas: number;
-  bruta: number;
-  liquida: number;
-  paga: number;
-  pendente: number;
-  perdida: number;
-  programada: number;
-};
-
-const C = {
-  red: "#A11C27",
-  navy: "#1E293F",
-  gold: "#B5A573",
-  off: "#F5F5F5",
-};
-
+/* ========================= Helpers ========================= */
 const BRL = (v?: number | null) =>
-  (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  (typeof v === "number" ? v : 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 
-const pct = (v?: number | null) => `${((Number(v) || 0) * 100).toFixed(2).replace(".", ",")}%`;
-const today = () => new Date().toISOString().slice(0, 10);
-const monthStart = () => `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`;
-const monthEnd = () => {
-  const d = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
-  return d.toISOString().slice(0, 10);
+const pct100 = (v?: number | null) =>
+  `${(((typeof v === "number" ? v : 0) * 100) as number).toFixed(2).replace(".", ",")}%`;
+
+const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
+
+const clamp0 = (n: number) => (n < 0 ? 0 : n);
+
+const totalCommissionGross = (r: CommissionWithFlow) => {
+  return Number(r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0))) || 0;
 };
 
-function parsePctHuman(v: string) {
-  return (parseFloat((v || "0").replace("%", "").replace(".", "").replace(",", ".")) || 0) / 100;
-}
+const paidCommissionGross = (r: CommissionWithFlow) => {
+  return sum((r.flow || []).map((f) => Number(f.valor_pago_vendedor) || 0));
+};
 
-function parseMoneyBR(v: string) {
-  return Number((v || "0").replace(/\./g, "").replace(",", ".")) || 0;
-}
+const isOperationalCommission = (r: CommissionWithFlow) => {
+  return r.status !== "estorno" && !r.venda_cancelada;
+};
 
-function parseSplitList(text: string) {
-  return (text || "")
-    .split(/[;|,]/g)
-    .map((x) => parsePctHuman(x.trim()))
-    .filter((x) => x > 0);
-}
+const pendingCommissionGross = (r: CommissionWithFlow) => {
+  return clamp0(totalCommissionGross(r) - paidCommissionGross(r));
+};
 
-function normalize(s?: string | null) {
-  return (s || "")
+const lostCommissionGross = (r: CommissionWithFlow) => {
+  if (!r.venda_cancelada) return 0;
+  return clamp0(totalCommissionGross(r) - paidCommissionGross(r));
+};
+
+const commissionNet = (gross: number, impostoFrac: number) => {
+  return gross * (1 - impostoFrac);
+};
+
+const toDateInput = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+const formatISODateBR = (iso?: string | null) => (!iso ? "—" : iso.split("-").reverse().join("/"));
+
+const normalize = (s?: string | null) =>
+  (s || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+
+function parseBRL(s: string) {
+  return parseFloat((s || "").replace(/\./g, "").replace(",", ".")) || 0;
 }
 
-function between(iso?: string | null, start?: string, end?: string) {
-  const d = (iso || "").slice(0, 10);
+function parsePctHumanToNumber(s: string) {
+  const cleaned = (s || "").replace("%", "").trim();
+  return parseFloat(cleaned.replace(",", ".")) || 0;
+}
+
+function formatPctHuman(n: number) {
+  return `${(n || 0).toFixed(2).replace(".", ",")}%`;
+}
+
+const monthStartInput = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+};
+
+const monthEndInput = () => {
+  const d = new Date();
+  return toDateInput(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+};
+
+function parseFluxoPercentuais(text: string) {
+  return (text || "")
+    .split(/[;|,]/g)
+    .map((x) => parsePctHumanToNumber(x.trim()) / 100)
+    .filter((x) => x > 0);
+}
+
+function isCloseTo100(fracs: number[]) {
+  const total = fracs.reduce((a, b) => a + b, 0);
+  return Math.abs(total - 1) < 0.001;
+}
+
+/* ======================== Datas / projeções ======================== */
+const localDateFromISO = (iso?: string | null) => {
+  if (!iso) return null;
+
+  const cleanIso = String(iso).slice(0, 10);
+  const [y, m, d] = cleanIso.split("-").map((v) => parseInt(v, 10));
+
+  if (!y || !m || !d) return null;
+
+  return new Date(y, m - 1, d);
+};
+
+const isBetweenISO = (iso?: string | null, s?: Date, e?: Date) => {
+  const d = localDateFromISO(iso);
   if (!d) return false;
-  if (start && d < start) return false;
-  if (end && d > end) return false;
-  return true;
+
+  const si = s?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const ei = e?.getTime() ?? Number.POSITIVE_INFINITY;
+  const t = d.getTime();
+
+  return t >= si && t <= ei;
+};
+
+function valorPorExtenso(n: number) {
+  const u = [
+    "zero",
+    "um",
+    "dois",
+    "três",
+    "quatro",
+    "cinco",
+    "seis",
+    "sete",
+    "oito",
+    "nove",
+    "dez",
+    "onze",
+    "doze",
+    "treze",
+    "quatorze",
+    "quinze",
+    "dezesseis",
+    "dezessete",
+    "dezoito",
+    "dezenove",
+  ];
+  const d = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
+  const c = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "noventos"];
+
+  const ext = (n0: number): string =>
+    n0 < 20
+      ? u[n0]
+      : n0 < 100
+        ? d[Math.floor(n0 / 10)] + (n0 % 10 ? " e " + u[n0 % 10] : "")
+        : n0 === 100
+          ? "cem"
+          : c[Math.floor(n0 / 100)] + (n0 % 100 ? " e " + ext(n0 % 100) : "");
+
+  const i = Math.floor(n);
+  const ct = Math.round((n - i) * 100);
+
+  return `${ext(i)} ${i === 1 ? "real" : "reais"}${ct ? ` e ${ext(ct)} ${ct === 1 ? "centavo" : "centavos"}` : ""}`;
 }
 
-function safeArray<T>(v: any): T[] {
-  return Array.isArray(v) ? (v as T[]) : [];
-}
+function hasRegisteredButUnpaid(flow?: CommissionFlow[]) {
+  if (!flow) return false;
 
-function uniq<T>(arr: T[]) {
-  return Array.from(new Set(arr));
-}
-
-function StatusPill({ value }: { value?: string | null }) {
-  const label = value || "a_pagar";
-  const bg = label === "pago" ? "#ecfdf5" : label.includes("estorn") || label === "cancelado" ? "#fef2f2" : "#fffbeb";
-  const color = label === "pago" ? "#047857" : label.includes("estorn") || label === "cancelado" ? "#b91c1c" : "#92400e";
-  return (
-    <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold" style={{ background: bg, color }}>
-      {label.replaceAll("_", " ")}
-    </span>
+  return flow.some(
+    (f) =>
+      (Number(f.percentual) || 0) > 0 &&
+      !!f.data_pagamento_vendedor &&
+      (Number(f.valor_pago_vendedor) || 0) === 0
   );
 }
 
-function KpiCard({ title, value, hint }: { title: string; value: string; hint?: string }) {
+function flowStats(flow?: CommissionFlow[]) {
+  const relevant = (flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+  const total = relevant.length;
+  const paid = relevant.filter((f) => (Number(f.valor_pago_vendedor) || 0) > 0).length;
+
+  return { paid, total };
+}
+
+function pctPagoFromCommission(r: CommissionWithFlow) {
+  const totalCom = totalCommissionGross(r);
+  const paidBruto = paidCommissionGross(r);
+  const pct = totalCom > 0 ? (paidBruto / totalCom) * 100 : 0;
+
+  return {
+    pct: Math.max(0, Math.min(9999, pct)),
+    paidBruto,
+    totalCom,
+  };
+}
+
+function isVendaCancelada(venda: { codigo?: string | null; cancelada_em?: string | null }) {
+  const codigo = venda.codigo ?? null;
+  const canceladaEm = venda.cancelada_em ?? null;
+
+  if (codigo === "00") return false;
+  if (codigo && codigo !== "00") return true;
+  if (canceladaEm) return true;
+
+  return false;
+}
+
+/* ========================= Donut ========================= */
+function Donut({
+  paid,
+  pending,
+  label,
+  hoverPaidText,
+  hoverPendText,
+  pendingLegend = "Previsto",
+}: {
+  paid: number;
+  pending: number;
+  label: string;
+  hoverPaidText: string;
+  hoverPendText: string;
+  pendingLegend?: string;
+}) {
+  const paidSafe = Math.max(0, Number(paid) || 0);
+  const pendingSafe = Math.max(0, Number(pending) || 0);
+
+  const total = paidSafe + pendingSafe;
+  const paidPct = total > 0 ? (paidSafe / total) * 100 : 0;
+
+  const [hover, setHover] = useState<"paid" | "pend" | null>(null);
+
+  const navy = "#1E293F";
+  const red = "#A11C27";
+  const radius = 56;
+  const circumference = 2 * Math.PI * radius;
+  const paidLen = (paidPct / 100) * circumference;
+  const pendLen = circumference - paidLen;
+
   return (
-    <Card className="border-0 shadow-sm" style={{ background: "rgba(255,255,255,.92)" }}>
-      <CardContent className="p-4">
-        <div className="text-xs font-medium text-slate-500">{title}</div>
-        <div className="mt-1 text-xl font-bold" style={{ color: C.navy }}>{value}</div>
-        {hint ? <div className="mt-1 text-[11px] text-slate-400">{hint}</div> : null}
-      </CardContent>
-    </Card>
+    <div className="flex items-center gap-4 p-4 border rounded-xl bg-white">
+      <div className="relative">
+        <svg width="160" height="160" className="-rotate-90" role="img" aria-label={label}>
+          <circle cx="80" cy="80" r={radius} stroke="#e5e7eb" strokeWidth="22" fill="none" />
+
+          <circle
+            cx="80"
+            cy="80"
+            r={radius}
+            stroke={navy}
+            strokeWidth={hover === "paid" ? 26 : 22}
+            fill="none"
+            strokeDasharray={`${paidLen} ${circumference}`}
+            strokeLinecap="butt"
+            onMouseEnter={() => setHover("paid")}
+            onMouseLeave={() => setHover(null)}
+            style={{
+              transition: "all .2s ease",
+              filter: hover === "paid" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none",
+            }}
+          />
+
+          <circle
+            cx="80"
+            cy="80"
+            r={radius}
+            stroke={red}
+            strokeWidth={hover === "pend" ? 26 : 22}
+            fill="none"
+            strokeDasharray={`${pendLen} ${circumference}`}
+            strokeDashoffset={-paidLen}
+            strokeLinecap="butt"
+            onMouseEnter={() => setHover("pend")}
+            onMouseLeave={() => setHover(null)}
+            style={{
+              transition: "all .2s ease",
+              filter: hover === "pend" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none",
+            }}
+          />
+        </svg>
+
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-center">
+            <div className="text-xl font-bold">{total === 0 ? "0%" : `${paidPct.toFixed(0)}%`}</div>
+            <div className="text-xs text-gray-500">{label}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="text-sm">
+        <div className="mb-1">
+          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: navy }} />
+          <span className="font-medium">Pago bruto</span>
+        </div>
+        <div className="text-gray-600">{hover === "paid" ? hoverPaidText : BRL(paidSafe)}</div>
+
+        <div className="mt-3 mb-1">
+          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: red }} />
+          <span className="font-medium">{pendingLegend}</span>
+        </div>
+        <div className="text-gray-600">{hover === "pend" ? hoverPendText : BRL(pendingSafe)}</div>
+      </div>
+    </div>
   );
 }
+
+/* ========================= LineChart ========================= */
+function LineChart({
+  labels,
+  series,
+  height = 200,
+  formatY = (v: number) => BRL(v),
+}: {
+  labels: string[];
+  series: Array<{ name: string; data: number[] }>;
+  height?: number;
+  formatY?: (v: number) => string;
+}) {
+  const palette = ["#1E293F", "#A11C27"];
+  const pad = { top: 10, right: 16, bottom: 28, left: 56 };
+  const [hoverX, setHoverX] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  const safeSeries = useMemo(
+    () =>
+      series.map((s) => ({
+        ...s,
+        data: (s.data || []).map((v) => Math.max(0, Number(v) || 0)),
+      })),
+    [series]
+  );
+
+  const maxY = useMemo(() => {
+    const all = safeSeries.flatMap((s) => s.data);
+    const m = Math.max(1, ...all);
+    const pow = Math.pow(10, String(Math.floor(m)).length - 1);
+    return Math.ceil(m / pow) * pow;
+  }, [safeSeries]);
+
+  const width = 720;
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+  const xStep = innerW / Math.max(1, labels.length - 1);
+  const yScale = (v: number) => innerH - (v / maxY) * innerH;
+
+  const pointsFor = (arr: number[]) =>
+    arr.map((v, i) => [pad.left + i * xStep, pad.top + yScale(v)] as const);
+
+  const clientToViewBox = (evt: React.MouseEvent<SVGElement>) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+
+    const pt = svg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+
+    const inv = ctm.inverse();
+    const p2 = pt.matrixTransform(inv);
+
+    return { x: p2.x, y: p2.y };
+  };
+
+  const onMove = (e: React.MouseEvent<SVGRectElement>) => {
+    if (!labels.length) return;
+
+    const { x } = clientToViewBox(e);
+    const local = x - pad.left;
+    const i = Math.round(local / xStep);
+
+    setHoverX(Math.min(Math.max(i, 0), labels.length - 1));
+  };
+
+  const hovered =
+    hoverX != null
+      ? {
+          label: labels[hoverX],
+          values: safeSeries.map((s) => s.data[hoverX] ?? 0),
+        }
+      : null;
+
+  return (
+    <div className="relative rounded-lg border bg-white p-4">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${width} ${height}`}
+        className="block w-full"
+        onMouseLeave={() => setHoverX(null)}
+      >
+        <g>
+          {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
+            const y = pad.top + innerH * (1 - t);
+            const val = maxY * t;
+
+            return (
+              <g key={i}>
+                <line
+                  x1={pad.left}
+                  x2={pad.left + innerW}
+                  y1={y}
+                  y2={y}
+                  stroke="#e5e7eb"
+                  strokeDasharray="4 4"
+                />
+                <text x={pad.left - 8} y={y + 4} fontSize="11" textAnchor="end" fill="#6b7280">
+                  {formatY(val)}
+                </text>
+              </g>
+            );
+          })}
+
+          <line
+            x1={pad.left}
+            x2={pad.left + innerW}
+            y1={pad.top + innerH}
+            y2={pad.top + innerH}
+            stroke="#e5e7eb"
+          />
+
+          {labels.map((lb, i) => {
+            const x = pad.left + i * xStep;
+
+            return (
+              <text key={i} x={x} y={pad.top + innerH + 18} fontSize="11" textAnchor="middle" fill="#6b7280">
+                {lb}
+              </text>
+            );
+          })}
+        </g>
+
+        {safeSeries.map((s, si) => {
+          const pts = pointsFor(s.data);
+          const d = pts.map(([x, y], i) => (i === 0 ? `M ${x},${y}` : `L ${x},${y}`)).join(" ");
+
+          return (
+            <g key={si}>
+              <path d={d} fill="none" stroke={palette[si % palette.length]} strokeWidth={2} />
+
+              {pts.map(([x, y], pi) => (
+                <circle
+                  key={pi}
+                  cx={x}
+                  cy={y}
+                  r={2.5}
+                  fill="#fff"
+                  stroke={palette[si % palette.length]}
+                  strokeWidth={2}
+                />
+              ))}
+            </g>
+          );
+        })}
+
+        <rect
+          x={pad.left}
+          y={pad.top}
+          width={innerW}
+          height={innerH}
+          fill="transparent"
+          onMouseMove={onMove}
+        />
+
+        {hoverX != null && (
+          <line
+            x1={pad.left + hoverX * xStep}
+            x2={pad.left + hoverX * xStep}
+            y1={pad.top}
+            y2={pad.top + innerH}
+            stroke="#9ca3af"
+            strokeDasharray="4 4"
+          />
+        )}
+      </svg>
+
+      <div className="mt-4 flex flex-wrap gap-4">
+        {safeSeries.map((s, si) => (
+          <div className="flex items-center gap-2 text-sm" key={si}>
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ background: palette[si % palette.length] }}
+            />
+            <span className="text-gray-700">{s.name}</span>
+          </div>
+        ))}
+      </div>
+
+      {hovered && (
+        <div
+          className="pointer-events-none absolute rounded-md border bg-white px-3 py-2 text-xs shadow"
+          style={{ left: 16, top: 16 }}
+        >
+          <div className="mb-1 font-semibold text-gray-800">{hovered.label}</div>
+
+          <div className="space-y-1">
+            {hovered.values.map((v, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <span className="text-gray-600">{safeSeries[i]?.name ?? `Série ${i + 1}`}</span>
+                <span className="tabular-nums ml-8">{formatY(v)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========================= Projeções ========================= */
+const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+
+function expectedDateForParcel(
+  _saleDateISO: string | null | undefined,
+  flow: CommissionFlow[] | undefined,
+  mes: number
+): Date | null {
+  const safeFlow = Array.isArray(flow) ? flow : [];
+
+  const m2 = safeFlow.find((f) => f.mes === 2);
+  const m2Date = m2?.data_pagamento_vendedor ? localDateFromISO(m2.data_pagamento_vendedor) : null;
+
+  if (mes <= 2) {
+    const f = safeFlow.find((x) => x.mes === mes);
+    const regDate = f?.data_pagamento_vendedor ? localDateFromISO(f.data_pagamento_vendedor) : null;
+
+    return regDate ?? null;
+  }
+
+  if (!m2Date) return null;
+
+  const offset = mes - 2;
+  const expected = new Date(m2Date.getFullYear(), m2Date.getMonth(), m2Date.getDate());
+
+  expected.setDate(expected.getDate() + offset * 30);
+
+  return expected;
+}
+
+function getWeeklyIntervalsFriToThu(year: number, month: number) {
+  const first = new Date(year, month, 1);
+  const eom = new Date(year, month + 1, 0);
+
+  let d = new Date(year, month, 1);
+  while (d.getDay() !== 5) {
+    d = new Date(year, month, d.getDate() + 1);
+  }
+
+  const intervals: Array<{ start: Date; end: Date; label: string }> = [];
+
+  while (d <= eom) {
+    const start = new Date(d);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    const endClamped = end > eom ? eom : end;
+
+    const s = `${String(start.getDate()).padStart(2, "0")}/${String(start.getMonth() + 1).padStart(2, "0")}`;
+    const e = `${String(endClamped.getDate()).padStart(2, "0")}/${String(endClamped.getMonth() + 1).padStart(2, "0")}`;
+
+    intervals.push({
+      start,
+      end: endClamped,
+      label: `S${intervals.length + 1} (${s}–${e})`,
+    });
+
+    d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+  }
+
+  if (!intervals.length) {
+    intervals.push({
+      start: first,
+      end: eom,
+      label: `S1 (01/${String(month + 1).padStart(2, "0")}–${String(eom.getDate()).padStart(2, "0")}/${String(
+        month + 1
+      ).padStart(2, "0")})`,
+    });
+  }
+
+  return intervals;
+}
+
+type ProjSeries = {
+  labels: string[];
+  previstoBruto: number[];
+  pagoBruto: number[];
+};
+
+function projectAnnualFlows(rows: CommissionWithFlow[]): ProjSeries {
+  const operationalRows = rows.filter(isOperationalCommission);
+
+  const now = new Date();
+  const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 4 + i);
+  const previsto = Array(years.length).fill(0);
+  const pagos = Array(years.length).fill(0);
+
+  for (const r of operationalRows) {
+    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+
+    for (const f of flows) {
+      if (!f.data_pagamento_vendedor) continue;
+
+      const pd = localDateFromISO(f.data_pagamento_vendedor);
+      if (!pd) continue;
+
+      const yi = years.indexOf(pd.getFullYear());
+      if (yi >= 0) {
+        pagos[yi] += Number(f.valor_pago_vendedor) || 0;
+      }
+    }
+  }
+
+  return {
+    labels: years.map(String),
+    previstoBruto: previsto,
+    pagoBruto: pagos,
+  };
+}
+
+function projectMonthlyFlows(rows: CommissionWithFlow[], year: number, includePrevisto: boolean): ProjSeries {
+  const operationalRows = rows.filter(isOperationalCommission);
+
+  const labels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const previsto = Array(12).fill(0);
+  const pagos = Array(12).fill(0);
+
+  for (const r of operationalRows) {
+    const total = totalCommissionGross(r);
+    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+
+    for (const f of flows) {
+      if (f.data_pagamento_vendedor) {
+        const pd = localDateFromISO(f.data_pagamento_vendedor);
+
+        if (pd && pd.getFullYear() === year) {
+          pagos[pd.getMonth()] += Number(f.valor_pago_vendedor) || 0;
+        }
+      }
+
+      if (!includePrevisto) continue;
+
+      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+      if (!exp || exp.getFullYear() !== year) continue;
+
+      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+      if (isPaid) continue;
+
+      const expVal = Number(f.valor_previsto ?? total * (Number(f.percentual) || 0)) || 0;
+      previsto[exp.getMonth()] += expVal;
+    }
+  }
+
+  return {
+    labels,
+    previstoBruto: previsto,
+    pagoBruto: pagos,
+  };
+}
+
+function projectWeeklyFlows(rows: CommissionWithFlow[]): ProjSeries {
+  const operationalRows = rows.filter(isOperationalCommission);
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const intervals = getWeeklyIntervalsFriToThu(year, month);
+
+  const labels = intervals.map((i) => i.label);
+  const previsto = Array(intervals.length).fill(0);
+  const pagos = Array(intervals.length).fill(0);
+
+  for (const r of operationalRows) {
+    const total = totalCommissionGross(r);
+    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+
+    for (const f of flows) {
+      if (f.data_pagamento_vendedor) {
+        const pd = localDateFromISO(f.data_pagamento_vendedor);
+
+        if (pd && pd.getFullYear() === year && pd.getMonth() === month) {
+          const idx = intervals.findIndex((iv) => pd >= iv.start && pd <= iv.end);
+
+          if (idx >= 0) {
+            pagos[idx] += Number(f.valor_pago_vendedor) || 0;
+          }
+        }
+      }
+
+      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+      if (!exp || exp.getFullYear() !== year || exp.getMonth() !== month) continue;
+
+      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+      if (isPaid) continue;
+
+      const expVal = Number(f.valor_previsto ?? total * (Number(f.percentual) || 0)) || 0;
+      const idx = intervals.findIndex((iv) => exp >= iv.start && exp <= iv.end);
+
+      if (idx >= 0) {
+        previsto[idx] += expVal;
+      }
+    }
+  }
+
+  return {
+    labels,
+    previstoBruto: previsto,
+    pagoBruto: pagos,
+  };
+}
+
+/* ========================= Página ========================= */
+const LS_IMPOSTO_PCT = "@consulmax:recibo-imposto-pct-v1";
+const APP_SETTING_IMPOSTO_KEY = "commission_tax_pct";
 
 export default function ComissoesPage() {
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      setAuthUserId(data?.user?.id ?? null);
+    })();
+  }, []);
+
+  const canEdit = isAdmin;
+
+  const [vendedorId, setVendedorId] = useState<string>("all");
+  const [status, setStatus] = useState<"all" | "a_pagar" | "pago" | "estorno">("all");
+  const [segmento, setSegmento] = useState<string>("all");
+  const [tabela, setTabela] = useState<string>("all");
+
   const [users, setUsers] = useState<User[]>([]);
-  const [units, setUnits] = useState<Unit[]>([]);
+  const [usersSecure, setUsersSecure] = useState<UserSecure[]>([]);
   const [simTables, setSimTables] = useState<SimTable[]>([]);
-  const [vendas, setVendas] = useState<Venda[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [legacy, setLegacy] = useState<LegacyCommission[]>([]);
-  const [legacyFlows, setLegacyFlows] = useState<LegacyFlow[]>([]);
-  const [rules, setRules] = useState<TableRule[]>([]);
-  const [splits, setSplits] = useState<SplitRule[]>([]);
-  const [batches, setBatches] = useState<Batch[]>([]);
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [entryFlows, setEntryFlows] = useState<EntryFlow[]>([]);
-  const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
+  const [simAdmins, setSimAdmins] = useState<{ id: UUID; name: string }[]>([]);
+  const [clientesMap, setClientesMap] = useState<Record<string, string>>({});
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [unitFilter, setUnitFilter] = useState<string>("all");
+  const [adminFilter, setAdminFilter] = useState<string>("all");
+  const [periodStart, setPeriodStart] = useState<string>(() => monthStartInput());
+  const [periodEnd, setPeriodEnd] = useState<string>(() => monthEndInput());
 
-  const [startDate, setStartDate] = useState(monthStart());
-  const [endDate, setEndDate] = useState(monthEnd());
-  const [unitFilter, setUnitFilter] = useState("all");
-  const [vendorFilter, setVendorFilter] = useState("all");
-  const [adminFilter, setAdminFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [taxPctHuman, setTaxPctHuman] = useState("6,00");
+  const [tableRules, setTableRules] = useState<CommissionTableRule[]>([]);
+  const [splitRules, setSplitRules] = useState<CommissionSplitRule[]>([]);
+  const [partitionBatches, setPartitionBatches] = useState<CommissionBatch[]>([]);
+  const [partitionEntries, setPartitionEntries] = useState<CommissionEntry[]>([]);
+  const [partitionFlows, setPartitionFlows] = useState<CommissionEntryFlow[]>([]);
+  const [partitionAdjustments, setPartitionAdjustments] = useState<CommissionAdjustment[]>([]);
 
-  const [ruleOpen, setRuleOpen] = useState(false);
-  const [payOpen, setPayOpen] = useState(false);
-  const [payEntryId, setPayEntryId] = useState<string | null>(null);
-  const [payFlowId, setPayFlowId] = useState<string | null>(null);
-  const [payDate, setPayDate] = useState(today());
-  const [payValue, setPayValue] = useState("");
+  const [openPartitionRules, setOpenPartitionRules] = useState(false);
+  const [partRuleTableId, setPartRuleTableId] = useState<string>("");
+  const [partRuleUnitId, setPartRuleUnitId] = useState<string>("");
+  const [partRuleTotalPct, setPartRuleTotalPct] = useState<string>("4,00");
+  const [partRuleFluxoPct, setPartRuleFluxoPct] = useState<string>("50,00;50,00");
+  const [partSplitVendedor, setPartSplitVendedor] = useState<string>("25,00");
+  const [partSplitUnidade, setPartSplitUnidade] = useState<string>("25,00");
+  const [partSplitEmpresa, setPartSplitEmpresa] = useState<string>("50,00");
+  const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
+  const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
-  const [demoType, setDemoType] = useState<"data" | "mes">("data");
-  const [demoDate, setDemoDate] = useState(today());
-  const [demoMonth, setDemoMonth] = useState(today().slice(0, 7));
-  const [demoRecipient, setDemoRecipient] = useState("all");
+  const usersById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
-  const [formRule, setFormRule] = useState({
-    sim_table_id: "",
-    unit_id: "",
-    percent_total: "4,00",
-    fluxo: "50,00;50,00",
-    vendedor: "25,00",
-    unidade: "25,00",
-    empresa: "50,00",
-  });
+  const usersByAuth = useMemo(() => {
+    const m: Record<string, User> = {};
+    users.forEach((u) => {
+      if (u.auth_user_id) m[u.auth_user_id] = u;
+    });
+    return m;
+  }, [users]);
 
+  const activeUsers = useMemo(() => users.filter((u) => u.is_active === true), [users]);
+  const secureById = useMemo(() => Object.fromEntries(usersSecure.map((u) => [u.id, u])), [usersSecure]);
+  const adminById = useMemo(() => Object.fromEntries(simAdmins.map((a) => [a.id, a.name])), [simAdmins]);
+
+  const unitById = useMemo(() => Object.fromEntries(units.map((u) => [u.id, u])), [units]);
   const currentUser = useMemo(() => users.find((u) => u.auth_user_id === authUserId) || null, [users, authUserId]);
   const currentUnit = useMemo(() => units.find((u) => u.id === currentUser?.unit_id) || null, [units, currentUser]);
   const matrixUnit = useMemo(() => units.find((u) => u.tipo === "matriz") || null, [units]);
   const isMatrixAdmin = !!currentUser && currentUser.role === "admin" && currentUnit?.tipo === "matriz";
-  const isBranchManager = !!currentUser && currentUser.hierarchy_level === "gestor_filial";
-  const canManage = isMatrixAdmin;
-  const taxFrac = parsePctHuman(taxPctHuman);
+  const isBranchManager = currentUser?.hierarchy_level === "gestor_filial";
 
-  const userById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
-  const userByAuth = useMemo(() => Object.fromEntries(users.map((u) => [u.auth_user_id, u])), [users]);
-  const unitById = useMemo(() => Object.fromEntries(units.map((u) => [u.id, u])), [units]);
-  const vendaById = useMemo(() => Object.fromEntries(vendas.map((v) => [v.id, v])), [vendas]);
-  const leadById = useMemo(() => Object.fromEntries(leads.map((l) => [l.id, l])), [leads]);
+  const scopedUnitIds = useMemo(() => {
+    if (isMatrixAdmin) return units.map((u) => u.id);
+    return currentUser?.unit_id ? [currentUser.unit_id] : [];
+  }, [isMatrixAdmin, units, currentUser]);
+
+  const scopedUserIds = useMemo(() => {
+    if (isMatrixAdmin) return users.map((u) => u.id);
+    if (isBranchManager) return users.filter((u) => u.unit_id === currentUser?.unit_id).map((u) => u.id);
+    return currentUser?.id ? [currentUser.id] : [];
+  }, [isMatrixAdmin, isBranchManager, users, currentUser]);
+
+  const userLabel = (id?: string | null) => {
+    if (!id) return "—";
+    const u = usersById[id] || usersByAuth[id];
+    return u?.nome?.trim() || u?.email?.trim() || id;
+  };
+
+  const canonUserId = (id?: string | null) => (id ? usersById[id]?.id || usersByAuth[id]?.id || null : null);
+
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<CommissionWithFlow[]>([]);
+  const [allVendasComissao, setAllVendasComissao] = useState<Venda[]>([]);
+  const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
+  const [genBusy, setGenBusy] = useState<string | null>(null);
+
+  const [openRules, setOpenRules] = useState(false);
+  const [ruleVendorId, setRuleVendorId] = useState<string>("");
+  const [ruleSimTableId, setRuleSimTableId] = useState<string>("");
+  const [rulePercent, setRulePercent] = useState<string>("1,20");
+  const [ruleMeses, setRuleMeses] = useState<number>(1);
+  const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]);
+  const [ruleObs, setRuleObs] = useState<string>("");
+  const [ruleRows, setRuleRows] = useState<(CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null })[]>([]);
+  const [ruleAdminFilter, setRuleAdminFilter] = useState<string>("all");
+  const [ruleSegmentFilter, setRuleSegmentFilter] = useState<string>("all");
+  const [ruleFormOpen, setRuleFormOpen] = useState(false);
+  const [ruleFormSimTable, setRuleFormSimTable] = useState<SimTable | null>(null);
+  const [viewRule, setViewRule] = useState<(CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null }) | null>(null);
+
+  const [openPay, setOpenPay] = useState(false);
+  const [payCommissionId, setPayCommissionId] = useState<string>("");
+  const [payFlow, setPayFlow] = useState<(CommissionFlow & { _valor_previsto_calc?: number })[]>([]);
+  const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
+  const [payDate, setPayDate] = useState<string>(() => toDateInput(new Date()));
+  const [payValue, setPayValue] = useState<string>("");
+  const [payDefaultTab, setPayDefaultTab] = useState<"selecionar" | "arquivos">("selecionar");
+
+  const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
+  const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00%");
+  const [reciboVendor, setReciboVendor] = useState<string>("all");
+  const [openImpostoCfg, setOpenImpostoCfg] = useState(false);
+  const [impostoDraft, setImpostoDraft] = useState<string>("6,00");
+
+  const [openBulkRefund, setOpenBulkRefund] = useState(false);
+  const [bulkRefundProp, setBulkRefundProp] = useState<string>("");
+  const [bulkRefundFound, setBulkRefundFound] = useState<{ comm: Commission; flows: CommissionFlow[] } | null>(null);
+  const [bulkRefundDate, setBulkRefundDate] = useState<string>(() => toDateInput(new Date()));
+  const [bulkRefundGross, setBulkRefundGross] = useState<string>("");
+  const [busyRefund, setBusyRefund] = useState(false);
+
+  const [showPaid, setShowPaid] = useState(false);
+  const [showUnpaid, setShowUnpaid] = useState(true);
+  const [showVendasSem, setShowVendasSem] = useState(true);
+
+  const [paidSearch, setPaidSearch] = useState<string>("");
+  const [paidPage, setPaidPage] = useState<number>(1);
+  const pageSize = 15;
+  const [unpaidPropSearch, setUnpaidPropSearch] = useState<string>("");
 
   useEffect(() => {
-    loadAll();
-  }, []);
-
-  async function loadAll() {
-    setLoading(true);
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      setAuthUserId(auth.user?.id || null);
-
-      const [usersRes, unitsRes, simTablesRes, vendasRes, legacyRes, rulesRes, splitsRes, batchesRes, entriesRes, flowsRes, adjustmentsRes] = await Promise.all([
-        supabase.from("users").select("*").order("nome", { ascending: true }),
-        supabase.from("units").select("*").order("tipo", { ascending: true }).order("nome", { ascending: true }),
-        supabase.from("sim_tables").select("*").order("nome_tabela", { ascending: true }),
+    (async () => {
+      const [
+        { data: u },
+        { data: st },
+        { data: us },
+        { data: admins },
+        { data: unitsData },
+        { data: tableRulesData },
+        { data: splitRulesData },
+        { data: batchesData },
+        { data: entriesData },
+        { data: entryFlowsData },
+        { data: adjustmentsData },
+      ] = await Promise.all([
         supabase
-          .from("vendas")
-          .select("id,data_venda,vendedor_id,segmento,tabela,administradora,valor_venda,numero_proposta,lead_id,cliente_lead_id,grupo,cota,codigo,cancelada_em,encarteirada_em,status")
-          .order("data_venda", { ascending: false })
-          .limit(2000),
-        supabase.from("commissions").select("*").order("data_venda", { ascending: false }).limit(3000),
+          .from("users")
+          .select("id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type, login, role, scopes, avatar_url, pix_kind, is_active, unit_id, hierarchy_level")
+          .order("nome", { ascending: true }),
+        supabase.from("sim_tables").select("id, segmento, nome_tabela, admin_id").order("segmento", { ascending: true }),
+        supabase.from("users_secure").select("id, nome, email, logradouro, numero, bairro, cidade, uf, pix_key, cpf, cpf_mascarado"),
+        supabase.from("sim_admins").select("id, name").order("name", { ascending: true }),
+        supabase.from("units").select("*").order("tipo", { ascending: true }).order("nome", { ascending: true }),
         supabase.from("commission_table_rules").select("*").order("created_at", { ascending: false }),
         supabase.from("commission_split_rules").select("*").order("created_at", { ascending: true }),
         supabase.from("commission_batches").select("*").order("created_at", { ascending: false }).limit(3000),
-        supabase.from("commission_entries").select("*").order("created_at", { ascending: false }).limit(5000),
-        supabase.from("commission_entry_flow").select("*").order("mes", { ascending: true }).limit(8000),
+        supabase.from("commission_entries").select("*").order("created_at", { ascending: false }).limit(6000),
+        supabase.from("commission_entry_flow").select("*").order("mes", { ascending: true }).limit(10000),
         supabase.from("commission_adjustments").select("*").order("created_at", { ascending: false }).limit(3000),
       ]);
 
-      if (usersRes.error) throw usersRes.error;
-      if (unitsRes.error) throw unitsRes.error;
-      if (vendasRes.error) throw vendasRes.error;
+      const usersData = (u || []) as User[];
+      setUsers(usersData);
+      setSimTables((st || []) as SimTable[]);
+      setUsersSecure((us || []) as UserSecure[]);
+      setSimAdmins((admins || []) as { id: UUID; name: string }[]);
+      setUnits((unitsData || []) as Unit[]);
+      setTableRules((tableRulesData || []) as CommissionTableRule[]);
+      setSplitRules((splitRulesData || []) as CommissionSplitRule[]);
+      setPartitionBatches((batchesData || []) as CommissionBatch[]);
+      setPartitionEntries((entriesData || []) as CommissionEntry[]);
+      setPartitionFlows((entryFlowsData || []) as CommissionEntryFlow[]);
+      setPartitionAdjustments((adjustmentsData || []) as CommissionAdjustment[]);
 
-      const vendasData = safeArray<Venda>(vendasRes.data);
-      setUsers(safeArray<User>(usersRes.data));
-      setUnits(safeArray<Unit>(unitsRes.data));
-      setSimTables(safeArray<SimTable>(simTablesRes.data));
-      setVendas(vendasData);
-      setLegacy(safeArray<LegacyCommission>(legacyRes.data));
-      setRules(safeArray<TableRule>(rulesRes.data));
-      setSplits(safeArray<SplitRule>(splitsRes.data));
-      setBatches(safeArray<Batch>(batchesRes.data));
-      setEntries(safeArray<Entry>(entriesRes.data));
-      setEntryFlows(safeArray<EntryFlow>(flowsRes.data));
-      setAdjustments(safeArray<Adjustment>(adjustmentsRes.data));
+      const current = usersData.find((x) => x.auth_user_id && x.auth_user_id === (authUserId || ""));
+      const admin = current?.role === "admin";
+      setIsAdmin(!!admin);
 
-      const leadIds = uniq(vendasData.map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]);
-      if (leadIds.length) {
-        const { data: leadsData } = await supabase.from("leads").select("id,nome").in("id", leadIds);
-        setLeads(safeArray<Lead>(leadsData));
+      if (!admin && current?.id) {
+        setVendedorId(current.id);
+        setReciboVendor(current.id);
+      }
+    })();
+  }, [authUserId]);
+
+  useEffect(() => {
+    setReciboVendor(vendedorId);
+  }, [vendedorId]);
+
+  async function loadImpostoParam() {
+    try {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", APP_SETTING_IMPOSTO_KEY)
+        .maybeSingle();
+
+      if (!error && data?.value) {
+        const n = parsePctHumanToNumber(data.value);
+        const fmt = formatPctHuman(n);
+        setReciboImpostoPct(fmt);
+        setImpostoDraft((n || 0).toFixed(2).replace(".", ","));
+        return;
+      }
+    } catch {}
+
+    try {
+      const saved = (typeof window !== "undefined" && window.localStorage.getItem(LS_IMPOSTO_PCT)) || "6,00%";
+      const n = parsePctHumanToNumber(saved);
+      const fmt = formatPctHuman(n);
+      setReciboImpostoPct(fmt);
+      setImpostoDraft((n || 0).toFixed(2).replace(".", ","));
+    } catch {
+      setReciboImpostoPct("6,00%");
+      setImpostoDraft("6,00");
+    }
+  }
+
+  useEffect(() => {
+    if (!authUserId) return;
+    loadImpostoParam();
+  }, [authUserId]);
+
+  const adminOptions = useMemo(() => {
+    const ids = Array.from(new Set(simTables.map((t) => t.admin_id).filter(Boolean))) as string[];
+    return ids
+      .map((id) => ({ id, name: adminById[id] || "Sem administradora" }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [simTables, adminById]);
+
+  const ruleSegmentOptions = useMemo(() => {
+    let base = simTables;
+    if (ruleAdminFilter !== "all") base = base.filter((t) => t.admin_id === ruleAdminFilter);
+    const segs = Array.from(new Set(base.map((t) => t.segmento).filter(Boolean))) as string[];
+    return segs.sort();
+  }, [simTables, ruleAdminFilter]);
+
+  const dedupedTables = useMemo(() => {
+    const base = simTables
+      .filter((t) => ruleAdminFilter === "all" || t.admin_id === ruleAdminFilter)
+      .filter((t) => ruleSegmentFilter === "all" || t.segmento === ruleSegmentFilter);
+
+    const groups = new Map<string, SimTable[]>();
+    for (const t of base) {
+      const key = normalize(t.nome_tabela) || t.id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(t);
+    }
+
+    const repr: Array<{ key: string; rep: SimTable; all: SimTable[] }> = [];
+    for (const [key, all] of groups.entries()) {
+      const sorted = [...all].sort((a, b) => {
+        const an = adminById[a.admin_id || ""] || "";
+        const bn = adminById[b.admin_id || ""] || "";
+        return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
+      });
+      repr.push({ key, rep: sorted[0], all: sorted });
+    }
+
+    repr.sort((a, b) => {
+      const an = adminById[a.rep.admin_id || ""] || "";
+      const bn = adminById[b.rep.admin_id || ""] || "";
+      return an.localeCompare(bn) || (a.rep.segmento || "").localeCompare(b.rep.segmento || "") || a.rep.nome_tabela.localeCompare(b.rep.nome_tabela);
+    });
+
+    return repr;
+  }, [simTables, ruleAdminFilter, ruleSegmentFilter, adminById]);
+
+  const getSimTableGroupByRep = (rep: SimTable) => {
+    const key = normalize(rep.nome_tabela);
+    if (!key) return [rep];
+    return simTables.filter((t) => normalize(t.nome_tabela) === key);
+  };
+
+  async function fetchData() {
+    setLoading(true);
+
+    try {
+      let qb = supabase.from("commissions").select("*");
+      if (status !== "all") qb = qb.eq("status", status);
+
+      if (!isAdmin) qb = qb.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
+      else if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
+      else if (unitFilter !== "all") {
+        const ids = users.filter((u) => u.unit_id === unitFilter).map((u) => u.id);
+        qb = ids.length ? qb.in("vendedor_id", ids) : qb.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       }
 
-      const legacyIds = safeArray<LegacyCommission>(legacyRes.data).map((c) => c.id);
-      if (legacyIds.length) {
-        const { data: lf } = await supabase.from("commission_flow").select("*").in("commission_id", legacyIds).order("mes", { ascending: true });
-        setLegacyFlows(safeArray<LegacyFlow>(lf));
+      if (periodStart) qb = qb.gte("data_venda", periodStart);
+      if (periodEnd) qb = qb.lte("data_venda", periodEnd);
+      if (adminFilter !== "all") qb = qb.eq("administradora", adminFilter);
+      if (segmento !== "all") qb = qb.eq("segmento", segmento);
+      if (tabela !== "all") qb = qb.eq("tabela", tabela);
+
+      const { data: comms } = await qb.order("data_venda", { ascending: false });
+
+      const ids = (comms || []).map((c) => c.id);
+      const { data: flows } = await supabase
+        .from("commission_flow")
+        .select("*")
+        .in("commission_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"])
+        .order("mes", { ascending: true });
+
+      const flowBy: Record<string, CommissionFlow[]> = {};
+      (flows || []).forEach((f: any) => {
+        if (!flowBy[f.commission_id]) flowBy[f.commission_id] = [];
+        if (!flowBy[f.commission_id].some((x) => x.mes === f.mes)) {
+          flowBy[f.commission_id].push(f as CommissionFlow);
+        }
+      });
+
+      const vendasExtras: Record<
+        string,
+        {
+          clienteId?: string;
+          numero_proposta?: string | null;
+          cliente_nome?: string | null;
+          codigo?: string | null;
+          cancelada_em?: string | null;
+          venda_cancelada?: boolean;
+        }
+      > = {};
+
+      if (comms && comms.length) {
+        const { data: vendas } = await supabase
+          .from("vendas")
+          .select("id, numero_proposta, cliente_lead_id, lead_id, codigo, cancelada_em")
+          .in("id", comms.map((c: any) => c.venda_id));
+
+        const cliIds = Array.from(
+          new Set(
+            (vendas || [])
+              .map((v: any) => v.lead_id || v.cliente_lead_id)
+              .filter(Boolean) as string[]
+          )
+        );
+
+        const nomes: Record<string, string> = {};
+        if (cliIds.length) {
+          const { data: cli } = await supabase.from("leads").select("id, nome").in("id", cliIds);
+          (cli || []).forEach((c: any) => {
+            nomes[c.id] = c.nome || "";
+          });
+        }
+
+        (vendas || []).forEach((v: any) => {
+          const cid = v.lead_id || v.cliente_lead_id || undefined;
+          const codigo = v.codigo ?? null;
+          const cancelada_em = v.cancelada_em ?? null;
+          const venda_cancelada = isVendaCancelada({ codigo, cancelada_em });
+
+          vendasExtras[v.id] = {
+            clienteId: cid,
+            numero_proposta: v.numero_proposta || null,
+            cliente_nome: cid ? nomes[cid] || null : null,
+            codigo,
+            cancelada_em,
+            venda_cancelada,
+          };
+        });
+      }
+
+      const mappedRows: CommissionWithFlow[] =
+        (comms || []).map((c: any) => ({
+          ...(c as Commission),
+          flow: flowBy[c.id] || [],
+          cliente_nome: vendasExtras[c.venda_id]?.cliente_nome || null,
+          numero_proposta: vendasExtras[c.venda_id]?.numero_proposta || null,
+          venda_cancelada: !!vendasExtras[c.venda_id]?.venda_cancelada,
+          venda_codigo: vendasExtras[c.venda_id]?.codigo ?? null,
+          venda_cancelada_em: vendasExtras[c.venda_id]?.cancelada_em ?? null,
+        })) || [];
+
+      setRows(mappedRows);
+
+      let qbV = supabase
+        .from("vendas")
+        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id, encarteirada_em, codigo, cancelada_em")
+        .order("data_venda", { ascending: false });
+
+      if (!isAdmin) qbV = qbV.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
+      else if (vendedorId !== "all") qbV = qbV.eq("vendedor_id", vendedorId);
+      else if (unitFilter !== "all") {
+        const ids = users.filter((u) => u.unit_id === unitFilter).map((u) => u.id);
+        qbV = ids.length ? qbV.in("vendedor_id", ids) : qbV.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+      }
+
+      if (periodStart) qbV = qbV.gte("data_venda", periodStart);
+      if (periodEnd) qbV = qbV.lte("data_venda", periodEnd);
+      if (adminFilter !== "all") qbV = qbV.eq("administradora", adminFilter);
+      if (segmento !== "all") qbV = qbV.eq("segmento", segmento);
+      if (tabela !== "all") qbV = qbV.eq("tabela", tabela);
+
+      qbV = qbV.not("encarteirada_em", "is", null);
+
+      const { data: vendasPeriodo } = await qbV;
+      setAllVendasComissao((vendasPeriodo || []) as Venda[]);
+
+      const [{ data: commVendaIds }, { data: partVendaIds }] = await Promise.all([
+        supabase.from("commissions").select("venda_id"),
+        supabase.from("commission_batches").select("venda_id").eq("legacy", false),
+      ]);
+      const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
+      const hasPartComm = new Set((partVendaIds || []).map((r: any) => r.venda_id));
+
+      const vendasFiltered = (vendasPeriodo || [])
+        .filter((v: any) => !hasComm.has(v.id) && !hasPartComm.has(v.id))
+        .filter((v: any) => !isVendaCancelada({ codigo: v.codigo ?? null, cancelada_em: v.cancelada_em ?? null }));
+
+      setVendasSemCom(vendasFiltered as Venda[]);
+
+      const clientIds = Array.from(
+        new Set((vendasFiltered || []).map((v: any) => v.lead_id || v.cliente_lead_id).filter((x: any): x is string => !!x))
+      );
+
+      if (clientIds.length) {
+        const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clientIds);
+        const map: Record<string, string> = {};
+        (cli || []).forEach((c: any) => (map[c.id] = c.nome || ""));
+        setClientesMap(map);
       } else {
-        setLegacyFlows([]);
+        setClientesMap({});
       }
-    } catch (err: any) {
-      alert("Erro ao carregar comissões: " + (err?.message || err));
+
+      const [
+        { data: freshTableRules },
+        { data: freshSplitRules },
+        { data: freshBatches },
+        { data: freshEntries },
+        { data: freshEntryFlows },
+        { data: freshAdjustments },
+      ] = await Promise.all([
+        supabase.from("commission_table_rules").select("*").order("created_at", { ascending: false }),
+        supabase.from("commission_split_rules").select("*").order("created_at", { ascending: true }),
+        supabase.from("commission_batches").select("*").order("created_at", { ascending: false }).limit(3000),
+        supabase.from("commission_entries").select("*").order("created_at", { ascending: false }).limit(6000),
+        supabase.from("commission_entry_flow").select("*").order("mes", { ascending: true }).limit(10000),
+        supabase.from("commission_adjustments").select("*").order("created_at", { ascending: false }).limit(3000),
+      ]);
+
+      setTableRules((freshTableRules || []) as CommissionTableRule[]);
+      setSplitRules((freshSplitRules || []) as CommissionSplitRule[]);
+      setPartitionBatches((freshBatches || []) as CommissionBatch[]);
+      setPartitionEntries((freshEntries || []) as CommissionEntry[]);
+      setPartitionFlows((freshEntryFlows || []) as CommissionEntryFlow[]);
+      setPartitionAdjustments((freshAdjustments || []) as CommissionAdjustment[]);
+
+
+      try {
+        setRows((prev) => {
+          const withFix = prev.map((r) => {
+            const relevant = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+            const allPaid = relevant.length > 0 && relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
+
+            if (allPaid && r.status !== "pago") {
+              const lastDate = r.data_pagamento || (relevant[relevant.length - 1]?.data_pagamento_vendedor ?? null);
+
+              supabase
+                .from("commissions")
+                .update({ status: "pago", data_pagamento: lastDate })
+                .eq("id", r.id)
+                .then(({ error }) => {
+                  if (error) console.warn("[reconcile] commissions.update falhou:", error.message);
+                });
+
+              return { ...r, status: "pago", data_pagamento: lastDate };
+            }
+
+            return r;
+          });
+
+          return withFix;
+        });
+      } catch (e) {
+        console.warn("[reconcile] erro:", e);
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  function vendorFromVenda(v: Venda) {
-    return (v.vendedor_id && (userByAuth[v.vendedor_id] || userById[v.vendedor_id])) || null;
+  useEffect(() => {
+    fetchData();
+  }, [vendedorId, status, segmento, tabela, unitFilter, adminFilter, periodStart, periodEnd, isAdmin, authUserId]);
+
+  const now = new Date();
+  const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const impostoFrac = useMemo(() => {
+    const n = parsePctHumanToNumber(reciboImpostoPct);
+    return (n || 0) / 100;
+  }, [reciboImpostoPct]);
+
+  function paidInRangeGross(s: Date, e: Date) {
+    const operationalRows = rows.filter(isOperationalCommission);
+
+    return sum(
+      operationalRows.flatMap((r) =>
+        (r.flow || [])
+          .filter((f) => f.data_pagamento_vendedor && isBetweenISO(f.data_pagamento_vendedor, s, e) && Number(f.valor_pago_vendedor) > 0)
+          .map((f) => Number(f.valor_pago_vendedor) || 0)
+      )
+    );
   }
 
-  function vendaCliente(v?: Venda | null) {
-    if (!v) return "—";
-    const lead = (v.lead_id && leadById[v.lead_id]) || (v.cliente_lead_id && leadById[v.cliente_lead_id]);
-    return lead?.nome || lead?.name || "Cliente não identificado";
-  }
+  function previstoInRangeGross(s: Date, e: Date) {
+    let total = 0;
+    const operationalRows = rows.filter(isOperationalCommission);
 
-  function canSeeUnit(unitId?: string | null) {
-    if (isMatrixAdmin) return true;
-    if (!currentUser) return false;
-    if (isBranchManager) return !!unitId && unitId === currentUser.unit_id;
-    return !!unitId && unitId === currentUser.unit_id;
-  }
+    for (const r of operationalRows) {
+      const totalComissao = totalCommissionGross(r);
+      const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
 
-  function canSeeVendor(vendedorAuthOrId?: string | null) {
-    if (isMatrixAdmin) return true;
-    if (!currentUser) return false;
-    const vendedor = vendedorAuthOrId ? userByAuth[vendedorAuthOrId] || userById[vendedorAuthOrId] : null;
-    if (!vendedor) return false;
-    if (isBranchManager) return vendedor.unit_id === currentUser.unit_id;
-    return vendedor.id === currentUser.id || vendedor.auth_user_id === currentUser.auth_user_id;
-  }
+      for (const f of flows) {
+        const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+        if (isPaid) continue;
 
-  const scopedVendors = useMemo(() => {
-    if (isMatrixAdmin) return users.filter((u) => u.is_active !== false);
-    if (isBranchManager) return users.filter((u) => u.unit_id === currentUser?.unit_id && u.is_active !== false);
-    return currentUser ? [currentUser] : [];
-  }, [users, currentUser, isMatrixAdmin, isBranchManager]);
+        const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+        if (!exp) continue;
 
-  const scopedUnits = useMemo(() => {
-    if (isMatrixAdmin) return units.filter((u) => u.is_active !== false);
-    return currentUnit ? [currentUnit] : [];
-  }, [units, currentUnit, isMatrixAdmin]);
-
-  const visibleEntries = useMemo(() => {
-    return entries.filter((e) => {
-      const batch = batches.find((b) => b.id === e.batch_id);
-      const venda = batch ? vendaById[batch.venda_id] : vendaById[e.venda_id];
-      if (!canSeeUnit(e.business_unit_id || batch?.business_unit_id)) return false;
-      if (unitFilter !== "all" && (e.business_unit_id || batch?.business_unit_id) !== unitFilter) return false;
-      if (vendorFilter !== "all" && e.recipient_user_id !== vendorFilter && batch?.vendedor_id !== vendorFilter) return false;
-      if (adminFilter !== "all" && normalize(venda?.administradora || batch?.sim_table_id || "") !== normalize(adminFilter)) return false;
-      if (statusFilter !== "all" && e.status !== statusFilter) return false;
-      if (!between(batch?.data_venda || venda?.data_venda, startDate, endDate)) return false;
-      return true;
-    });
-  }, [entries, batches, vendaById, unitFilter, vendorFilter, adminFilter, statusFilter, startDate, endDate, currentUser, isMatrixAdmin, isBranchManager]);
-
-  const visibleLegacy = useMemo(() => {
-    return legacy.filter((c) => {
-      if (!canSeeVendor(c.vendedor_id)) return false;
-      const vendor = userByAuth[c.vendedor_id] || userById[c.vendedor_id];
-      if (unitFilter !== "all" && vendor?.unit_id !== unitFilter) return false;
-      if (vendorFilter !== "all" && vendor?.id !== vendorFilter && vendor?.auth_user_id !== vendorFilter) return false;
-      if (adminFilter !== "all" && normalize(c.administradora) !== normalize(adminFilter)) return false;
-      if (statusFilter !== "all" && c.status !== statusFilter) return false;
-      if (!between(c.data_venda, startDate, endDate)) return false;
-      return true;
-    });
-  }, [legacy, userByAuth, userById, unitFilter, vendorFilter, adminFilter, statusFilter, startDate, endDate, currentUser, isMatrixAdmin, isBranchManager]);
-
-  const vendasSemComissao = useMemo(() => {
-    const legacyVendaIds = new Set(legacy.map((c) => c.venda_id));
-    const batchVendaIds = new Set(batches.map((b) => b.venda_id));
-    return vendas.filter((v) => {
-      if (legacyVendaIds.has(v.id) || batchVendaIds.has(v.id)) return false;
-      if (!canSeeVendor(v.vendedor_id)) return false;
-      const vendor = vendorFromVenda(v);
-      if (unitFilter !== "all" && vendor?.unit_id !== unitFilter) return false;
-      if (vendorFilter !== "all" && vendor?.id !== vendorFilter && vendor?.auth_user_id !== vendorFilter) return false;
-      if (adminFilter !== "all" && normalize(v.administradora) !== normalize(adminFilter)) return false;
-      if (!between(v.data_venda, startDate, endDate)) return false;
-      return (Number(v.valor_venda) || 0) > 0;
-    });
-  }, [vendas, legacy, batches, unitFilter, vendorFilter, adminFilter, startDate, endDate, currentUser, isMatrixAdmin, isBranchManager]);
-
-  const kpis = useMemo<Kpi>(() => {
-    const entryIds = new Set(visibleEntries.map((e) => e.id));
-    const batchIds = new Set(visibleEntries.map((e) => e.batch_id));
-    const vendaIds = new Set<string>();
-    let bruta = 0;
-    let paga = 0;
-    let programada = 0;
-    let perdida = 0;
-
-    visibleEntries.forEach((e) => {
-      vendaIds.add(e.venda_id);
-      bruta += Number(e.gross_amount) || 0;
-      const flows = entryFlows.filter((f) => f.entry_id === e.id);
-      paga += flows.reduce((a, f) => a + (Number(f.valor_pago) || 0), 0);
-      programada += flows.reduce((a, f) => a + Math.max(0, (Number(f.valor_previsto) || 0) - (Number(f.valor_pago) || 0)), 0);
-    });
-
-    adjustments.forEach((a) => {
-      if (entryIds.has(a.entry_id) || batchIds.has(a.batch_id)) {
-        if (a.adjustment_type === "estorno" || a.adjustment_type === "desconto") perdida += Math.abs(Number(a.amount) || 0);
+        if (exp.getTime() >= s.getTime() && exp.getTime() <= e.getTime()) {
+          const expVal = Number(f.valor_previsto ?? totalComissao * (Number(f.percentual) || 0)) || 0;
+          total += expVal;
+        }
       }
-    });
+    }
 
-    visibleLegacy.forEach((c) => {
-      vendaIds.add(c.venda_id);
-      const total = Number(c.valor_total ?? ((Number(c.base_calculo) || 0) * (Number(c.percent_aplicado) || 0))) || 0;
-      bruta += total;
-      const flows = legacyFlows.filter((f) => f.commission_id === c.id);
-      const paid = flows.reduce((a, f) => a + (Number(f.valor_pago_vendedor) || 0), 0);
-      paga += paid;
-      programada += flows.reduce((a, f) => a + Math.max(0, (Number(f.valor_previsto) || 0) - (Number(f.valor_pago_vendedor) || 0)), 0);
-      if (c.status === "estorno") perdida += Math.max(0, total - paid);
-    });
+    return total;
+  }
 
-    const liquida = bruta * (1 - taxFrac);
+  const kpi = useMemo(() => {
+    const operationalRows = rows.filter(isOperationalCommission);
+    const canceledRows = rows.filter((r) => r.venda_cancelada);
+
+    const vendasTotal = sum(operationalRows.map((r) => r.valor_venda ?? r.base_calculo));
+
+    const comBruta = sum(operationalRows.map((r) => totalCommissionGross(r)));
+    const comLiquida = commissionNet(comBruta, impostoFrac);
+
+    const comPagaBruta = sum(operationalRows.map((r) => paidCommissionGross(r)));
+    const comPagaLiquida = commissionNet(comPagaBruta, impostoFrac);
+
+    const comPendenteBruta = sum(operationalRows.map((r) => pendingCommissionGross(r)));
+    const comPendenteLiquida = commissionNet(comPendenteBruta, impostoFrac);
+
+    const comPerdidaBruta = sum(canceledRows.map((r) => lostCommissionGross(r)));
+    const comPerdidaLiquida = commissionNet(comPerdidaBruta, impostoFrac);
+
     return {
-      vendas: vendaIds.size,
-      bruta,
-      liquida,
-      paga,
-      pendente: Math.max(0, bruta - paga - perdida),
-      perdida,
-      programada,
+      vendasTotal,
+      comBruta,
+      comLiquida,
+      comPagaBruta,
+      comPagaLiquida,
+      comPendenteBruta,
+      comPendenteLiquida,
+      comPerdidaBruta,
+      comPerdidaLiquida,
     };
-  }, [visibleEntries, visibleLegacy, entryFlows, legacyFlows, adjustments, taxFrac]);
+  }, [rows, impostoFrac]);
 
-  const administradoras = useMemo(() => {
-    return uniq([...vendas.map((v) => v.administradora), ...legacy.map((c) => c.administradora)].filter(Boolean) as string[]).sort();
-  }, [vendas, legacy]);
+  const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
+  const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
+  const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
+
+  const previousYearMonthly = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]);
+
+  const comissaoProgramada = useMemo(() => {
+    const programadas: Array<{ dateIso: string; bruto: number; liquido: number }> = [];
+
+    for (const r of rows) {
+      if (!isOperationalCommission(r)) continue;
+
+      const totalComissao = totalCommissionGross(r);
+      const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+
+      for (const f of flows) {
+        const dataProgramada = f.data_pagamento_vendedor;
+        const valorJaPago = Number(f.valor_pago_vendedor) || 0;
+
+        if (!dataProgramada) continue;
+        if (valorJaPago > 0) continue;
+
+        const bruto = Number(f.valor_previsto ?? totalComissao * (Number(f.percentual) || 0)) || 0;
+        const liquido = commissionNet(bruto, impostoFrac);
+
+        programadas.push({
+          dateIso: dataProgramada,
+          bruto,
+          liquido,
+        });
+      }
+    }
+
+    if (!programadas.length) return null;
+
+    programadas.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+    const proxData = programadas[0].dateIso;
+
+    const brutoTotal = programadas.filter((x) => x.dateIso === proxData).reduce((acc, cur) => acc + cur.bruto, 0);
+    const liquidoTotal = programadas.filter((x) => x.dateIso === proxData).reduce((acc, cur) => acc + cur.liquido, 0);
+
+    return {
+      data: proxData,
+      bruto: brutoTotal,
+      liquido: liquidoTotal,
+    };
+  }, [rows, impostoFrac]);
+
+  function onChangeMeses(n: number) {
+    setRuleMeses(n);
+    const arr = [...ruleFluxoPct];
+
+    if (n > arr.length) {
+      while (arr.length < n) arr.push("0,00");
+    } else {
+      arr.length = n;
+    }
+
+    setRuleFluxoPct(arr);
+  }
+
+  const fluxoSoma = useMemo(
+    () => ruleFluxoPct.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0),
+    [ruleFluxoPct]
+  );
+
+  async function fetchRulesForVendor(vId: string) {
+    if (!vId) {
+      setRuleRows([]);
+      return;
+    }
+
+    const { data: rules } = await supabase
+      .from("commission_rules")
+      .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
+      .eq("vendedor_id", vId);
+
+    if (!rules || !rules.length) {
+      setRuleRows([]);
+      return;
+    }
+
+    const rowsOut = (rules as any[]).map((r) => {
+      const st = simTables.find((t) => t.id === r.sim_table_id);
+      const adminName = st?.admin_id ? adminById[st.admin_id] || "—" : "—";
+
+      return {
+        ...(r as CommissionRule),
+        segmento: st?.segmento || "-",
+        nome_tabela: st?.nome_tabela || "-",
+        administradora: adminName,
+      } as CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null };
+    });
+
+    setRuleRows(rowsOut);
+  }
+
+  useEffect(() => {
+    if (openRules && ruleVendorId) {
+      fetchRulesForVendor(ruleVendorId);
+    }
+  }, [openRules, ruleVendorId, simTables, adminById]);
+
+  useEffect(() => {
+    if (!openRules) {
+      setRuleAdminFilter("all");
+      setRuleSegmentFilter("all");
+    }
+  }, [openRules]);
 
   async function saveRule() {
-    if (!canManage) return alert("Somente a matriz pode configurar regras de comissão.");
-    const table = simTables.find((t) => t.id === formRule.sim_table_id);
-    if (!table) return alert("Selecione uma tabela.");
-    if (!formRule.unit_id) return alert("Selecione a unidade da partilha.");
+    if (!canEdit) return alert("Vendedor não pode alterar regras.");
+    if (!ruleVendorId) return alert("Selecione o vendedor.");
+    if (!ruleSimTableId) return alert("Selecione a tabela.");
 
-    const percentTotal = parsePctHuman(formRule.percent_total);
-    const fluxo = parseSplitList(formRule.fluxo);
-    const splitVendedor = parsePctHuman(formRule.vendedor);
-    const splitUnidade = parsePctHuman(formRule.unidade);
-    const splitEmpresa = parsePctHuman(formRule.empresa);
-    const totalSplit = splitVendedor + splitUnidade + splitEmpresa;
+    const pctPadraoPercent = parseFloat((rulePercent || "0").replace(",", "."));
+    if (!isFinite(pctPadraoPercent) || pctPadraoPercent <= 0) return alert("Informe o % Padrão corretamente.");
 
-    if (percentTotal <= 0) return alert("Informe a comissão total da tabela.");
-    if (!fluxo.length || Math.abs(fluxo.reduce((a, b) => a + b, 0) - 1) > 0.001) return alert("O fluxo precisa fechar 100%.");
-    if (Math.abs(totalSplit - 1) > 0.001) return alert("A partilha precisa fechar 100%.");
+    const somaFluxo = fluxoSoma;
+    const soma100 = Math.abs(somaFluxo - 1.0) < 1e-6;
+    const somaIgualPadrao = Math.abs(somaFluxo - pctPadraoPercent) < 1e-6;
 
-    setSaving(true);
-    try {
-      const nomeTabela = table.nome_tabela || table.name || "Tabela";
-      const { data: rule, error } = await supabase
-        .from("commission_table_rules")
-        .insert({
-          sim_table_id: table.id,
-          administradora: table.administradora || null,
-          segmento: table.segmento || null,
-          nome_tabela: nomeTabela,
-          percent_total: percentTotal,
-          fluxo_meses: fluxo.length,
-          fluxo_percentuais: fluxo,
-          is_active: true,
-          created_by: authUserId,
+    if (!(soma100 || somaIgualPadrao)) {
+      return alert(`Soma do fluxo deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
+    }
+
+    let fluxo_percentuais_frac: number[] = [];
+    if (soma100) {
+      fluxo_percentuais_frac = ruleFluxoPct.map((x) => parseFloat((x || "0").replace(",", ".")) || 0);
+    } else {
+      fluxo_percentuais_frac = ruleFluxoPct.map((x) => {
+        const v = parseFloat((x || "0").replace(",", ".")) || 0;
+        return pctPadraoPercent > 0 ? v / pctPadraoPercent : 0;
+      });
+    }
+
+    const percent_padrao_frac = pctPadraoPercent / 100;
+
+    const baseTable = simTables.find((t) => t.id === ruleSimTableId) || ruleFormSimTable;
+    const group = baseTable
+      ? simTables.filter((t) => normalize(t.nome_tabela) === normalize(baseTable.nome_tabela))
+      : ([{ id: ruleSimTableId }] as any[]);
+
+    const payload = group.map((t) => ({
+      vendedor_id: ruleVendorId,
+      sim_table_id: t.id,
+      percent_padrao: percent_padrao_frac,
+      fluxo_meses: ruleMeses,
+      fluxo_percentuais: fluxo_percentuais_frac,
+      obs: ruleObs || null,
+    }));
+
+    const { error } = await supabase.from("commission_rules").upsert(payload as any[], { onConflict: "vendedor_id,sim_table_id" });
+    if (error) return alert(error.message);
+
+    await fetchRulesForVendor(ruleVendorId);
+    setRuleFormOpen(false);
+    alert(`Regra salva e aplicada em ${payload.length} tabela(s) com o mesmo nome.`);
+  }
+
+  async function deleteRuleGroup(vId: string, simTableId: string) {
+    if (!canEdit) return alert("Vendedor não pode alterar regras.");
+    if (!vId || !simTableId) return;
+    if (!confirm("Excluir regra desta tabela (e duplicadas com mesmo nome)?")) return;
+
+    const baseTable = simTables.find((t) => t.id === simTableId);
+    const group = baseTable
+      ? simTables.filter((t) => normalize(t.nome_tabela) === normalize(baseTable.nome_tabela))
+      : ([{ id: simTableId }] as any[]);
+    const ids = group.map((t) => t.id);
+
+    const { error } = await supabase.from("commission_rules").delete().eq("vendedor_id", vId).in("sim_table_id", ids);
+    if (error) return alert(error.message);
+
+    await fetchRulesForVendor(vId);
+  }
+
+  function loadRuleToForm(r: CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null }) {
+    setRuleVendorId(r.vendedor_id);
+    setRuleSimTableId(r.sim_table_id);
+
+    const percentPadrao = (r.percent_padrao ?? 0) * 100;
+    const meses = r.fluxo_meses && r.fluxo_meses > 0 ? r.fluxo_meses : 1;
+    const fluxos = (r.fluxo_percentuais && r.fluxo_percentuais.length ? r.fluxo_percentuais : Array.from({ length: meses }, () => 0)).map((p) =>
+      (p * percentPadrao).toFixed(2).replace(".", ",")
+    );
+
+    setRulePercent(percentPadrao.toFixed(2).replace(".", ","));
+    setRuleMeses(meses);
+    setRuleFluxoPct(fluxos);
+    setRuleObs(r.obs || "");
+  }
+
+  function openRuleFormForTable(rep: SimTable) {
+    if (!canEdit) return alert("Vendedor não pode alterar regras.");
+
+    if (!ruleVendorId) {
+      alert("Selecione um vendedor primeiro.");
+      return;
+    }
+
+    const group = getSimTableGroupByRep(rep);
+    const groupIds = new Set(group.map((t) => t.id));
+    const existing = ruleRows.find((r) => r.vendedor_id === ruleVendorId && groupIds.has(r.sim_table_id));
+
+    setRuleFormSimTable(rep);
+    setRuleSimTableId(rep.id);
+
+    if (existing) {
+      loadRuleToForm(existing);
+    } else {
+      setRulePercent("1,20");
+      setRuleMeses(1);
+      setRuleFluxoPct(["100,00"]);
+      setRuleObs("");
+    }
+
+    setRuleFormOpen(true);
+  }
+
+  async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
+    const { data: existing } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
+    if (existing && existing.length > 0) return existing as CommissionFlow[];
+
+    let meses = 1;
+    let percentuais: number[] = [1];
+
+    if (c.vendedor_id && c.sim_table_id) {
+      const { data: rule } = await supabase
+        .from("commission_rules")
+        .select("fluxo_meses, fluxo_percentuais")
+        .eq("vendedor_id", c.vendedor_id)
+        .eq("sim_table_id", c.sim_table_id)
+        .limit(1);
+
+      if (rule && rule[0]) {
+        const soma = (rule[0].fluxo_percentuais || []).reduce((a: number, b: number) => a + (b || 0), 0);
+        if (rule[0].fluxo_meses > 0 && Math.abs(soma - 1) < 1e-6) {
+          meses = rule[0].fluxo_meses;
+          percentuais = rule[0].fluxo_percentuais;
+        }
+      }
+    }
+
+    const valorTotal = totalCommissionGross(c);
+    const inserts = percentuais.map((p, idx) => ({
+      commission_id: c.id,
+      mes: idx + 1,
+      percentual: p,
+      valor_previsto: Math.round(valorTotal * p * 100) / 100,
+      valor_recebido_admin: null,
+      data_recebimento_admin: null,
+      valor_pago_vendedor: 0,
+      data_pagamento_vendedor: null,
+      recibo_vendedor_url: null,
+      comprovante_pagto_url: null,
+    }));
+
+    const { error } = await supabase.from("commission_flow").insert(inserts as any[]);
+    if (error) console.warn("[ensureFlowForCommission] erro ao inserir fluxo:", error.message);
+
+    const { data: created } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
+    return (created || []) as CommissionFlow[];
+  }
+
+  async function openPaymentFor(c: CommissionWithFlow) {
+    if (!canEdit) return alert("Vendedor não pode registrar pagamento.");
+
+    setPayCommissionId(c.id);
+
+    let { data } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
+
+    if (!data || data.length === 0) {
+      const created = await ensureFlowForCommission(c);
+      data = created as any;
+    }
+
+    const totalGross = totalCommissionGross(c);
+    const arr = (data || []).map((f: any) => ({
+      ...f,
+      _valor_previsto_calc: totalGross * (Number(f.percentual) || 0),
+    }));
+
+    const uniq = new Map<number, CommissionFlow & { _valor_previsto_calc?: number }>();
+    arr.forEach((f: any) => uniq.set(f.mes, f));
+
+    const finalArr = Array.from(uniq.values());
+
+    setPayFlow(finalArr);
+    setPaySelected({});
+
+    const registered = hasRegisteredButUnpaid(finalArr);
+    setPayDefaultTab(registered ? "arquivos" : "selecionar");
+    setPayDate(toDateInput(new Date()));
+    setPayValue("");
+    setOpenPay(true);
+  }
+
+  async function uploadToBucket(file: File, commissionId: string) {
+    const path = `${commissionId}/${Date.now()}-${file.name}`;
+
+    const { data, error } = await supabase.storage.from("comissoes").upload(path, file, { upsert: false });
+    if (error) {
+      alert("Falha ao enviar arquivo: " + error.message);
+      return null;
+    }
+
+    return data?.path || null;
+  }
+
+  async function getSignedUrl(path: string | null | undefined) {
+    if (!path) return null;
+
+    const { data, error } = await supabase.storage.from("comissoes").createSignedUrl(path, 60 * 10);
+    if (error) {
+      console.warn("Signed URL error:", error.message);
+      return null;
+    }
+
+    return (data as any)?.signedUrl || null;
+  }
+
+  async function paySelectedParcels(payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) {
+    if (!canEdit) return alert("Vendedor não pode registrar pagamento.");
+
+    let reciboPath: string | null = null;
+    let compPath: string | null = null;
+
+    if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
+    if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
+
+    const candidates = payFlow.filter((f) => (Number(f.percentual) || 0) > 0);
+    const selected = candidates.filter((f) => paySelected[f.id]);
+
+    if (!selected.length) {
+      alert("Selecione pelo menos uma parcela para pagar.");
+      return;
+    }
+
+    for (const f of selected) {
+      const { error } = await supabase
+        .from("commission_flow")
+        .update({
+          data_pagamento_vendedor: payload.data_pagamento_vendedor || f.data_pagamento_vendedor || toDateInput(new Date()),
+          valor_pago_vendedor: payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : f.valor_pago_vendedor ?? 0,
+          recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
+          comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
         })
-        .select("*")
-        .single();
-      if (error) throw error;
+        .eq("id", f.id);
 
-      const rows = [
-        { table_rule_id: rule.id, business_unit_id: formRule.unit_id, recipient_type: "vendedor", split_percent: splitVendedor, is_active: true, created_by: authUserId },
-        { table_rule_id: rule.id, business_unit_id: formRule.unit_id, recipient_type: "unidade", split_percent: splitUnidade, is_active: true, created_by: authUserId },
-        { table_rule_id: rule.id, business_unit_id: formRule.unit_id, recipient_type: "empresa", split_percent: splitEmpresa, is_active: true, created_by: authUserId },
-      ];
+      if (error) {
+        alert("Falha ao atualizar parcela: " + error.message);
+        return;
+      }
+    }
 
-      const { error: splitErr } = await supabase.from("commission_split_rules").insert(rows as any[]);
-      if (splitErr) throw splitErr;
-      setRuleOpen(false);
-      await loadAll();
-      alert("Regra e partilha cadastradas com sucesso.");
-    } catch (err: any) {
-      alert("Erro ao salvar regra: " + (err?.message || err));
+    const { data: fresh } = await supabase.from("commission_flow").select("*").eq("commission_id", payCommissionId).order("mes", { ascending: true });
+
+    const relevant = (fresh || []).filter((f: any) => (Number(f.percentual) || 0) > 0);
+    const isAllPaid = relevant.length > 0 && relevant.every((f: any) => (Number(f.valor_pago_vendedor) || 0) > 0);
+
+    const { error: updErr } = await supabase
+      .from("commissions")
+      .update({
+        status: isAllPaid ? "pago" : "a_pagar",
+        data_pagamento: isAllPaid ? payload.data_pagamento_vendedor || toDateInput(new Date()) : null,
+      })
+      .eq("id", payCommissionId);
+
+    if (updErr) console.warn("[commissions.update] falhou:", updErr.message);
+
+    const uniq = new Map<number, CommissionFlow>();
+    (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
+    const freshArr = Array.from(uniq.values()) as CommissionFlow[];
+
+    setPayFlow(freshArr);
+    setRows((prev) => prev.map((r) => (r.id === payCommissionId ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" } : r)));
+
+    if (isAllPaid) {
+      setShowPaid(true);
+      setStatus("pago");
+    }
+
+    setOpenPay(false);
+    fetchData();
+  }
+
+  async function searchRefundByProposal() {
+    const prop = (bulkRefundProp || "").trim();
+
+    if (!prop) {
+      setBulkRefundFound(null);
+      return;
+    }
+
+    const { data: vendas } = await supabase.from("vendas").select("id, numero_proposta, vendedor_id, valor_venda").ilike("numero_proposta", `%${prop}%`);
+
+    if (!vendas?.length) {
+      setBulkRefundFound(null);
+      alert("Proposta não encontrada.");
+      return;
+    }
+
+    const vendaIds = vendas.map((v: any) => v.id);
+
+    let qb = supabase.from("commissions").select("*").in("venda_id", vendaIds);
+    if (!isAdmin) qb = qb.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
+
+    const { data: comms } = await qb;
+    const comm = comms?.[0] as Commission | undefined;
+
+    if (!comm) {
+      setBulkRefundFound(null);
+      alert("Nenhuma comissão encontrada para essa proposta.");
+      return;
+    }
+
+    const { data: flows } = await supabase.from("commission_flow").select("*").eq("commission_id", comm.id);
+    const paid = (flows || [])
+      .filter((f: any) => (f.valor_pago_vendedor ?? 0) > 0)
+      .sort((a: any, b: any) => (a.data_pagamento_vendedor || "").localeCompare(b.data_pagamento_vendedor || ""));
+
+    if (!paid.length) {
+      setBulkRefundFound(null);
+      alert("Esta proposta não possui parcelas pagas.");
+      return;
+    }
+
+    setBulkRefundFound({ comm, flows: paid });
+  }
+
+  async function confirmBulkRefund() {
+    if (!canEdit) return alert("Vendedor não pode estornar.");
+    if (!bulkRefundFound) return;
+
+    const gross = parseBRL(bulkRefundGross);
+    if (gross <= 0) {
+      alert("Informe o valor bruto do estorno.");
+      return;
+    }
+
+    setBusyRefund(true);
+
+    try {
+      let remaining = gross;
+      const ordered = [...bulkRefundFound.flows].sort((a, b) => (b.data_pagamento_vendedor || "").localeCompare(a.data_pagamento_vendedor || ""));
+
+      for (const f of ordered) {
+        const current = Math.max(0, f.valor_pago_vendedor ?? 0);
+        if (remaining <= 0) break;
+
+        const take = Math.min(current, remaining);
+        const newPaid = current - take;
+
+        const { error } = await supabase.from("commission_flow").update({ valor_pago_vendedor: newPaid } as any).eq("id", f.id);
+        if (error) throw new Error(error.message);
+
+        remaining -= take;
+
+        try {
+          const net = commissionNet(take, impostoFrac);
+          await supabase.from("commission_refunds").insert({
+            commission_id: f.commission_id,
+            flow_id: f.id,
+            numero_proposta: bulkRefundFound.comm.numero_proposta || null,
+            data_estorno: bulkRefundDate,
+            valor_bruto: take,
+            valor_liquido: net,
+          } as any);
+        } catch (e: any) {
+          console.warn("[commission_refunds] tabela ausente/erro ao registrar:", e?.message);
+        }
+      }
+
+      await supabase.from("commissions").update({ status: "estorno" }).eq("id", bulkRefundFound.comm.id);
+
+      setOpenBulkRefund(false);
+      setBulkRefundFound(null);
+      setBulkRefundGross("");
+      fetchData();
+      alert("Estorno registrado com sucesso.");
+    } catch (e: any) {
+      alert("Falha ao registrar estorno: " + (e?.message || e));
     } finally {
-      setSaving(false);
+      setBusyRefund(false);
     }
   }
 
-  function findRuleForVenda(v: Venda) {
-    const active = rules.filter((r) => r.is_active !== false);
+
+  const partitionBatchByVendaId = useMemo(() => {
+    const m: Record<string, CommissionBatch> = {};
+    partitionBatches.forEach((b) => {
+      if (!b.legacy) m[b.venda_id] = b;
+    });
+    return m;
+  }, [partitionBatches]);
+
+  const partitionVendaById = useMemo(() => {
+    const m: Record<string, Venda> = {};
+    allVendasComissao.forEach((v) => (m[v.id] = v));
+    rows.forEach((r) => {
+      if (!m[r.venda_id]) {
+        m[r.venda_id] = {
+          id: r.venda_id,
+          data_venda: r.data_venda || "",
+          vendedor_id: r.vendedor_id,
+          segmento: r.segmento,
+          tabela: r.tabela,
+          administradora: r.administradora,
+          valor_venda: r.valor_venda || r.base_calculo || 0,
+          numero_proposta: r.numero_proposta,
+        } as Venda;
+      }
+    });
+    return m;
+  }, [allVendasComissao, rows]);
+
+
+  const partitionEntriesVisible = useMemo(() => {
+    return partitionEntries.filter((entry) => {
+      const batch = partitionBatches.find((b) => b.id === entry.batch_id);
+      const vendedor = batch?.vendedor_id ? usersById[batch.vendedor_id] : null;
+      const unitId = entry.business_unit_id || batch?.business_unit_id || vendedor?.unit_id || null;
+
+      if (!isMatrixAdmin) {
+        if (isBranchManager && unitId !== currentUser?.unit_id) return false;
+        if (!isBranchManager && entry.recipient_user_id !== currentUser?.id && batch?.vendedor_id !== currentUser?.id) return false;
+      }
+
+      if (unitFilter !== "all" && unitId !== unitFilter) return false;
+      if (vendedorId !== "all" && entry.recipient_user_id !== vendedorId && batch?.vendedor_id !== vendedorId) return false;
+      if (status !== "all" && entry.status !== status) return false;
+      if (!isBetweenISO(batch?.data_venda, localDateFromISO(periodStart), localDateFromISO(periodEnd))) return false;
+
+      const venda = batch ? partitionVendaById[batch.venda_id] : null;
+      if (adminFilter !== "all" && normalize(venda?.administradora) !== normalize(adminFilter)) return false;
+
+      return true;
+    });
+  }, [
+    partitionEntries,
+    partitionBatches,
+    usersById,
+    isMatrixAdmin,
+    isBranchManager,
+    currentUser,
+    unitFilter,
+    vendedorId,
+    status,
+    periodStart,
+    periodEnd,
+    adminFilter,
+    partitionVendaById,
+  ]);
+
+  function findPartitionRuleForVenda(venda: Venda) {
+    const vendaTabela = normalize(venda.tabela);
+    const vendaAdmin = normalize(venda.administradora);
+
     return (
-      active.find((r) => normalize(r.nome_tabela) === normalize(v.tabela) && (!r.administradora || normalize(r.administradora) === normalize(v.administradora))) ||
-      active.find((r) => normalize(r.nome_tabela) === normalize(v.tabela)) ||
+      tableRules.find(
+        (r) =>
+          r.is_active !== false &&
+          normalize(r.nome_tabela) === vendaTabela &&
+          (!r.administradora || normalize(r.administradora) === vendaAdmin)
+      ) ||
+      tableRules.find((r) => r.is_active !== false && normalize(r.nome_tabela) === vendaTabela) ||
       null
     );
   }
 
-  async function gerarComissao(v: Venda) {
-    if (!canManage) return alert("Somente a matriz pode gerar comissão particionada.");
-    const vendor = vendorFromVenda(v);
-    if (!vendor?.unit_id) return alert("Vendedor sem unidade vinculada.");
-    const unit = unitById[vendor.unit_id];
-    if (!unit) return alert("Unidade do vendedor não encontrada.");
-    const rule = findRuleForVenda(v);
-    if (!rule) return alert(`Não encontrei regra ativa para a tabela: ${v.tabela || "—"}`);
-    const splitRows = splits.filter((s) => s.table_rule_id === rule.id && s.is_active !== false && s.business_unit_id === vendor.unit_id);
-    if (!splitRows.length) return alert("Não existe partilha ativa para essa tabela e unidade.");
+  async function salvarRegraParticionada() {
+    if (!canEdit) return alert("Somente admin pode configurar partilhas.");
+    if (!partRuleTableId) return alert("Selecione a tabela.");
+    if (!partRuleUnitId) return alert("Selecione a unidade.");
 
-    const valorVenda = Number(v.valor_venda) || 0;
-    const total = valorVenda * (Number(rule.percent_total) || 0);
-    if (total <= 0) return alert("Comissão total zerada.");
+    const table = simTables.find((t) => t.id === partRuleTableId);
+    if (!table) return alert("Tabela não encontrada.");
 
-    setSaving(true);
-    try {
-      const { data: batch, error: batchErr } = await supabase
-        .from("commission_batches")
+    const fluxo = parseFluxoPercentuais(partRuleFluxoPct);
+    const splitVendedor = parsePctHumanToNumber(partSplitVendedor) / 100;
+    const splitUnidade = parsePctHumanToNumber(partSplitUnidade) / 100;
+    const splitEmpresa = parsePctHumanToNumber(partSplitEmpresa) / 100;
+
+    if (!isCloseTo100(fluxo)) return alert("O fluxo de pagamento precisa fechar 100%.");
+    if (!isCloseTo100([splitVendedor, splitUnidade, splitEmpresa])) return alert("A partilha precisa fechar 100%.");
+
+    const percentTotal = parsePctHumanToNumber(partRuleTotalPct) / 100;
+    if (percentTotal <= 0) return alert("Informe a comissão total da tabela.");
+
+    const adminName = table.admin_id ? adminById[table.admin_id] || null : null;
+
+    const { data: rule, error } = await supabase
+      .from("commission_table_rules")
+      .insert({
+        sim_table_id: table.id,
+        administradora: adminName,
+        segmento: table.segmento,
+        nome_tabela: table.nome_tabela,
+        percent_total: percentTotal,
+        fluxo_meses: fluxo.length,
+        fluxo_percentuais: fluxo,
+        is_active: true,
+        created_by: authUserId,
+      } as any)
+      .select("*")
+      .single();
+
+    if (error) return alert("Erro ao salvar regra da tabela: " + error.message);
+
+    const splitPayload = [
+      {
+        table_rule_id: rule.id,
+        business_unit_id: partRuleUnitId,
+        recipient_type: "vendedor",
+        split_percent: splitVendedor,
+        is_active: true,
+        created_by: authUserId,
+      },
+      {
+        table_rule_id: rule.id,
+        business_unit_id: partRuleUnitId,
+        recipient_type: "unidade",
+        split_percent: splitUnidade,
+        is_active: true,
+        created_by: authUserId,
+      },
+      {
+        table_rule_id: rule.id,
+        business_unit_id: partRuleUnitId,
+        recipient_type: "empresa",
+        split_percent: splitEmpresa,
+        is_active: true,
+        created_by: authUserId,
+      },
+    ];
+
+    const { error: splitErr } = await supabase.from("commission_split_rules").insert(splitPayload as any[]);
+    if (splitErr) return alert("Erro ao salvar partilha: " + splitErr.message);
+
+    setOpenPartitionRules(false);
+    await fetchData();
+    window.location.reload();
+  }
+
+  async function gerarComissaoParticionadaDeVenda(venda: Venda) {
+    const vendedor = canonUserId(venda.vendedor_id);
+    const userVendedor = vendedor ? usersById[vendedor] : null;
+    if (!userVendedor?.unit_id) throw new Error("Vendedor sem unidade vinculada.");
+
+    if (partitionBatchByVendaId[venda.id]) throw new Error("Esta venda já possui comissão particionada.");
+
+    const rule = findPartitionRuleForVenda(venda);
+    if (!rule) return false;
+
+    const splitsDaUnidade = splitRules.filter(
+      (s) => s.table_rule_id === rule.id && s.business_unit_id === userVendedor.unit_id && s.is_active !== false
+    );
+
+    if (!splitsDaUnidade.length) throw new Error("Existe regra da tabela, mas não há partilha para a unidade do vendedor.");
+
+    const totalSplit = splitsDaUnidade.reduce((acc, cur) => acc + (Number(cur.split_percent) || 0), 0);
+    if (Math.abs(totalSplit - 1) > 0.001) throw new Error("A soma da partilha dessa regra não fecha 100%.");
+
+    const valorVenda = Number(venda.valor_venda) || 0;
+    const commissionTotal = Math.round(valorVenda * (Number(rule.percent_total) || 0) * 100) / 100;
+
+    const { data: batch, error: batchErr } = await supabase
+      .from("commission_batches")
+      .insert({
+        venda_id: venda.id,
+        sim_table_id: rule.sim_table_id,
+        table_rule_id: rule.id,
+        business_unit_id: userVendedor.unit_id,
+        vendedor_id: userVendedor.id,
+        data_venda: venda.data_venda,
+        valor_venda: valorVenda,
+        percent_total: rule.percent_total,
+        commission_total_gross: commissionTotal,
+        status: "a_pagar",
+        legacy: false,
+        created_by: authUserId,
+      } as any)
+      .select("*")
+      .single();
+
+    if (batchErr) throw batchErr;
+
+    const saleUnit = unitById[userVendedor.unit_id];
+    const fluxo = Array.isArray(rule.fluxo_percentuais) && rule.fluxo_percentuais.length ? rule.fluxo_percentuais : [1];
+
+    for (const split of splitsDaUnidade) {
+      const isEmpresa = split.recipient_type === "empresa";
+      const isUnidade = split.recipient_type === "unidade";
+
+      const recipientUserId =
+        split.recipient_type === "vendedor"
+          ? userVendedor.id
+          : split.recipient_user_id || (isEmpresa ? matrixUnit?.manager_user_id || null : saleUnit?.manager_user_id || null);
+
+      const recipientUnitId = isEmpresa ? matrixUnit?.id || null : isUnidade ? saleUnit?.id || null : split.recipient_unit_id || null;
+      const businessUnitId = isEmpresa ? matrixUnit?.id || null : userVendedor.unit_id;
+      const gross = Math.round(commissionTotal * (Number(split.split_percent) || 0) * 100) / 100;
+      const tax = Math.round(gross * impostoFrac * 100) / 100;
+
+      const { data: entry, error: entryErr } = await supabase
+        .from("commission_entries")
         .insert({
-          venda_id: v.id,
-          sim_table_id: rule.sim_table_id || null,
-          table_rule_id: rule.id,
-          business_unit_id: vendor.unit_id,
-          vendedor_id: vendor.id,
-          data_venda: v.data_venda || today(),
-          valor_venda: valorVenda,
-          percent_total: rule.percent_total,
-          commission_total_gross: total,
+          batch_id: batch.id,
+          venda_id: venda.id,
+          recipient_type: split.recipient_type,
+          recipient_user_id: recipientUserId,
+          recipient_unit_id: recipientUnitId,
+          business_unit_id: businessUnitId,
+          split_percent: split.split_percent,
+          gross_amount: gross,
+          tax_amount: tax,
+          net_amount: gross - tax,
           status: "a_pagar",
-          legacy: false,
           created_by: authUserId,
-        })
+        } as any)
         .select("*")
         .single();
-      if (batchErr) throw batchErr;
 
-      for (const s of splitRows) {
-        const isEmpresa = s.recipient_type === "empresa";
-        const isUnidade = s.recipient_type === "unidade";
-        const entryUnitId = isEmpresa ? matrixUnit?.id || null : vendor.unit_id;
-        const managerUserId = isEmpresa ? matrixUnit?.manager_user_id || null : unit.manager_user_id || null;
-        const recipientUserId = s.recipient_type === "vendedor" ? vendor.id : s.recipient_user_id || managerUserId;
-        const recipientUnitId = isEmpresa ? matrixUnit?.id || null : isUnidade ? unit.id : s.recipient_unit_id || null;
-        const gross = total * (Number(s.split_percent) || 0);
-        const tax = gross * taxFrac;
+      if (entryErr) throw entryErr;
 
-        const { data: entry, error: entryErr } = await supabase
-          .from("commission_entries")
-          .insert({
-            batch_id: batch.id,
-            venda_id: v.id,
-            recipient_type: s.recipient_type,
-            recipient_user_id: recipientUserId,
-            recipient_unit_id: recipientUnitId,
-            business_unit_id: entryUnitId,
-            split_percent: s.split_percent,
-            gross_amount: gross,
-            tax_amount: tax,
-            net_amount: gross - tax,
-            status: "a_pagar",
-            created_by: authUserId,
-          })
-          .select("*")
-          .single();
-        if (entryErr) throw entryErr;
-
-        const fluxo = safeArray<number>(rule.fluxo_percentuais).length ? safeArray<number>(rule.fluxo_percentuais) : [1];
-        const flowRows = fluxo.map((p, idx) => ({
-          entry_id: entry.id,
-          batch_id: batch.id,
-          mes: idx + 1,
-          percentual: Number(p) || 0,
-          valor_previsto: gross * (Number(p) || 0),
-          valor_pago: 0,
-          data_pagamento: null,
-          status: "a_pagar",
-        }));
-        const { error: flowErr } = await supabase.from("commission_entry_flow").insert(flowRows as any[]);
-        if (flowErr) throw flowErr;
-      }
-
-      await loadAll();
-      alert("Comissão particionada gerada com sucesso.");
-    } catch (err: any) {
-      alert("Erro ao gerar comissão: " + (err?.message || err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function registrarPagamento() {
-    if (!canManage) return alert("Somente a matriz pode registrar pagamento.");
-    if (!payFlowId) return;
-    const flow = entryFlows.find((f) => f.id === payFlowId);
-    const value = payValue ? parseMoneyBR(payValue) : Number(flow?.valor_previsto) || 0;
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from("commission_entry_flow")
-        .update({ valor_pago: value, data_pagamento: payDate, status: "pago" })
-        .eq("id", payFlowId);
-      if (error) throw error;
-
-      if (payEntryId) {
-        const freshFlows = entryFlows.filter((f) => f.entry_id === payEntryId).map((f) => (f.id === payFlowId ? { ...f, valor_pago: value } : f));
-        const entry = entries.find((e) => e.id === payEntryId);
-        const paid = freshFlows.reduce((a, f) => a + (Number(f.valor_pago) || 0), 0);
-        const status = paid >= (Number(entry?.gross_amount) || 0) - 0.01 ? "pago" : "parcial";
-        await supabase.from("commission_entries").update({ status }).eq("id", payEntryId);
-      }
-      setPayOpen(false);
-      await loadAll();
-    } catch (err: any) {
-      alert("Erro ao registrar pagamento: " + (err?.message || err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function openPay(entry: Entry, flow: EntryFlow) {
-    setPayEntryId(entry.id);
-    setPayFlowId(flow.id);
-    setPayDate(today());
-    setPayValue(String(Number(flow.valor_previsto || 0).toFixed(2)).replace(".", ","));
-    setPayOpen(true);
-  }
-
-  async function registrarEstorno(entry: Entry) {
-    if (!canManage) return alert("Somente a matriz pode registrar estorno.");
-    const amountText = prompt("Valor do estorno/desconto:", String(Number(entry.gross_amount || 0).toFixed(2)).replace(".", ","));
-    if (!amountText) return;
-    const amount = parseMoneyBR(amountText);
-    if (amount <= 0) return alert("Valor inválido.");
-    const description = prompt("Descrição do estorno:", "Estorno de comissão") || "Estorno de comissão";
-    setSaving(true);
-    try {
-      const { error } = await supabase.from("commission_adjustments").insert({
+      const flowPayload = fluxo.map((p, idx) => ({
         entry_id: entry.id,
-        batch_id: entry.batch_id,
-        venda_id: entry.venda_id,
-        adjustment_type: "estorno",
-        amount,
-        description,
-        created_by: authUserId,
-      });
-      if (error) throw error;
-      await supabase.from("commission_entries").update({ status: "estornado" }).eq("id", entry.id);
-      await loadAll();
-    } catch (err: any) {
-      alert("Erro ao registrar estorno: " + (err?.message || err));
-    } finally {
-      setSaving(false);
+        batch_id: batch.id,
+        mes: idx + 1,
+        percentual: Number(p) || 0,
+        valor_previsto: Math.round(gross * (Number(p) || 0) * 100) / 100,
+        valor_pago: 0,
+        data_pagamento: null,
+        status: "a_pagar",
+      }));
+
+      const { error: flowErr } = await supabase.from("commission_entry_flow").insert(flowPayload as any[]);
+      if (flowErr) throw flowErr;
     }
+
+    return true;
   }
 
-  function demonstrativoRows() {
-    const start = demoType === "data" ? demoDate : `${demoMonth}-01`;
-    const end = demoType === "data" ? demoDate : new Date(Number(demoMonth.slice(0, 4)), Number(demoMonth.slice(5, 7)), 0).toISOString().slice(0, 10);
-    const rows: AnyRow[] = [];
+  async function registrarPagamentoParticionado(flow: CommissionEntryFlow) {
+    if (!canEdit) return alert("Somente admin pode registrar pagamento.");
 
-    visibleEntries.forEach((e) => {
-      if (demoRecipient !== "all" && e.recipient_user_id !== demoRecipient) return;
-      const batch = batches.find((b) => b.id === e.batch_id);
-      const venda = vendaById[e.venda_id] || (batch ? vendaById[batch.venda_id] : null);
-      const flows = entryFlows.filter((f) => f.entry_id === e.id && (between(f.data_pagamento, start, end) || (f.status !== "pago" && demoType === "mes")));
-      flows.forEach((f) => {
-        const gross = Number(f.valor_pago || f.valor_previsto) || 0;
-        const imposto = gross * taxFrac;
-        rows.push({
-          tipo: "Comissão",
-          proposta: venda?.numero_proposta || "—",
-          cliente: vendaCliente(venda),
-          descricao: `${e.recipient_type} • ${userById[e.recipient_user_id || ""]?.nome || unitById[e.recipient_unit_id || ""]?.nome || "Favorecido"}`,
-          grupo: venda?.grupo || "—",
-          cota: venda?.cota || "—",
-          parcela: `${f.mes}`,
-          venda: Number(batch?.valor_venda || venda?.valor_venda) || 0,
-          bruta: gross,
-          impostos: imposto,
-          liquida: gross - imposto,
-          status: f.status === "pago" ? "Pago" : "A pagar",
-        });
-      });
-    });
+    const valor = prompt("Valor pago bruto:", String(Number(flow.valor_previsto || 0).toFixed(2)).replace(".", ","));
+    if (valor === null) return;
 
-    adjustments.forEach((a) => {
-      if (!between(a.created_at, start, end)) return;
-      const e = entries.find((x) => x.id === a.entry_id);
-      if (!e || !visibleEntries.some((ve) => ve.id === e.id)) return;
-      if (demoRecipient !== "all" && e.recipient_user_id !== demoRecipient) return;
-      const venda = vendaById[a.venda_id || e.venda_id];
-      const val = Math.abs(Number(a.amount) || 0) * -1;
-      rows.push({
-        tipo: a.adjustment_type === "estorno" ? "Estorno" : "Ajuste",
-        proposta: venda?.numero_proposta || "—",
-        cliente: vendaCliente(venda),
-        descricao: a.description || "Estorno/desconto de comissão",
-        grupo: a.grupo || venda?.grupo || "—",
-        cota: a.cota || venda?.cota || "—",
-        parcela: a.parcela || "—",
-        venda: Number(venda?.valor_venda) || 0,
-        bruta: val,
-        impostos: 0,
-        liquida: val,
-        status: "Descontado",
-      });
-    });
+    const valorPago = parseBRL(valor);
+    const data = prompt("Data do pagamento (AAAA-MM-DD):", toDateInput(new Date()));
+    if (!data) return;
 
-    visibleLegacy.forEach((c) => {
-      if (demoRecipient !== "all") {
-        const vendor = userByAuth[c.vendedor_id] || userById[c.vendedor_id];
-        if (vendor?.id !== demoRecipient) return;
-      }
-      legacyFlows
-        .filter((f) => f.commission_id === c.id && (between(f.data_pagamento_vendedor, start, end) || (demoType === "mes" && !f.data_pagamento_vendedor)))
-        .forEach((f) => {
-          const gross = Number(f.valor_pago_vendedor || f.valor_previsto) || 0;
-          const imposto = gross * taxFrac;
-          rows.push({
-            tipo: c.status === "estorno" ? "Estorno" : "Comissão",
-            proposta: c.numero_proposta || "—",
-            cliente: c.cliente_nome || "Cliente não identificado",
-            descricao: "Comissão modelo anterior",
-            grupo: "—",
-            cota: "—",
-            parcela: `${f.mes}`,
-            venda: Number(c.valor_venda) || 0,
-            bruta: c.status === "estorno" ? -Math.abs(gross) : gross,
-            impostos: c.status === "estorno" ? 0 : imposto,
-            liquida: c.status === "estorno" ? -Math.abs(gross) : gross - imposto,
-            status: f.valor_pago_vendedor ? "Pago" : "A pagar",
-          });
-        });
-    });
+    const { error } = await supabase
+      .from("commission_entry_flow")
+      .update({ valor_pago: valorPago, data_pagamento: data, status: "pago" } as any)
+      .eq("id", flow.id);
 
-    return rows;
+    if (error) return alert("Erro ao registrar pagamento: " + error.message);
+
+    fetchData();
   }
 
-  function gerarPDFDemonstrativo() {
-    const rows = demonstrativoRows();
-    if (!rows.length) return alert("Nenhum lançamento encontrado para o demonstrativo.");
-    const doc = new jsPDF({ orientation: "landscape" });
-    const periodo = demoType === "data" ? demoDate.split("-").reverse().join("/") : demoMonth.split("-").reverse().join("/");
-    const totalBruto = rows.reduce((a, r) => a + r.bruta, 0);
-    const totalImp = rows.reduce((a, r) => a + r.impostos, 0);
-    const totalLiq = rows.reduce((a, r) => a + r.liquida, 0);
+  async function registrarEstornoParticionado(entry: CommissionEntry) {
+    if (!canEdit) return alert("Somente admin pode registrar estorno.");
 
+    const valor = prompt("Valor bruto do estorno:", String(Number(entry.gross_amount || 0).toFixed(2)).replace(".", ","));
+    if (valor === null) return;
+
+    const amount = parseBRL(valor);
+    if (amount <= 0) return alert("Valor inválido.");
+
+    const descricao = prompt("Descrição do estorno:", "Estorno de comissão") || "Estorno de comissão";
+
+    const { error } = await supabase.from("commission_adjustments").insert({
+      entry_id: entry.id,
+      batch_id: entry.batch_id,
+      venda_id: entry.venda_id,
+      adjustment_type: "estorno",
+      amount,
+      description: descricao,
+      created_by: authUserId,
+    } as any);
+
+    if (error) return alert("Erro ao registrar estorno: " + error.message);
+
+    await supabase.from("commission_entries").update({ status: "estornado" } as any).eq("id", entry.id);
+    fetchData();
+  }
+
+  function downloadDemonstrativoParticionadoPDF() {
+    const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
+    const periodoIni =
+      demonstrativoTipo === "data" ? reciboDate : `${demonstrativoMes}-01`;
+    const periodoFim =
+      demonstrativoTipo === "data"
+        ? reciboDate
+        : toDateInput(new Date(Number(demonstrativoMes.slice(0, 4)), Number(demonstrativoMes.slice(5, 7)), 0));
+
+    const rowsPdf: any[] = [];
+
+    for (const entry of partitionEntriesVisible) {
+      const batch = partitionBatches.find((b) => b.id === entry.batch_id);
+      const venda = batch ? partitionVendaById[batch.venda_id] : null;
+      const favorecido = entry.recipient_user_id ? userLabel(entry.recipient_user_id) : unitById[entry.recipient_unit_id || ""]?.nome || "—";
+
+      partitionFlows
+        .filter((f) => f.entry_id === entry.id)
+        .filter((f) => {
+          if (demonstrativoTipo === "data") return f.data_pagamento === reciboDate;
+          return f.data_pagamento ? f.data_pagamento >= periodoIni && f.data_pagamento <= periodoFim : true;
+        })
+        .forEach((flow) => {
+          const bruto = Number(flow.valor_pago || flow.valor_previsto) || 0;
+          const impostos = Math.round(bruto * impostoFrac * 100) / 100;
+          rowsPdf.push([
+            "Comissão",
+            venda?.numero_proposta || "—",
+            (venda?.lead_id && clientesMap[venda.lead_id]) || (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) || "—",
+            `${entry.recipient_type} • ${favorecido}`,
+            (venda as any)?.grupo || "—",
+            (venda as any)?.cota || "—",
+            `M${flow.mes}`,
+            BRL(batch?.valor_venda || venda?.valor_venda),
+            BRL(bruto),
+            BRL(impostos),
+            BRL(bruto - impostos),
+            flow.status === "pago" ? "Pago" : "A pagar",
+          ]);
+        });
+    }
+
+    partitionAdjustments
+      .filter((a) => {
+        const d = String(a.created_at || "").slice(0, 10);
+        return d >= periodoIni && d <= periodoFim;
+      })
+      .forEach((a) => {
+        const entry = partitionEntriesVisible.find((e) => e.id === a.entry_id);
+        if (!entry) return;
+        const batch = partitionBatches.find((b) => b.id === entry.batch_id);
+        const venda = batch ? partitionVendaById[batch.venda_id] : null;
+        const bruto = -Math.abs(Number(a.amount) || 0);
+
+        rowsPdf.push([
+          a.adjustment_type === "estorno" ? "Estorno" : "Ajuste",
+          venda?.numero_proposta || "—",
+          (venda?.lead_id && clientesMap[venda.lead_id]) || (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) || "—",
+          a.description || "Estorno/desconto de comissão",
+          a.grupo || (venda as any)?.grupo || "—",
+          a.cota || (venda as any)?.cota || "—",
+          a.parcela || "—",
+          BRL(batch?.valor_venda || venda?.valor_venda),
+          BRL(bruto),
+          BRL(0),
+          BRL(bruto),
+          "Descontado",
+        ]);
+      });
+
+    if (!rowsPdf.length) return alert("Nenhum lançamento encontrado para o demonstrativo.");
+
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.text("Demonstrativo de Comissão", 14, 16);
+    doc.text("DEMONSTRATIVO DE COMISSÃO", 40, 36);
+
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(`Período: ${periodo}`, 14, 23);
-    doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR")}`, 14, 28);
-    doc.text("Este documento possui caráter demonstrativo e não substitui o comprovante bancário de pagamento.", 14, 33);
+    doc.text(`Período: ${formatISODateBR(periodoIni)} até ${formatISODateBR(periodoFim)}`, 40, 52);
+    doc.text("Este documento possui caráter demonstrativo e não substitui o comprovante bancário de pagamento.", 40, 66);
 
     autoTable(doc, {
-      startY: 39,
+      startY: 82,
       head: [["Tipo", "Proposta", "Cliente", "Descrição", "Grupo", "Cota", "Parcela", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida", "Status"]],
-      body: rows.map((r) => [r.tipo, r.proposta, r.cliente, r.descricao, r.grupo, r.cota, r.parcela, BRL(r.venda), BRL(r.bruta), BRL(r.impostos), BRL(r.liquida), r.status]),
-      styles: { fontSize: 7 },
+      body: rowsPdf,
+      styles: { font: "helvetica", fontSize: 8 },
       headStyles: { fillColor: [30, 41, 63] },
     });
 
-    const y = (doc as any).lastAutoTable?.finalY || 180;
-    doc.setFontSize(10);
-    doc.text(`Comissão Bruta: ${BRL(totalBruto)}`, 14, y + 10);
-    doc.text(`Impostos: ${BRL(totalImp)}`, 85, y + 10);
-    doc.text(`Comissão Líquida: ${BRL(totalLiq)}`, 145, y + 10);
-    doc.save(`demonstrativo-comissao-${demoType === "data" ? demoDate : demoMonth}.pdf`);
+    doc.save(`demonstrativo_comissao_${periodoIni}_${periodoFim}.pdf`);
   }
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center text-slate-600">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Carregando comissões...
-      </div>
-    );
+  async function gerarComissaoDeVenda(venda: Venda) {
+    if (!canEdit) return alert("Vendedor não pode gerar comissão.");
+
+    try {
+      setGenBusy(venda.id);
+
+      try {
+        const gerouParticionado = await gerarComissaoParticionadaDeVenda(venda);
+        if (gerouParticionado) {
+          await fetchData();
+          alert("Comissão particionada gerada com sucesso.");
+          return;
+        }
+      } catch (partErr: any) {
+        alert("Não foi possível gerar comissão particionada: " + (partErr?.message || partErr));
+        return;
+      }
+
+      const vendedorIdCanon = canonUserId(venda.vendedor_id);
+      if (!vendedorIdCanon) {
+        alert("Vínculo do vendedor não encontrado em 'users'.");
+        return;
+      }
+
+      let simTableId: string | null = null;
+      const vendaTabNorm = normalize(venda.tabela);
+      const vendaSegNorm = normalize(venda.segmento);
+
+      const local =
+        simTables.find((s) => normalize(s.nome_tabela) === vendaTabNorm && (!venda.segmento || normalize(s.segmento) === vendaSegNorm)) ||
+        simTables.find((s) => normalize(s.nome_tabela) === vendaTabNorm) ||
+        null;
+
+      simTableId = local?.id || null;
+
+      if (!simTableId && venda.tabela) {
+        let qb2 = supabase.from("sim_tables").select("id, segmento, nome_tabela, admin_id").ilike("nome_tabela", `%${venda.tabela}%`).limit(1);
+        if (venda.segmento) qb2 = qb2.eq("segmento", venda.segmento);
+        const { data: st2 } = await qb2;
+        simTableId = st2?.[0]?.id ?? null;
+      }
+
+      let percent_aplicado: number | null = null;
+      if (simTableId) {
+        const { data: rule } = await supabase
+          .from("commission_rules")
+          .select("percent_padrao")
+          .eq("vendedor_id", vendedorIdCanon)
+          .eq("sim_table_id", simTableId)
+          .limit(1);
+
+        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
+      }
+
+      const base = venda.valor_venda ?? null;
+      const valor_total = percent_aplicado && base ? Math.round(base * percent_aplicado * 100) / 100 : null;
+
+      const insert = {
+        venda_id: venda.id,
+        vendedor_id: vendedorIdCanon,
+        sim_table_id: simTableId,
+        data_venda: venda.data_venda,
+        segmento: venda.segmento,
+        tabela: venda.tabela,
+        administradora: venda.administradora,
+        valor_venda: base,
+        base_calculo: base,
+        percent_aplicado,
+        valor_total,
+        status: "a_pagar" as const,
+      };
+
+      const { data: inserted, error } = await supabase
+        .from("commissions")
+        .insert(insert as any)
+        .select("id, venda_id, vendedor_id, sim_table_id, valor_total, base_calculo, percent_aplicado")
+        .limit(1);
+
+      if (error) {
+        if (String(error.message || "").includes("row-level security")) alert("RLS bloqueou o INSERT. Ajuste policies.");
+        else if (String((error as any).code) === "23503") alert("Não foi possível criar: verifique vendedor e/ou a SimTable.");
+        else alert("Erro ao criar a comissão: " + error.message);
+        return;
+      }
+
+      const createdComm = inserted?.[0] as Commission | undefined;
+      if (createdComm) await ensureFlowForCommission(createdComm);
+
+      await fetchData();
+    } finally {
+      setGenBusy(null);
+    }
   }
+
+  async function retornarComissao(c: Commission) {
+    if (!canEdit) return alert("Vendedor não pode retornar comissão.");
+    if (!confirm("Confirmar retorno desta comissão para 'Vendas sem comissão'?")) return;
+
+    try {
+      const delFlow = await supabase.from("commission_flow").delete().eq("commission_id", c.id).select("id");
+      if (delFlow.error) throw delFlow.error;
+
+      const { data: stillFlows } = await supabase.from("commission_flow").select("id").eq("commission_id", c.id);
+      if (stillFlows && stillFlows.length > 0) {
+        alert("Não foi possível remover as parcelas (RLS).");
+        return;
+      }
+
+      const delComm = await supabase.from("commissions").delete().eq("id", c.id).select("id");
+      if (delComm.error) throw delComm.error;
+
+      setRows((prev) => prev.filter((r) => r.id !== c.id));
+      await fetchData();
+    } catch (err: any) {
+      if (String(err?.message || "").includes("row-level security")) alert("RLS bloqueou a exclusão.");
+      else alert("Falha ao retornar: " + (err?.message || err));
+    }
+  }
+
+  async function saveImpostoParam() {
+    if (!canEdit) return alert("Somente admin pode alterar o imposto.");
+
+    const n = parsePctHumanToNumber(impostoDraft);
+    const val = formatPctHuman(n);
+
+    const { error } = await supabase
+      .from("app_settings")
+      .upsert(
+        {
+          key: APP_SETTING_IMPOSTO_KEY,
+          value: val,
+          updated_at: new Date().toISOString(),
+        } as any,
+        { onConflict: "key" }
+      );
+
+    if (error) {
+      alert("Falha ao salvar imposto: " + error.message);
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(LS_IMPOSTO_PCT, val);
+    } catch {}
+
+    setReciboImpostoPct(val);
+    setOpenImpostoCfg(false);
+  }
+
+  async function downloadReceiptPDFPorData() {
+    const impostoPct = (parsePctHumanToNumber(reciboImpostoPct) || 0) / 100;
+    const dataRecibo = reciboDate;
+
+    const vendedorSel = reciboVendor !== "all" ? reciboVendor : isAdmin ? null : usersByAuth[authUserId || ""]?.id || null;
+
+    const { data: flowsAllOnDate, error: flowsErr } = await supabase.from("commission_flow").select("*, commission_id").eq("data_pagamento_vendedor", dataRecibo);
+
+    if (flowsErr) {
+      alert("Erro ao buscar parcelas: " + flowsErr.message);
+      return;
+    }
+
+    if (!flowsAllOnDate || !flowsAllOnDate.length) {
+      try {
+        const { data: onlyRefunds } = await supabase.from("commission_refunds").select("id").eq("data_estorno", dataRecibo).limit(1);
+        if (!onlyRefunds?.length) {
+          alert("Não há parcelas/estornos na data selecionada.");
+          return;
+        }
+      } catch {
+        alert("Não há parcelas na data selecionada.");
+        return;
+      }
+    }
+
+    const commIdsAll = Array.from(new Set((flowsAllOnDate || []).map((f: any) => f.commission_id)));
+    const { data: commsAll } = await supabase
+      .from("commissions")
+      .select("*")
+      .in("id", commIdsAll.length ? commIdsAll : ["00000000-0000-0000-0000-000000000000"]);
+
+    const chosenFlows = vendedorSel
+      ? (flowsAllOnDate || []).filter((f: any) => (commsAll || []).find((c: any) => c.id === f.commission_id)?.vendedor_id === vendedorSel)
+      : flowsAllOnDate || [];
+
+    const byCommission: Record<string, CommissionFlow[]> = {};
+    chosenFlows.forEach((f: any) => {
+      if (!byCommission[f.commission_id]) byCommission[f.commission_id] = [];
+      if (!byCommission[f.commission_id].some((x) => x.mes === f.mes)) byCommission[f.commission_id].push(f);
+    });
+
+    const commIds = Object.keys(byCommission);
+    const { data: comms } = await supabase
+      .from("commissions")
+      .select("*")
+      .in("id", commIds.length ? commIds : ["00000000-0000-0000-0000-000000000000"]);
+
+    const vendaIds = Array.from(new Set((comms || []).map((c: any) => c.venda_id)));
+    const { data: vendas } = await supabase
+      .from("vendas")
+      .select("id, valor_venda, numero_proposta, cliente_lead_id, lead_id")
+      .in("id", vendaIds.length ? vendaIds : ["00000000-0000-0000-0000-000000000000"]);
+
+    const clienteIds = Array.from(new Set((vendas || []).map((v: any) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
+    const nomesCli: Record<string, string> = {};
+
+    if (clienteIds.length) {
+      const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clienteIds);
+      (cli || []).forEach((c: any) => {
+        nomesCli[c.id] = c.nome || "";
+      });
+    }
+
+    const year = new Date(dataRecibo).getFullYear();
+    const { data: seqData, error: seqErr } = await supabase.rpc("next_receipt_seq", { p_year: year });
+
+    if (seqErr) {
+      alert("Erro ao gerar número do recibo: " + seqErr.message);
+      return;
+    }
+
+    const seq = Number(seqData) || 1;
+    const numeroRecibo = `${String(seq).padStart(3, "0")}/${year}`;
+
+    const vendedorUsado = vendedorSel ?? (comms || [])[0]?.vendedor_id ?? (usersByAuth[authUserId || ""]?.id || null);
+    const vendInfo = vendedorUsado ? secureById[vendedorUsado] : null;
+
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("DEMONSTRATIVO DE COMISSÃO", 297, 40, { align: "center" });
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Recibo Nº: ${numeroRecibo}`, 40, 60);
+    doc.text(`Data: ${formatISODateBR(dataRecibo)}`, 40, 74);
+
+    let y = 92;
+    [
+      "Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03",
+      "Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532",
+    ].forEach((l) => {
+      doc.text(l, 40, y);
+      y += 14;
+    });
+
+    const recebedor = [
+      `Nome do Recebedor: ${userLabel(vendedorUsado)}`,
+      `CPF/CNPJ: ${vendInfo?.cpf || "—"}`,
+      `Endereço: ${
+        [vendInfo?.logradouro, vendInfo?.numero, vendInfo?.bairro, vendInfo?.cidade && `${vendInfo.cidade}/${vendInfo.uf}`].filter(Boolean).join(", ") || "—"
+      }`,
+    ];
+
+    y += 10;
+    recebedor.forEach((l) => {
+      doc.text(l, 40, y);
+      y += 14;
+    });
+
+    y += 6;
+    doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y);
+    y += 16;
+
+    const head = [["CLIENTE", "PROPOSTA", "PARCELA", "R$ VENDA", "COM. BRUTA", "IMPOSTOS", "COM. LÍQUIDA"]];
+    const body: any[] = [];
+    let totalLiquido = 0;
+
+    const commsFiltradas = (comms || []).filter((c: any) => !vendedorSel || c.vendedor_id === vendedorSel);
+    commsFiltradas.sort((a: any, b: any) => (a.venda_id > b.venda_id ? 1 : -1));
+
+    commsFiltradas.forEach((c: any) => {
+      const v = (vendas || []).find((x: any) => x.id === c.venda_id);
+      const clienteId = v?.lead_id || v?.cliente_lead_id || "";
+      const clienteNome = clienteId ? nomesCli[clienteId] || "—" : "—";
+      const vendaValor = v?.valor_venda || 0;
+
+      const parcelas = Array.from(new Map((byCommission[c.id] || []).map((p) => [p.mes, p])).values()) as CommissionFlow[];
+      parcelas.sort((a, b) => a.mes - b.mes);
+
+      parcelas.forEach((p) => {
+        const comBruta = (c.percent_aplicado || 0) * (p.percentual || 0) * vendaValor;
+        const impostos = comBruta * impostoPct;
+        const liquida = comBruta - impostos;
+
+        totalLiquido += liquida;
+
+        body.push([clienteNome, v?.numero_proposta || "—", `M${p.mes}`, BRL(vendaValor), BRL(comBruta), BRL(impostos), BRL(liquida)]);
+      });
+    });
+
+    try {
+      const { data: refunds } = await supabase.from("commission_refunds").select("id, commission_id, flow_id, numero_proposta, data_estorno, valor_bruto, valor_liquido");
+      const refundsOnDate = (refunds || []).filter(
+        (r: any) => r.data_estorno === dataRecibo && (!vendedorSel || rows.find((x) => x.id === r.commission_id)?.vendedor_id === vendedorSel)
+      );
+
+      for (const rf of refundsOnDate) {
+        body.push([
+          "—",
+          rf.numero_proposta || "—",
+          "ESTORNO",
+          "—",
+          BRL(-(rf.valor_bruto || 0)),
+          BRL((rf.valor_bruto || 0) * impostoPct),
+          BRL(-(rf.valor_liquido || 0)),
+        ]);
+        totalLiquido -= rf.valor_liquido || 0;
+      }
+    } catch {}
+
+    autoTable(doc, {
+      startY: y,
+      head,
+      body,
+      styles: { font: "helvetica", fontSize: 10 },
+      headStyles: { fillColor: [30, 41, 63] },
+    });
+
+    const endY = (doc as any).lastAutoTable.finalY + 12;
+
+    doc.setFont("helvetica", "bold");
+    doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
+
+    doc.setFont("helvetica", "normal");
+    doc.text(`Forma de Pagamento: PIX`, 40, endY + 18);
+    doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado || ""]?.pix_key || "—"}`, 40, endY + 34);
+
+    const signY = endY + 100;
+    doc.line(40, signY, 320, signY);
+    doc.text(`${userLabel(vendedorUsado || "")}`, 40, signY + 14);
+    doc.text(`${secureById[vendedorUsado || ""]?.cpf || "—"}`, 40, signY + 28);
+
+    doc.save(`demonstrativo_${dataRecibo}_${userLabel(vendedorUsado || "")}.pdf`);
+  }
+
+  const rowsAPagarBase = useMemo(() => rows.filter((r) => r.status === "a_pagar" && isOperationalCommission(r)), [rows]);
+
+  const rowsAPagar = useMemo(() => {
+    const q = normalize(unpaidPropSearch);
+    if (!q) return rowsAPagarBase;
+    return rowsAPagarBase.filter((r) => normalize(r.numero_proposta || "").includes(q));
+  }, [rowsAPagarBase, unpaidPropSearch]);
+
+  const pagosFlat = useMemo(() => {
+    const list: Array<{ flow: CommissionFlow; comm: CommissionWithFlow }> = [];
+
+    rows
+      .filter((r) => r.status !== "estorno")
+      .forEach((r) =>
+        (r.flow || []).forEach((f) => {
+          if ((Number(f.valor_pago_vendedor) || 0) > 0) {
+            list.push({ flow: f, comm: r });
+          }
+        })
+      );
+
+    return list.sort((a, b) => ((b.flow.data_pagamento_vendedor || "") > (a.flow.data_pagamento_vendedor || "") ? 1 : -1));
+  }, [rows]);
+
+  const pagosFiltered = useMemo(() => {
+    const q = normalize(paidSearch);
+    if (!q) return pagosFlat;
+
+    return pagosFlat.filter(({ comm }) => {
+      const cliente = normalize(comm.cliente_nome || "");
+      const prop = normalize(comm.numero_proposta || "");
+      return cliente.includes(q) || prop.includes(q);
+    });
+  }, [pagosFlat, paidSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(pagosFiltered.length / pageSize));
+  const pageStart = (Math.min(Math.max(paidPage, 1), totalPages) - 1) * pageSize;
+  const pagosPage = pagosFiltered.slice(pageStart, pageStart + pageSize);
 
   return (
-    <div className="min-h-screen space-y-5 p-4 md:p-6" style={{ background: "linear-gradient(135deg,#F5F5F5 0%,#ffffff 45%,#f8fafc 100%)" }}>
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "rgba(161,28,39,.10)", color: C.red }}>
-            <ShieldCheck className="h-3.5 w-3.5" /> Comissões por unidade
-          </div>
-          <h1 className="mt-2 text-2xl font-bold" style={{ color: C.navy }}>Comissões</h1>
-          <p className="text-sm text-slate-500">
-            Modelo novo particionado por vendedor, unidade e matriz. Histórico antigo preservado.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={loadAll} disabled={saving}>
-            <RefreshCcw className="mr-2 h-4 w-4" /> Atualizar
-          </Button>
-          {canManage && (
-            <Button onClick={() => setRuleOpen(true)} style={{ background: C.red }}>
-              <Settings className="mr-2 h-4 w-4" /> Nova regra
-            </Button>
-          )}
-        </div>
+    <div className="relative p-4 space-y-8 isolate">
+      <div className="liquid-bg">
+        <span className="blob b1" />
+        <span className="blob b2" />
+        <span className="gold" />
       </div>
 
-      <Card className="border-0 shadow-sm">
-        <CardContent className="grid gap-3 p-4 md:grid-cols-7">
-          <div>
-            <Label>Início</Label>
-            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </div>
-          <div>
-            <Label>Fim</Label>
-            <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </div>
-          <div>
-            <Label>Unidade</Label>
-            <Select value={unitFilter} onValueChange={setUnitFilter} disabled={!isMatrixAdmin}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas</SelectItem>
-                {scopedUnits.map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Vendedor/Favorecido</Label>
-            <Select value={vendorFilter} onValueChange={setVendorFilter} disabled={!isMatrixAdmin && !isBranchManager}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                {scopedVendors.map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Administradora</Label>
-            <Select value={adminFilter} onValueChange={setAdminFilter}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas</SelectItem>
-                {administradoras.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Status</Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="a_pagar">A pagar</SelectItem>
-                <SelectItem value="parcial">Parcial</SelectItem>
-                <SelectItem value="pago">Pago</SelectItem>
-                <SelectItem value="estornado">Estornado</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Impostos %</Label>
-            <Input value={taxPctHuman} onChange={(e) => setTaxPctHuman(e.target.value)} placeholder="6,00" />
-          </div>
-        </CardContent>
-      </Card>
+      <div className="relative z-[1] space-y-8">
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2">
+              <FilterIcon className="w-5 h-5" /> Filtros
+            </CardTitle>
+          </CardHeader>
 
-      <div className="grid gap-3 md:grid-cols-7">
-        <KpiCard title="Vendas" value={String(kpis.vendas)} />
-        <KpiCard title="Comissão Bruta" value={BRL(kpis.bruta)} />
-        <KpiCard title="Comissão Líquida" value={BRL(kpis.liquida)} />
-        <KpiCard title="Comissão Paga" value={BRL(kpis.paga)} />
-        <KpiCard title="Comissão Pendente" value={BRL(kpis.pendente)} />
-        <KpiCard title="Comissão Perdida" value={BRL(kpis.perdida)} />
-        <KpiCard title="Comissão Programada" value={BRL(kpis.programada)} />
-      </div>
+          <CardContent className="grid grid-cols-1 md:grid-cols-8 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>Vendedor</Label>
+              <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isAdmin}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  {isAdmin && <SelectItem value="all">Todos</SelectItem>}
+                  {activeUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.nome?.trim() || u.email?.trim() || u.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!isAdmin && <div className="text-xs text-gray-500">Modo vendedor: filtros travados.</div>}
+            </div>
 
-      <Tabs defaultValue="painel" className="space-y-4">
-        <TabsList className="flex h-auto flex-wrap justify-start">
-          <TabsTrigger value="painel">Painel</TabsTrigger>
-          <TabsTrigger value="sem">Vendas sem comissão</TabsTrigger>
-          <TabsTrigger value="geradas">Comissões geradas</TabsTrigger>
-          <TabsTrigger value="demo">Demonstrativos</TabsTrigger>
-          <TabsTrigger value="regras">Regras e Partilhas</TabsTrigger>
-        </TabsList>
+            <div className="flex flex-col gap-2">
+              <Label>Unidade</Label>
+              <Select value={unitFilter} onValueChange={setUnitFilter} disabled={!isAdmin}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  {isAdmin && <SelectItem value="all">Todas</SelectItem>}
+                  {(isAdmin ? units : units.filter((u) => u.id === currentUser?.unit_id)).map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-        <TabsContent value="painel">
-          <Card className="border-0 shadow-sm">
-            <CardHeader><CardTitle style={{ color: C.navy }}>Resumo operacional</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border p-4">
-                <div className="text-sm text-slate-500">Perfil de acesso</div>
-                <div className="mt-1 font-semibold" style={{ color: C.navy }}>{currentUser?.nome || "—"}</div>
-                <div className="text-xs text-slate-500">{currentUnit?.nome || "Sem unidade"} • {currentUser?.hierarchy_level || currentUser?.role || "—"}</div>
-              </div>
-              <div className="rounded-xl border p-4">
-                <div className="text-sm text-slate-500">Modelo novo</div>
-                <div className="mt-1 text-2xl font-bold" style={{ color: C.red }}>{visibleEntries.length}</div>
-                <div className="text-xs text-slate-500">lançamentos particionados visíveis</div>
-              </div>
-              <div className="rounded-xl border p-4">
-                <div className="text-sm text-slate-500">Histórico preservado</div>
-                <div className="mt-1 text-2xl font-bold" style={{ color: C.gold }}>{visibleLegacy.length}</div>
-                <div className="text-xs text-slate-500">comissões antigas no período</div>
+            <div className="flex flex-col gap-2">
+              <Label>Início</Label>
+              <Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label>Fim</Label>
+              <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label>Administradora</Label>
+              <Select value={adminFilter} onValueChange={setAdminFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {Array.from(new Set(rows.map((r) => r.administradora).filter(Boolean) as string[])).map((adm) => (
+                    <SelectItem key={adm} value={adm}>
+                      {adm}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label>Segmento</Label>
+              <Select value={segmento} onValueChange={setSegmento}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {Array.from(new Set(simTables.map((t) => t.segmento)))
+                    .filter(Boolean)
+                    .map((seg) => (
+                      <SelectItem key={seg} value={seg}>
+                        {seg}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label>Tabela</Label>
+              <Select value={tabela} onValueChange={setTabela}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {Array.from(new Set(simTables.map((t) => t.nome_tabela)))
+                    .filter(Boolean)
+                    .map((tab) => (
+                      <SelectItem key={tab} value={tab}>
+                        {tab}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label>Status</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as any)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="a_pagar">A pagar</SelectItem>
+                  <SelectItem value="pago">Pago</SelectItem>
+                  <SelectItem value="estorno">Estorno</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="md:col-span-8 flex flex-wrap gap-3 justify-end pt-2">
+              <Button variant="secondary" onClick={() => setOpenRules(true)} disabled={!canEdit} title={!canEdit ? "Vendedor não pode editar regras" : ""}>
+                <Settings className="w-4 h-4 mr-1" /> Regras de Comissão
+              </Button>
+
+              <Button variant="secondary" onClick={() => setOpenPartitionRules(true)} disabled={!canEdit} title={!canEdit ? "Vendedor não pode editar partilhas" : ""}>
+                <Settings className="w-4 h-4 mr-1" /> Partilhas por Unidade
+              </Button>
+
+              <Button onClick={fetchData}>
+                {loading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-1" />}
+                Atualizar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>Nos últimos 5 anos — {userLabel(vendedorId === "all" ? null : vendedorId)}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <Donut
+                paid={paidInRangeGross(new Date(now.getFullYear() - 5, now.getMonth(), 1), now)}
+                pending={0}
+                label="5 anos"
+                hoverPaidText={`Pago bruto no período: ${BRL(paidInRangeGross(new Date(now.getFullYear() - 5, now.getMonth(), 1), now))}`}
+                hoverPendText="—"
+                pendingLegend="—"
+              />
+              <LineChart
+                labels={annual.labels}
+                series={[
+                  { name: "Previsto bruto", data: annual.previstoBruto.map(() => 0) },
+                  { name: "Pago bruto", data: annual.pagoBruto },
+                ]}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>Ano anterior — {new Date().getFullYear() - 1}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <Donut
+                paid={paidInRangeGross(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31))}
+                pending={0}
+                label="Ano anterior"
+                hoverPaidText={`Pago bruto no ano anterior: ${BRL(paidInRangeGross(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31)))}`}
+                hoverPendText="—"
+                pendingLegend="—"
+              />
+              <LineChart
+                labels={previousYearMonthly.labels}
+                series={[
+                  { name: "Previsto bruto", data: previousYearMonthly.previstoBruto },
+                  { name: "Pago bruto", data: previousYearMonthly.pagoBruto },
+                ]}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <Donut
+                paid={paidInRangeGross(new Date(now.getFullYear(), 0, 1), now)}
+                pending={previstoInRangeGross(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31))}
+                label="Ano"
+                hoverPaidText={`Pago bruto no ano: ${BRL(paidInRangeGross(new Date(now.getFullYear(), 0, 1), now))}`}
+                hoverPendText={`Previsto bruto no ano: ${BRL(previstoInRangeGross(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31)))}`}
+                pendingLegend="Previsto bruto"
+              />
+              <LineChart
+                labels={monthlyCurr.labels}
+                series={[
+                  { name: "Previsto bruto", data: monthlyCurr.previstoBruto },
+                  { name: "Pago bruto", data: monthlyCurr.pagoBruto },
+                ]}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>Mês atual (semanas sex→qui)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <Donut
+                paid={paidInRangeGross(mStart, now)}
+                pending={previstoInRangeGross(mStart, endOfMonth(now))}
+                label="Mês"
+                hoverPaidText={`Pago bruto no mês: ${BRL(paidInRangeGross(mStart, now))}`}
+                hoverPendText={`Previsto bruto no mês: ${BRL(previstoInRangeGross(mStart, endOfMonth(now)))}`}
+                pendingLegend="Previsto bruto"
+              />
+              <LineChart
+                labels={weeklyCurr.labels}
+                series={[
+                  { name: "Previsto bruto", data: weeklyCurr.previstoBruto },
+                  { name: "Pago bruto", data: weeklyCurr.pagoBruto },
+                ]}
+              />
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>🔥 Vendas</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>🧾 Comissão Bruta</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>✅ Comissão Líquida</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>📤 Comissão Paga</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-1">
+                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPagaBruta)}</div>
+                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(kpi.comPagaLiquida)}</div>
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="sem">
-          <Card className="border-0 shadow-sm">
-            <CardHeader><CardTitle style={{ color: C.navy }}>Vendas sem comissão</CardTitle></CardHeader>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>⏳ Comissão Pendente</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-1">
+                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPendenteBruta)}</div>
+                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(kpi.comPendenteLiquida)}</div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>💔 Comissão Perdida</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-1">
+                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPerdidaBruta)}</div>
+                <div className="text-lg font-bold text-[#A11C27]">Líquida: {BRL(kpi.comPerdidaLiquida)}</div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>📅 Comissão programada</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {comissaoProgramada ? (
+                <div className="space-y-1">
+                  <div className="text-lg font-bold">Bruta: {BRL(comissaoProgramada.bruto)}</div>
+                  <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(comissaoProgramada.liquido)}</div>
+                  <div className="text-sm text-gray-600">Data do pagamento: {formatISODateBR(comissaoProgramada.data)}</div>
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">Sem comissão programada.</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <span>Comissões particionadas por unidade</span>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={downloadDemonstrativoParticionadoPDF}>
+                  <FileText className="w-4 h-4 mr-1" /> Demonstrativo
+                </Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+
+          <CardContent className="space-y-4 overflow-x-auto">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="flex flex-col gap-2">
+                <Label>Tipo do demonstrativo</Label>
+                <Select value={demonstrativoTipo} onValueChange={(v) => setDemonstrativoTipo(v as "data" | "mes")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="data">Por data de pagamento</SelectItem>
+                    <SelectItem value="mes">Mensal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {demonstrativoTipo === "data" ? (
+                <div className="flex flex-col gap-2">
+                  <Label>Data do demonstrativo</Label>
+                  <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <Label>Mês do demonstrativo</Label>
+                  <Input type="month" value={demonstrativoMes} onChange={(e) => setDemonstrativoMes(e.target.value)} />
+                </div>
+              )}
+            </div>
+
+            <table className="min-w-[1250px] w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="p-2 text-left">Tipo</th>
+                  <th className="p-2 text-left">Favorecido</th>
+                  <th className="p-2 text-left">Unidade</th>
+                  <th className="p-2 text-left">Cliente</th>
+                  <th className="p-2 text-left">Proposta</th>
+                  <th className="p-2 text-right">Partilha</th>
+                  <th className="p-2 text-right">Comissão Bruta</th>
+                  <th className="p-2 text-right">Impostos</th>
+                  <th className="p-2 text-right">Comissão Líquida</th>
+                  <th className="p-2 text-left">Status</th>
+                  <th className="p-2 text-left">Fluxo</th>
+                  <th className="p-2 text-left">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {partitionEntriesVisible.length === 0 && (
+                  <tr>
+                    <td colSpan={12} className="p-4 text-gray-500">
+                      Nenhuma comissão particionada encontrada para os filtros atuais.
+                    </td>
+                  </tr>
+                )}
+
+                {partitionEntriesVisible.map((entry) => {
+                  const batch = partitionBatches.find((b) => b.id === entry.batch_id);
+                  const venda = batch ? partitionVendaById[batch.venda_id] : null;
+                  const unidade = unitById[entry.business_unit_id || batch?.business_unit_id || ""];
+                  const favorecido = entry.recipient_user_id
+                    ? userLabel(entry.recipient_user_id)
+                    : unitById[entry.recipient_unit_id || ""]?.nome || "—";
+                  const entryFlows = partitionFlows.filter((f) => f.entry_id === entry.id).sort((a, b) => a.mes - b.mes);
+                  const clienteId = venda?.lead_id || venda?.cliente_lead_id || "";
+
+                  return (
+                    <tr key={entry.id} className="border-b align-top">
+                      <td className="p-2 capitalize">{entry.recipient_type}</td>
+                      <td className="p-2">{favorecido}</td>
+                      <td className="p-2">{unidade?.nome || "—"}</td>
+                      <td className="p-2">{(clienteId && clientesMap[clienteId]?.trim()) || "—"}</td>
+                      <td className="p-2">{venda?.numero_proposta || "—"}</td>
+                      <td className="p-2 text-right">{pct100(entry.split_percent)}</td>
+                      <td className="p-2 text-right">{BRL(entry.gross_amount)}</td>
+                      <td className="p-2 text-right">{BRL(entry.tax_amount)}</td>
+                      <td className="p-2 text-right">{BRL(entry.net_amount)}</td>
+                      <td className="p-2">{entry.status}</td>
+                      <td className="p-2">
+                        <div className="space-y-1">
+                          {entryFlows.map((flow) => (
+                            <div key={flow.id} className="flex items-center justify-between gap-2 rounded-md bg-gray-50 px-2 py-1 text-xs">
+                              <span>
+                                M{flow.mes} • {BRL(flow.valor_previsto)}
+                              </span>
+                              <span>{flow.status === "pago" ? `Pago ${formatISODateBR(flow.data_pagamento)}` : "A pagar"}</span>
+                              {canEdit && flow.status !== "pago" && (
+                                <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => registrarPagamentoParticionado(flow)}>
+                                  Pagar
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="p-2">
+                        {canEdit && (
+                          <Button size="sm" variant="outline" onClick={() => registrarEstornoParticionado(entry)}>
+                            Estornar
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center justify-between">
+              <span>Vendas sem comissão (somente encarteiradas)</span>
+              <div className="flex items-center gap-3">
+                <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>
+                  {showVendasSem ? "Ocultar" : "Expandir"}
+                </Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+
+          {showVendasSem && (
             <CardContent className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr><th className="p-2">Data</th><th className="p-2">Cliente</th><th className="p-2">Vendedor</th><th className="p-2">Unidade</th><th className="p-2">Administradora</th><th className="p-2">Tabela</th><th className="p-2 text-right">Venda</th><th className="p-2 text-right">Ação</th></tr>
+              <table className="min-w-[1100px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Data</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left hidden md:table-cell">Nº Proposta</th>
+                    <th className="p-2 text-left hidden md:table-cell">Administradora</th>
+                    <th className="p-2 text-left">Segmento</th>
+                    <th className="p-2 text-left">Tabela</th>
+                    <th className="p-2 text-right">Crédito</th>
+                    <th className="p-2 text-left">Ação</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  {vendasSemComissao.map((v) => {
-                    const vendor = vendorFromVenda(v);
-                    const unit = vendor?.unit_id ? unitById[vendor.unit_id] : null;
+                  {vendasSemCom.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="p-4 text-gray-500">
+                        Sem pendências 🎉
+                      </td>
+                    </tr>
+                  )}
+
+                  {vendasSemCom.map((v) => {
+                    const clienteId = v.lead_id || v.cliente_lead_id || "";
+
                     return (
                       <tr key={v.id} className="border-b">
-                        <td className="p-2">{v.data_venda?.split("-").reverse().join("/") || "—"}</td>
-                        <td className="p-2">{vendaCliente(v)}</td>
-                        <td className="p-2">{vendor?.nome || "—"}</td>
-                        <td className="p-2">{unit?.nome || "—"}</td>
-                        <td className="p-2">{v.administradora || "—"}</td>
+                        <td className="p-2">{formatISODateBR(v.data_venda)}</td>
+                        <td className="p-2">{userLabel(v.vendedor_id)}</td>
+                        <td className="p-2">{(clienteId && clientesMap[clienteId]?.trim()) || "—"}</td>
+                        <td className="p-2 hidden md:table-cell">{v.numero_proposta || "—"}</td>
+                        <td className="p-2 hidden md:table-cell">{v.administradora || "—"}</td>
+                        <td className="p-2">{v.segmento || "—"}</td>
                         <td className="p-2">{v.tabela || "—"}</td>
                         <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
-                        <td className="p-2 text-right">
-                          <Button size="sm" variant="outline" onClick={() => gerarComissao(v)} disabled={!canManage || saving}>
-                            <PlusCircle className="mr-1 h-3.5 w-3.5" /> Gerar
+                        <td className="p-2">
+                          <Button
+                            size="sm"
+                            onClick={() => gerarComissaoDeVenda(v)}
+                            disabled={!canEdit || genBusy === v.id}
+                            title={!canEdit ? "Vendedor não pode gerar comissão" : ""}
+                          >
+                            {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
+                            Gerar Comissão
                           </Button>
                         </td>
                       </tr>
                     );
                   })}
-                  {!vendasSemComissao.length && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Nenhuma venda sem comissão no filtro.</td></tr>}
                 </tbody>
               </table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          )}
+        </Card>
 
-        <TabsContent value="geradas">
-          <Card className="border-0 shadow-sm">
-            <CardHeader><CardTitle style={{ color: C.navy }}>Comissões geradas</CardTitle></CardHeader>
-            <CardContent className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr><th className="p-2">Tipo</th><th className="p-2">Favorecido</th><th className="p-2">Unidade</th><th className="p-2">Cliente</th><th className="p-2">Proposta</th><th className="p-2">Partilha</th><th className="p-2 text-right">Bruta</th><th className="p-2 text-right">Líquida</th><th className="p-2">Status</th><th className="p-2">Fluxo</th><th className="p-2 text-right">Ações</th></tr>
-                </thead>
-                <tbody>
-                  {visibleEntries.map((e) => {
-                    const venda = vendaById[e.venda_id];
-                    const fav = userById[e.recipient_user_id || ""]?.nome || unitById[e.recipient_unit_id || ""]?.nome || "—";
-                    const unit = unitById[e.business_unit_id || ""];
-                    const flows = entryFlows.filter((f) => f.entry_id === e.id);
-                    return (
-                      <tr key={e.id} className="border-b align-top">
-                        <td className="p-2 capitalize">{e.recipient_type}</td>
-                        <td className="p-2 font-medium">{fav}</td>
-                        <td className="p-2">{unit?.nome || "—"}</td>
-                        <td className="p-2">{vendaCliente(venda)}</td>
-                        <td className="p-2">{venda?.numero_proposta || "—"}</td>
-                        <td className="p-2">{pct(e.split_percent)}</td>
-                        <td className="p-2 text-right">{BRL(e.gross_amount)}</td>
-                        <td className="p-2 text-right">{BRL(e.net_amount)}</td>
-                        <td className="p-2"><StatusPill value={e.status} /></td>
-                        <td className="p-2">
-                          <div className="space-y-1">
-                            {flows.map((f) => (
-                              <div key={f.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1 text-xs">
-                                <span>{f.mes}ª • {BRL(f.valor_previsto)}</span>
-                                <span>{f.status === "pago" ? "Pago" : "A pagar"}</span>
-                                {canManage && f.status !== "pago" && <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => openPay(e, f)}>Pagar</Button>}
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="p-2 text-right">
-                          {canManage && <Button size="sm" variant="outline" onClick={() => registrarEstorno(e)}>Estornar</Button>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {!visibleEntries.length && <tr><td colSpan={11} className="p-6 text-center text-slate-500">Nenhuma comissão particionada encontrada.</td></tr>}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-        </TabsContent>
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <span className="text-base font-semibold">Detalhamento de Comissões (a pagar)</span>
 
-        <TabsContent value="demo">
-          <Card className="border-0 shadow-sm">
-            <CardHeader><CardTitle style={{ color: C.navy }}>Demonstrativos de comissão</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-5">
-                <div>
-                  <Label>Tipo</Label>
-                  <Select value={demoType} onValueChange={(v: "data" | "mes") => setDemoType(v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="data">Por data de pagamento</SelectItem><SelectItem value="mes">Mensal</SelectItem></SelectContent>
-                  </Select>
-                </div>
-                {demoType === "data" ? <div><Label>Data</Label><Input type="date" value={demoDate} onChange={(e) => setDemoDate(e.target.value)} /></div> : <div><Label>Mês</Label><Input type="month" value={demoMonth} onChange={(e) => setDemoMonth(e.target.value)} /></div>}
-                <div>
-                  <Label>Favorecido</Label>
-                  <Select value={demoRecipient} onValueChange={setDemoRecipient}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:gap-6">
+                <div className="flex flex-col gap-2 min-w-[320px]">
+                  <Label>Vendedor</Label>
+                  <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isAdmin}>
+                    <SelectTrigger className="w-full h-10">
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      {scopedVendors.map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
+                      {isAdmin && <SelectItem value="all">Todos</SelectItem>}
+                      {activeUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.nome?.trim() || u.email?.trim() || u.id}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex items-end">
-                  <Button onClick={gerarPDFDemonstrativo} style={{ background: C.navy }}>
-                    <FileText className="mr-2 h-4 w-4" /> Gerar PDF
-                  </Button>
+
+                <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
+                  <div className="flex flex-col gap-2">
+                    <Label>Data do Recibo</Label>
+                    <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <Label>Imposto (parâmetro)</Label>
+                    <div className="flex items-center gap-2">
+                      <Input value={reciboImpostoPct} readOnly className="w-32" />
+                      {isAdmin && (
+                        <Button size="sm" variant="outline" onClick={() => setOpenImpostoCfg(true)}>
+                          Configurar
+                        </Button>
+                      )}
+                    </div>
+                    {!isAdmin && <div className="text-xs text-gray-500">Percentual definido pela administração.</div>}
+                  </div>
+
+                  <div className="flex items-end gap-3">
+                    <Button onClick={downloadReceiptPDFPorData}>
+                      <FileText className="w-4 h-4 mr-1" /> Demonstrativo
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>
+                      {showUnpaid ? "Ocultar" : "Expandir"}
+                    </Button>
+                  </div>
                 </div>
               </div>
-              <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-600">
-                O demonstrativo substitui o recibo assinado. Ele mostra comissões, parcelas, impostos, status pago/a pagar e estornos/descontos como linhas negativas.
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+            </CardTitle>
+          </CardHeader>
 
-        <TabsContent value="regras">
-          <Card className="border-0 shadow-sm">
-            <CardHeader><CardTitle style={{ color: C.navy }}>Regras e Partilhas</CardTitle></CardHeader>
+          {showUnpaid && (
             <CardContent className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr><th className="p-2">Tabela</th><th className="p-2">Administradora</th><th className="p-2">Comissão Total</th><th className="p-2">Fluxo</th><th className="p-2">Unidade</th><th className="p-2">Partilha</th></tr>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 pb-3">
+                <Input placeholder="Buscar pelo nº da proposta" value={unpaidPropSearch} onChange={(e) => setUnpaidPropSearch(e.target.value)} className="w-[280px]" />
+              </div>
+
+              <table className="min-w-[1200px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Data</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left hidden md:table-cell">Nº Proposta</th>
+                    <th className="p-2 text-left">Segmento</th>
+                    <th className="p-2 text-left">Tabela</th>
+                    <th className="p-2 text-right">Crédito</th>
+                    <th className="p-2 text-right hidden md:table-cell">% Comissão</th>
+                    <th className="p-2 text-right">Valor Comissão</th>
+                    <th className="p-2 text-left">Pgto</th>
+                    <th className="p-2 text-left">% Pago</th>
+                    <th className="p-2 text-left">Ações</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  {rules.map((r) => {
-                    const ruleSplits = splits.filter((s) => s.table_rule_id === r.id);
-                    return (
-                      <tr key={r.id} className="border-b align-top">
-                        <td className="p-2 font-medium">{r.nome_tabela}</td>
-                        <td className="p-2">{r.administradora || "—"}</td>
-                        <td className="p-2">{pct(r.percent_total)}</td>
-                        <td className="p-2">{safeArray<number>(r.fluxo_percentuais).map((x) => pct(x)).join(" / ")}</td>
-                        <td className="p-2">{unitById[ruleSplits[0]?.business_unit_id || ""]?.nome || "—"}</td>
-                        <td className="p-2">{ruleSplits.map((s) => `${s.recipient_type}: ${pct(s.split_percent)}`).join(" • ")}</td>
-                      </tr>
-                    );
-                  })}
-                  {!rules.length && <tr><td colSpan={6} className="p-6 text-center text-slate-500">Nenhuma regra cadastrada.</td></tr>}
+                  {loading && (
+                    <tr>
+                      <td colSpan={12} className="p-6">
+                        <Loader2 className="animate-spin inline mr-2" /> Carregando...
+                      </td>
+                    </tr>
+                  )}
+
+                  {!loading && rowsAPagar.length === 0 && (
+                    <tr>
+                      <td colSpan={12} className="p-6 text-gray-500">
+                        Sem registros.
+                      </td>
+                    </tr>
+                  )}
+
+                  {!loading &&
+                    rowsAPagar.map((r) => {
+                      const isConfirm = hasRegisteredButUnpaid(r.flow);
+                      const chipClasses = isConfirm
+                        ? "!bg-[#1E293F] !text-white hover:!bg-[#1E293F]/90 focus-visible:!ring-[#1E293F]"
+                        : "!bg-[#A11C27] !text-white hover:!bg-[#A11C27]/90 focus-visible:!ring-[#A11C27]";
+
+                      const { paid, total } = flowStats(r.flow);
+                      const { pct } = pctPagoFromCommission(r);
+
+                      return (
+                        <tr key={r.id} className="border-b hover:bg-gray-50">
+                          <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
+                          <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                          <td className="p-2">{r.cliente_nome || "—"}</td>
+                          <td className="p-2 hidden md:table-cell">{r.numero_proposta || "—"}</td>
+                          <td className="p-2">{r.segmento || "—"}</td>
+                          <td className="p-2">{r.tabela || "—"}</td>
+                          <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
+                          <td className="p-2 text-right hidden md:table-cell">{pct100(r.percent_aplicado)}</td>
+                          <td className="p-2 text-right">{BRL(totalCommissionGross(r))}</td>
+                          <td className="p-2">
+                            <span className="font-medium tabular-nums">{total ? `${paid}/${total}` : "—"}</span>
+                          </td>
+                          <td className="p-2">
+                            <span className="font-medium tabular-nums">{`${pct.toFixed(0)}%`}</span>
+                          </td>
+                          <td className="p-2">
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className={chipClasses}
+                                onClick={() => openPaymentFor(r)}
+                                disabled={!canEdit}
+                                title={
+                                  !canEdit
+                                    ? "Vendedor não pode registrar pagamentos"
+                                    : isConfirm
+                                      ? "Existe pagamento registrado sem valor — confirmar"
+                                      : "Registrar pagamento"
+                                }
+                              >
+                                <DollarSign className="w-4 h-4 mr-1" />
+                                {isConfirm ? "Confirmar Pagamento" : "Registrar pagamento"}
+                              </Button>
+
+                              <Button size="sm" variant="outline" onClick={() => retornarComissao(r)} disabled={!canEdit} title={!canEdit ? "Vendedor não pode retornar" : ""}>
+                                <RotateCcw className="w-4 h-4 mr-1" /> Retornar
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+          )}
+        </Card>
 
-      <Dialog open={ruleOpen} onOpenChange={setRuleOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Nova regra de comissão e partilha</DialogTitle></DialogHeader>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <Label>Tabela</Label>
-              <Select value={formRule.sim_table_id} onValueChange={(v) => setFormRule((f) => ({ ...f, sim_table_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {simTables.map((t) => <SelectItem key={t.id} value={t.id}>{t.administradora ? `${t.administradora} • ` : ""}{t.nome_tabela || t.name || t.id}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Unidade da partilha</Label>
-              <Select value={formRule.unit_id} onValueChange={(v) => setFormRule((f) => ({ ...f, unit_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>{units.filter((u) => u.tipo !== "matriz").map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div><Label>Comissão total da tabela %</Label><Input value={formRule.percent_total} onChange={(e) => setFormRule((f) => ({ ...f, percent_total: e.target.value }))} /></div>
-            <div className="md:col-span-2"><Label>Fluxo de pagamento %</Label><Input value={formRule.fluxo} onChange={(e) => setFormRule((f) => ({ ...f, fluxo: e.target.value }))} placeholder="50,00;50,00" /></div>
-            <div><Label>Vendedor % da comissão</Label><Input value={formRule.vendedor} onChange={(e) => setFormRule((f) => ({ ...f, vendedor: e.target.value }))} /></div>
-            <div><Label>Unidade/Gestor % da comissão</Label><Input value={formRule.unidade} onChange={(e) => setFormRule((f) => ({ ...f, unidade: e.target.value }))} /></div>
-            <div><Label>Empresa/Matriz % da comissão</Label><Input value={formRule.empresa} onChange={(e) => setFormRule((f) => ({ ...f, empresa: e.target.value }))} /></div>
-          </div>
-          <div className="flex justify-end gap-2 pt-3">
-            <Button variant="outline" onClick={() => setRuleOpen(false)}>Cancelar</Button>
-            <Button onClick={saveRule} disabled={saving} style={{ background: C.red }}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DollarSign className="mr-2 h-4 w-4" />} Salvar regra
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <span className="text-base font-semibold">Comissões pagas</span>
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:gap-4">
+                <Input
+                  placeholder="Buscar por cliente ou nº proposta"
+                  value={paidSearch}
+                  onChange={(e) => {
+                    setPaidSearch(e.target.value);
+                    setPaidPage(1);
+                  }}
+                  className="w-[280px]"
+                />
+                <div className="flex items-center gap-3">
+                  <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>
+                    {showPaid ? "Ocultar" : "Expandir"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => setOpenBulkRefund(true)}
+                    className="!bg-[#A11C27] !text-white hover:!bg-[#A11C27]/90"
+                    disabled={!canEdit}
+                    title={!canEdit ? "Vendedor não pode estornar" : ""}
+                  >
+                    Estorno
+                  </Button>
+                </div>
+              </div>
+            </CardTitle>
+          </CardHeader>
 
-      <Dialog open={payOpen} onOpenChange={setPayOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Registrar pagamento</DialogTitle></DialogHeader>
-          <div className="grid gap-3">
-            <div><Label>Data de pagamento</Label><Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></div>
-            <div><Label>Valor pago</Label><Input value={payValue} onChange={(e) => setPayValue(e.target.value)} placeholder="0,00" /></div>
-          </div>
-          <div className="flex justify-end gap-2 pt-3">
-            <Button variant="outline" onClick={() => setPayOpen(false)}>Cancelar</Button>
-            <Button onClick={registrarPagamento} disabled={saving} style={{ background: C.red }}>Salvar pagamento</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          {showPaid && (
+            <CardContent className="overflow-x-auto">
+              <table className="min-w-[1100px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Data Pagto</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left hidden md:table-cell">Nº Proposta</th>
+                    <th className="p-2 text-left">Parcela</th>
+                    <th className="p-2 text-right">Valor Pago (Bruto)</th>
+                    <th className="p-2 text-left">Arquivos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagosPage.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-6 text-gray-500">
+                        Nenhum pagamento encontrado.
+                      </td>
+                    </tr>
+                  )}
+
+                  {pagosPage.map(({ flow, comm }) => (
+                    <tr key={flow.id} className="border-b">
+                      <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
+                      <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+                      <td className="p-2">{comm.cliente_nome || "—"}</td>
+                      <td className="p-2 hidden md:table-cell">{comm.numero_proposta || "—"}</td>
+                      <td className="p-2">M{flow.mes}</td>
+                      <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
+                      <td className="p-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
+                          {flow.recibo_vendedor_url && (
+                            <a
+                              className="underline text-blue-700"
+                              href="#"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                const u = await getSignedUrl(flow.recibo_vendedor_url);
+                                if (u) window.open(u, "_blank");
+                              }}
+                            >
+                              Recibo
+                            </a>
+                          )}
+
+                          {flow.comprovante_pagto_url && (
+                            <a
+                              className="underline text-blue-700"
+                              href="#"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                const u = await getSignedUrl(flow.comprovante_pagto_url);
+                                if (u) window.open(u, "_blank");
+                              }}
+                            >
+                              Comprovante
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-4 pt-6">
+                <div className="text-sm text-gray-600">
+                  Mostrando {pagosPage.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageSize, pagosFiltered.length)} de {pagosFiltered.length}
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.max(1, p - 1))} disabled={paidPage <= 1}>
+                    Anterior
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))} disabled={paidPage >= totalPages}>
+                    Próxima
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          )}
+        </Card>
+
+
+        <Dialog open={openPartitionRules} onOpenChange={setOpenPartitionRules}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Regras e Partilhas por Unidade</DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="flex flex-col gap-2 md:col-span-2">
+                  <Label>Tabela</Label>
+                  <Select value={partRuleTableId} onValueChange={setPartRuleTableId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a tabela" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {simTables.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {(t.admin_id && adminById[t.admin_id] ? `${adminById[t.admin_id]} • ` : "") + t.segmento + " • " + t.nome_tabela}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Unidade</Label>
+                  <Select value={partRuleUnitId} onValueChange={setPartRuleUnitId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a unidade" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {units
+                        .filter((u) => u.tipo !== "matriz")
+                        .map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.nome}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Comissão total da tabela (%)</Label>
+                  <Input value={partRuleTotalPct} onChange={(e) => setPartRuleTotalPct(e.target.value)} placeholder="4,00" />
+                </div>
+
+                <div className="flex flex-col gap-2 md:col-span-2">
+                  <Label>Fluxo de pagamento (%)</Label>
+                  <Input value={partRuleFluxoPct} onChange={(e) => setPartRuleFluxoPct(e.target.value)} placeholder="50,00;50,00" />
+                  <div className="text-xs text-gray-500">Separe por ponto e vírgula. A soma deve fechar 100%.</div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Vendedor (% da comissão gerada)</Label>
+                  <Input value={partSplitVendedor} onChange={(e) => setPartSplitVendedor(e.target.value)} placeholder="25,00" />
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Unidade/Gestor (% da comissão gerada)</Label>
+                  <Input value={partSplitUnidade} onChange={(e) => setPartSplitUnidade(e.target.value)} placeholder="25,00" />
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Empresa/Matriz (% da comissão gerada)</Label>
+                  <Input value={partSplitEmpresa} onChange={(e) => setPartSplitEmpresa(e.target.value)} placeholder="50,00" />
+                </div>
+              </div>
+
+              <div className="rounded-md border bg-gray-50 p-4 text-sm text-gray-700">
+                Comissão da tabela é calculada sobre o valor da venda. A partilha é calculada sobre a comissão gerada.
+                Ex.: venda R$ 100.000, tabela 4% = R$ 4.000. Vendedor 25% = R$ 1.000.
+              </div>
+
+              <div className="overflow-x-auto border rounded-md">
+                <table className="min-w-[900px] w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="p-2 text-left">Tabela</th>
+                      <th className="p-2 text-left">Administradora</th>
+                      <th className="p-2 text-left">Unidade</th>
+                      <th className="p-2 text-right">Comissão Total</th>
+                      <th className="p-2 text-left">Fluxo</th>
+                      <th className="p-2 text-left">Partilha</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableRules.map((r) => {
+                      const sp = splitRules.filter((s) => s.table_rule_id === r.id);
+                      return (
+                        <tr key={r.id} className="border-t">
+                          <td className="p-2">{r.nome_tabela}</td>
+                          <td className="p-2">{r.administradora || "—"}</td>
+                          <td className="p-2">{unitById[sp[0]?.business_unit_id || ""]?.nome || "—"}</td>
+                          <td className="p-2 text-right">{pct100(r.percent_total)}</td>
+                          <td className="p-2">{(r.fluxo_percentuais || []).map((x) => pct100(x)).join(" / ")}</td>
+                          <td className="p-2">{sp.map((s) => `${s.recipient_type}: ${pct100(s.split_percent)}`).join(" • ")}</td>
+                        </tr>
+                      );
+                    })}
+                    {!tableRules.length && (
+                      <tr>
+                        <td colSpan={6} className="p-4 text-gray-500">
+                          Nenhuma regra particionada cadastrada.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-6">
+              <Button variant="secondary" onClick={() => setOpenPartitionRules(false)}>
+                Fechar
+              </Button>
+              <Button onClick={salvarRegraParticionada} disabled={!canEdit}>
+                <Save className="w-4 h-4 mr-1" /> Salvar Partilha
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={openRules} onOpenChange={(v) => setOpenRules(v)}>
+          <DialogContent className="max-w-6xl">
+            <DialogHeader>
+              <DialogTitle>Regras de Comissão</DialogTitle>
+            </DialogHeader>
+
+            {!canEdit && <div className="text-sm text-gray-600">Modo vendedor: visualização apenas.</div>}
+
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="flex flex-col gap-2">
+                  <Label>Vendedor</Label>
+                  <Select value={ruleVendorId} onValueChange={(v) => setRuleVendorId(v)} disabled={!canEdit && !isAdmin}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.nome?.trim() || u.email?.trim() || u.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Administradora</Label>
+                  <Select value={ruleAdminFilter} onValueChange={setRuleAdminFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas</SelectItem>
+                      {adminOptions.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Segmento</Label>
+                  <Select value={ruleSegmentFilter} onValueChange={setRuleSegmentFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      {ruleSegmentOptions.map((seg) => (
+                        <SelectItem key={seg} value={seg}>
+                          {seg}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="border rounded-md max-h-[45vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left">Administradora</th>
+                      <th className="p-2 text-left">Segmento</th>
+                      <th className="p-2 text-left">Tabela</th>
+                      <th className="p-2 text-right">% Padrão</th>
+                      <th className="p-2 text-left">Fluxo</th>
+                      <th className="p-2 text-left">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dedupedTables.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="p-4 text-gray-500">
+                          Nenhuma tabela encontrada para os filtros selecionados.
+                        </td>
+                      </tr>
+                    )}
+
+                    {dedupedTables.map(({ rep, all }) => {
+                      const groupIds = new Set(all.map((t) => t.id));
+                      const rule = ruleRows.find((r) => r.vendedor_id === ruleVendorId && groupIds.has(r.sim_table_id));
+
+                      return (
+                        <tr key={rep.id} className="border-t">
+                          <td className="p-2">{adminById[rep.admin_id || ""] || "—"}</td>
+                          <td className="p-2">{rep.segmento || "—"}</td>
+                          <td className="p-2">
+                            {rep.nome_tabela}
+                            {all.length > 1 && <span className="ml-2 text-xs text-gray-500">({all.length} duplicadas)</span>}
+                          </td>
+                          <td className="p-2 text-right">{rule ? pct100(rule.percent_padrao) : "—"}</td>
+                          <td className="p-2">{rule ? `${rule.fluxo_meses} pgtos` : "—"}</td>
+                          <td className="p-2">
+                            <div className="flex flex-wrap gap-2">
+                              <Button size="sm" variant="secondary" onClick={() => openRuleFormForTable(rep)} disabled={!canEdit || !ruleVendorId}>
+                                <Pencil className="w-4 h-4 mr-1" /> {rule ? "Editar" : "Cadastrar"}
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!canEdit || !rule}
+                                onClick={() => rule && deleteRuleGroup(rule.vendedor_id, rule.sim_table_id)}
+                                title={!canEdit ? "Vendedor não pode limpar" : ""}
+                              >
+                                <RotateCcw className="w-4 h-4 mr-1" /> Limpar
+                              </Button>
+
+                              <Button size="icon" variant="ghost" disabled={!rule} onClick={() => rule && setViewRule(rule)} title="Visualizar regra">
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-6">
+              <Button variant="secondary" onClick={() => setOpenRules(false)}>
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={ruleFormOpen}
+          onOpenChange={(open) => {
+            if (!canEdit && open) return;
+            setRuleFormOpen(open);
+            if (!open) setRuleFormSimTable(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>
+                {ruleFormSimTable
+                  ? `Regra de comissão — ${(ruleFormSimTable.admin_id && adminById[ruleFormSimTable.admin_id]) || ""} / ${ruleFormSimTable.segmento} / ${ruleFormSimTable.nome_tabela}`
+                  : "Regra de comissão"}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="flex flex-col gap-2">
+                  <Label>Vendedor</Label>
+                  <Input readOnly value={userLabel(ruleVendorId) || ""} />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
+                  <Input value={rulePercent} onChange={(e) => setRulePercent(e.target.value)} placeholder="1,20" disabled={!canEdit} />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>Nº de meses do fluxo</Label>
+                  <Input type="number" min={1} max={36} value={ruleMeses} onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))} disabled={!canEdit} />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <Label>
+                  Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total <b>ou</b> a soma igual ao % Padrão
+                </Label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 p-4 border rounded-md bg-white">
+                  {Array.from({ length: ruleMeses }).map((_, i) => (
+                    <Input
+                      key={i}
+                      value={ruleFluxoPct[i] || "0,00"}
+                      onChange={(e) => {
+                        const arr = [...ruleFluxoPct];
+                        arr[i] = e.target.value;
+                        setRuleFluxoPct(arr);
+                      }}
+                      placeholder="0,33"
+                      disabled={!canEdit}
+                    />
+                  ))}
+                </div>
+                <div className="text-xs text-gray-600">
+                  Soma do fluxo: <b>{fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão {rulePercent || "0,00"})</b>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-end">
+                <div className="lg:col-span-2 flex flex-col gap-2">
+                  <Label>Observações</Label>
+                  <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" disabled={!canEdit} />
+                </div>
+                <div className="flex gap-3 justify-end">
+                  <Button onClick={saveRule} disabled={!canEdit}>
+                    <Save className="w-4 h-4 mr-1" /> Salvar Regra
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setRulePercent("1,20");
+                      setRuleMeses(1);
+                      setRuleFluxoPct(["100,00"]);
+                      setRuleObs("");
+                    }}
+                    disabled={!canEdit}
+                  >
+                    Limpar
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-6">
+              <Button variant="secondary" onClick={() => setRuleFormOpen(false)}>
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={!!viewRule}
+          onOpenChange={(open) => {
+            if (!open) setViewRule(null);
+          }}
+        >
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Visualizar regra</DialogTitle>
+            </DialogHeader>
+
+            {viewRule && (
+              <div className="space-y-4 text-sm">
+                <div>
+                  <b>Administradora:</b> {viewRule.administradora || "—"}
+                </div>
+                <div>
+                  <b>Segmento:</b> {viewRule.segmento || "—"}
+                </div>
+                <div>
+                  <b>Tabela:</b> {viewRule.nome_tabela}
+                </div>
+                <div>
+                  <b>% Padrão:</b> {pct100(viewRule.percent_padrao)}
+                </div>
+                <div>
+                  <b>Meses do fluxo:</b> {viewRule.fluxo_meses}
+                </div>
+                <div>
+                  <b>Fluxo de pagamento:</b>
+                  <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[200px] overflow-y-auto">
+                    {viewRule.fluxo_percentuais?.map((p, idx) => (
+                      <div key={idx} className="border rounded px-2 py-1 flex items-center justify-between">
+                        <span>M{idx + 1}</span>
+                        <span>{(p * 100).toFixed(2).replace(".", ",")}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <DialogFooter className="pt-4">
+              <Button variant="secondary" onClick={() => setViewRule(null)}>
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={openPay}
+          onOpenChange={(v) => {
+            if (!canEdit && v) return;
+            setOpenPay(v);
+          }}
+        >
+          <DialogContent className="w-[98vw] max-w-[1400px]">
+            <DialogHeader>
+              <DialogTitle>Registrar pagamento ao vendedor</DialogTitle>
+            </DialogHeader>
+
+            <Tabs defaultValue={payDefaultTab}>
+              <TabsList className="mb-4">
+                <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
+                <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="selecionar" className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <div className="flex flex-col gap-2">
+                    <Label>Data do pagamento</Label>
+                    <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Valor pago ao vendedor (opcional)</Label>
+                    <Input placeholder="Ex.: 1.974,00" value={payValue} onChange={(e) => setPayValue(e.target.value)} />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={() =>
+                        paySelectedParcels({
+                          data_pagamento_vendedor: payDate,
+                          valor_pago_vendedor: payValue ? parseBRL(payValue) : undefined,
+                          recibo_file: null,
+                          comprovante_file: null,
+                        })
+                      }
+                    >
+                      <Save className="w-4 h-4 mr-1" /> Salvar
+                    </Button>
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const pend = Object.fromEntries(
+                          payFlow.filter((f) => !f.data_pagamento_vendedor && (f.valor_pago_vendedor ?? 0) === 0).map((f) => [f.id, true])
+                        );
+                        setPaySelected(pend);
+                      }}
+                    >
+                      Selecionar tudo pendente
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-[1300px] w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="p-2 text-left">Sel.</th>
+                        <th className="p-2 text-left">Mês</th>
+                        <th className="p-2 text-left">% Parcela</th>
+                        <th className="p-2 text-right">Valor Previsto</th>
+                        <th className="p-2 text-right">Valor Pago</th>
+                        <th className="p-2 text-left">Data Pagto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {payFlow.map((f) => {
+                        const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
+
+                        return (
+                          <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}>
+                            <td className="p-2">
+                              <Checkbox
+                                checked={!!paySelected[f.id]}
+                                onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))}
+                                disabled={isLocked}
+                              />
+                            </td>
+                            <td className="p-2">M{f.mes}</td>
+                            <td className="p-2">{pct100(f.percentual)}</td>
+                            <td className="p-2 text-right">{BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}</td>
+                            <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                            <td className="p-2">{f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="arquivos" className="space-y-6">
+                <UploadArea onConfirm={paySelectedParcels} />
+              </TabsContent>
+            </Tabs>
+
+            <DialogFooter className="pt-6">
+              <Button onClick={() => setOpenPay(false)} variant="secondary">
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={openImpostoCfg} onOpenChange={setOpenImpostoCfg}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Configurar imposto (fixo)</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="flex flex-col gap-2">
+                <Label>Imposto (%)</Label>
+                <Input value={impostoDraft} onChange={(e) => setImpostoDraft(e.target.value)} placeholder="Ex.: 6,00" disabled={!canEdit} />
+              </div>
+            </div>
+            <DialogFooter className="pt-4">
+              <Button variant="secondary" onClick={() => setOpenImpostoCfg(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={saveImpostoParam} disabled={!canEdit}>
+                Salvar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={openBulkRefund} onOpenChange={(v) => (canEdit ? setOpenBulkRefund(v) : undefined)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Estorno de comissão (por nº de proposta)</DialogTitle>
+            </DialogHeader>
+
+            {!canEdit && <div className="text-sm text-gray-600">Modo vendedor: não é possível estornar.</div>}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2">
+                <Label>Nº da proposta</Label>
+                <div className="flex gap-2">
+                  <Input value={bulkRefundProp} onChange={(e) => setBulkRefundProp(e.target.value)} placeholder="Ex.: 1234" disabled={!canEdit} />
+                  <Button variant="secondary" onClick={searchRefundByProposal} disabled={!canEdit}>
+                    Buscar
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <Label>Data do estorno</Label>
+                <Input type="date" value={bulkRefundDate} onChange={(e) => setBulkRefundDate(e.target.value)} disabled={!canEdit} />
+              </div>
+            </div>
+
+            {bulkRefundFound && (
+              <div className="mt-4 space-y-3 border rounded-md p-4 bg-white">
+                <div className="text-sm text-gray-700">
+                  <b>Vendedor:</b> {userLabel(bulkRefundFound.comm.vendedor_id)} &nbsp; • &nbsp;
+                  <b>Proposta:</b> {bulkRefundFound.comm.numero_proposta || "—"}
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-[700px] w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="p-2 text-left">Parcela</th>
+                        <th className="p-2 text-left">Data Pagto</th>
+                        <th className="p-2 text-right">Valor Pago (Bruto)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bulkRefundFound.flows.map((f) => (
+                        <tr key={f.id} className="border-b">
+                          <td className="p-2">M{f.mes}</td>
+                          <td className="p-2">{formatISODateBR(f.data_pagamento_vendedor)}</td>
+                          <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td className="p-2 font-medium" colSpan={2}>
+                          Total pago
+                        </td>
+                        <td className="p-2 text-right font-bold">{BRL(sum(bulkRefundFound.flows.map((f) => f.valor_pago_vendedor || 0)))}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                  <div className="md:col-span-2">
+                    <Label>Valor bruto do estorno</Label>
+                    <Input value={bulkRefundGross} onChange={(e) => setBulkRefundGross(e.target.value)} placeholder="Ex.: 5.000,00" disabled={!canEdit} />
+                  </div>
+                  <div className="flex flex-col">
+                    <Label>Valor líquido (auto)</Label>
+                    <div className="p-2 border rounded-md bg-gray-50">
+                      {(() => {
+                        const g = parseBRL(bulkRefundGross);
+                        const n = commissionNet(g, impostoFrac);
+                        return BRL(n);
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <DialogFooter className="pt-4">
+              <Button variant="secondary" onClick={() => setOpenBulkRefund(false)}>
+                Fechar
+              </Button>
+              <Button disabled={!bulkRefundFound || busyRefund || !canEdit} onClick={confirmBulkRefund}>
+                {busyRefund ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Confirmar estorno
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= Subcomponentes ========================= */
+function UploadArea({
+  onConfirm,
+}: {
+  onConfirm: (payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) => Promise<void>;
+}) {
+  const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [valorPg, setValorPg] = useState<string>("");
+  const [fileRecibo, setFileRecibo] = useState<File | null>(null);
+  const [fileComp, setFileComp] = useState<File | null>(null);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="flex flex-col gap-2">
+          <Label>Data do pagamento</Label>
+          <Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label>Valor pago ao vendedor (opcional)</Label>
+          <Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} />
+        </div>
+        <div className="flex items-end">
+          <Button
+            onClick={() =>
+              onConfirm({
+                data_pagamento_vendedor: dataPg,
+                valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
+                recibo_file: fileRecibo,
+                comprovante_file: fileComp,
+              })
+            }
+          >
+            <Save className="w-4 h-4 mr-1" /> Confirmar pagamento
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="flex flex-col gap-2">
+          <Label>Recibo assinado (PDF)</Label>
+          <Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label>Comprovante de pagamento (PDF/Imagem)</Label>
+          <Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} />
+        </div>
+      </div>
+
+      <div className="text-xs text-gray-500 leading-relaxed">
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>.
+      </div>
     </div>
   );
 }

@@ -979,7 +979,8 @@ export default function ComissoesPage() {
   const [tableRuleSegmentFilter, setTableRuleSegmentFilter] = useState<string>("all");
   const [tableRuleTableId, setTableRuleTableId] = useState<string>("");
   const [tableRuleTotalPct, setTableRuleTotalPct] = useState<string>("5,00");
-  const [tableRuleFluxoPct, setTableRuleFluxoPct] = useState<string>("2,00;1,00;1,00;1,00");
+  const [tableRuleFluxoMeses, setTableRuleFluxoMeses] = useState<number>(4);
+  const [tableRuleFluxoPctList, setTableRuleFluxoPctList] = useState<string[]>(["2,00", "1,00", "1,00", "1,00"]);
   const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
   const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
@@ -1236,6 +1237,48 @@ export default function ComissoesPage() {
       fluxo: Array.isArray(rule.fluxo_percentuais) ? rule.fluxo_percentuais : [],
     };
   }, [selectedPartTableRule, partSplitVendedor, partSplitUnidade]);
+
+  const selectedTableRuleForForm = useMemo(() => {
+    if (!tableRuleTableId) return null;
+    const table = simTables.find((t) => t.id === tableRuleTableId);
+    if (!table) return null;
+    return (
+      tableRules.find((r) => r.sim_table_id === table.id && r.is_active !== false) ||
+      tableRules.find((r) => normalize(r.nome_tabela) === normalize(table.nome_tabela) && r.is_active !== false) ||
+      null
+    );
+  }, [tableRuleTableId, simTables, tableRules]);
+
+  useEffect(() => {
+    if (!selectedTableRuleForForm) return;
+    const totalPctHuman = (Number(selectedTableRuleForForm.percent_total) || 0) * 100;
+    const fluxoSobreVenda = (selectedTableRuleForForm.fluxo_percentuais || []).map((p) => {
+      const valor = (Number(p) || 0) * (Number(selectedTableRuleForForm.percent_total) || 0) * 100;
+      return valor.toFixed(2).replace(".", ",");
+    });
+
+    setTableRuleTotalPct(totalPctHuman.toFixed(2).replace(".", ","));
+    setTableRuleFluxoMeses(Math.max(1, fluxoSobreVenda.length || 1));
+    setTableRuleFluxoPctList(fluxoSobreVenda.length ? fluxoSobreVenda : [totalPctHuman.toFixed(2).replace(".", ",")]);
+  }, [selectedTableRuleForForm?.id]);
+
+  function alterarQtdParcelasFluxoTabela(qtd: number) {
+    const n = Math.max(1, Math.min(60, Number(qtd) || 1));
+    setTableRuleFluxoMeses(n);
+    setTableRuleFluxoPctList((prev) => {
+      const next = [...prev];
+      while (next.length < n) next.push("0,00");
+      return next.slice(0, n);
+    });
+  }
+
+  const fluxoTabelaSomaPercentualVenda = useMemo(() => {
+    return tableRuleFluxoPctList.reduce((acc, value) => acc + parsePctHumanToNumber(value), 0);
+  }, [tableRuleFluxoPctList]);
+
+  const fluxoTabelaPreviewText = useMemo(() => {
+    return tableRuleFluxoPctList.map((value, idx) => `P${idx + 1}: ${value || "0,00"}%`).join(" • ");
+  }, [tableRuleFluxoPctList]);
 
   const ruleSegmentOptions = useMemo(() => {
     let base = simTables;
@@ -2154,10 +2197,10 @@ export default function ComissoesPage() {
     const percentTotal = parsePctHumanToNumber(tableRuleTotalPct) / 100;
     if (percentTotal <= 0) return alert("Informe a comissão total da tabela.");
 
-    const fluxoRaw = (tableRuleFluxoPct || "")
-      .split(/[;|]/g)
-      .map((x) => parsePctHumanToNumber(x.trim()) / 100)
-      .filter((x) => x > 0);
+    const fluxoRaw = tableRuleFluxoPctList.map((x) => parsePctHumanToNumber(x.trim()) / 100);
+    if (!fluxoRaw.length || fluxoRaw.some((x) => !isFinite(x) || x <= 0)) {
+      return alert("Preencha todos os percentuais do fluxo de pagamento.");
+    }
 
     const fluxoComoPercentualDaVenda = fluxoRaw.reduce((a, b) => a + b, 0);
     if (Math.abs(fluxoComoPercentualDaVenda - percentTotal) > 0.001) {
@@ -3750,7 +3793,7 @@ export default function ComissoesPage() {
                 {selectedPartTableRule ? (
                   <>
                     <div>Comissão total da tabela: <b>{pct100(selectedPartTableRule.percent_total)}</b></div>
-                    <div>Fluxo de pagamento: <b>{(selectedPartTableRule.fluxo_percentuais || []).map((x) => pct100(x)).join(" / ")}</b></div>
+                    <div>Fluxo de pagamento sobre a venda: <b>{(selectedPartTableRule.fluxo_percentuais || []).map((x) => formatPctHuman((Number(x) || 0) * (Number(selectedPartTableRule.percent_total) || 0) * 100)).join(" / ")}</b></div>
                     {selectedPartCommissionPreview && (
                       <div className="text-xs leading-relaxed">
                         Exemplo em venda de R$ 100.000,00: comissão gerada {BRL(selectedPartCommissionPreview.comissaoTotal)} •
@@ -3859,11 +3902,41 @@ export default function ComissoesPage() {
                   <Input value={tableRuleTotalPct} onChange={(e) => setTableRuleTotalPct(e.target.value)} placeholder="5,00" disabled={!canEdit} />
                 </div>
 
-                <div className="flex flex-col gap-2 lg:col-span-3">
+                <div className="flex flex-col gap-2">
+                  <Label>Quantidade de parcelas</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={tableRuleFluxoMeses}
+                    onChange={(e) => alterarQtdParcelasFluxoTabela(parseInt(e.target.value || "1", 10))}
+                    disabled={!canEdit}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2 lg:col-span-4">
                   <Label>Fluxo de pagamento sobre a venda (%)</Label>
-                  <Input value={tableRuleFluxoPct} onChange={(e) => setTableRuleFluxoPct(e.target.value)} placeholder="2,00;1,00;1,00;1,00" disabled={!canEdit} />
-                  <div className="text-xs text-gray-500">
-                    Exemplo: comissão total 5% e fluxo 2% + 1% + 1% + 1%. A soma do fluxo precisa ser igual à comissão total da tabela.
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 rounded-md border bg-white p-3">
+                    {Array.from({ length: tableRuleFluxoMeses }).map((_, idx) => (
+                      <div key={idx} className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">Parcela {idx + 1}</span>
+                        <Input
+                          value={tableRuleFluxoPctList[idx] || "0,00"}
+                          onChange={(e) => {
+                            const next = [...tableRuleFluxoPctList];
+                            next[idx] = e.target.value;
+                            setTableRuleFluxoPctList(next);
+                          }}
+                          placeholder="0,00"
+                          disabled={!canEdit}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-gray-500 leading-relaxed">
+                    Exemplo: comissão total 5% em 4 parcelas: 2,00 + 1,00 + 1,00 + 1,00. Soma atual: <b>{formatPctHuman(fluxoTabelaSomaPercentualVenda)}</b>.
+                    <br />
+                    {fluxoTabelaPreviewText}
                   </div>
                 </div>
 
@@ -3892,7 +3965,7 @@ export default function ComissoesPage() {
                         <td className="p-2">{r.segmento || "—"}</td>
                         <td className="p-2">{r.nome_tabela}</td>
                         <td className="p-2 text-right">{pct100(r.percent_total)}</td>
-                        <td className="p-2">{(r.fluxo_percentuais || []).map((x) => pct100(x)).join(" / ")}</td>
+                        <td className="p-2">{(r.fluxo_percentuais || []).map((x) => formatPctHuman((Number(x) || 0) * (Number(r.percent_total) || 0) * 100)).join(" / ")}</td>
                       </tr>
                     ))}
                     {!tableRules.length && (

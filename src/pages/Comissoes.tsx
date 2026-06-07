@@ -956,7 +956,7 @@ export default function ComissoesPage() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [unitFilter, setUnitFilter] = useState<string>("all");
   const [adminFilter, setAdminFilter] = useState<string>("all");
-  const [periodStart, setPeriodStart] = useState<string>(() => monthStartInput());
+  const [periodStart, setPeriodStart] = useState<string>("2025-01-01");
   const [periodEnd, setPeriodEnd] = useState<string>(() => monthEndInput());
 
   const [tableRules, setTableRules] = useState<CommissionTableRule[]>([]);
@@ -969,11 +969,17 @@ export default function ComissoesPage() {
   const [openPartitionRules, setOpenPartitionRules] = useState(false);
   const [partRuleTableId, setPartRuleTableId] = useState<string>("");
   const [partRuleUnitId, setPartRuleUnitId] = useState<string>("");
-  const [partRuleTotalPct, setPartRuleTotalPct] = useState<string>("4,00");
-  const [partRuleFluxoPct, setPartRuleFluxoPct] = useState<string>("50,00;50,00");
+  const [partVendorId, setPartVendorId] = useState<string>("");
+  const [partAdminFilter, setPartAdminFilter] = useState<string>("all");
+  const [partSegmentFilter, setPartSegmentFilter] = useState<string>("all");
   const [partSplitVendedor, setPartSplitVendedor] = useState<string>("25,00");
   const [partSplitUnidade, setPartSplitUnidade] = useState<string>("25,00");
-  const [partSplitEmpresa, setPartSplitEmpresa] = useState<string>("50,00");
+
+  const [tableRuleAdminFilter, setTableRuleAdminFilter] = useState<string>("all");
+  const [tableRuleSegmentFilter, setTableRuleSegmentFilter] = useState<string>("all");
+  const [tableRuleTableId, setTableRuleTableId] = useState<string>("");
+  const [tableRuleTotalPct, setTableRuleTotalPct] = useState<string>("5,00");
+  const [tableRuleFluxoPct, setTableRuleFluxoPct] = useState<string>("2,00;1,00;1,00;1,00");
   const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
   const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
@@ -1166,6 +1172,70 @@ export default function ComissoesPage() {
       .map((id) => ({ id, name: adminById[id] || "Sem administradora" }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [simTables, adminById]);
+
+  const tableRuleAdminOptions = useMemo(() => adminOptions, [adminOptions]);
+
+  const tableRuleSegmentOptions = useMemo(() => {
+    let base = simTables;
+    if (tableRuleAdminFilter !== "all") base = base.filter((t) => t.admin_id === tableRuleAdminFilter);
+    return Array.from(new Set(base.map((t) => t.segmento).filter(Boolean))).sort() as string[];
+  }, [simTables, tableRuleAdminFilter]);
+
+  const tableRuleTableOptions = useMemo(() => {
+    return simTables
+      .filter((t) => tableRuleAdminFilter === "all" || t.admin_id === tableRuleAdminFilter)
+      .filter((t) => tableRuleSegmentFilter === "all" || t.segmento === tableRuleSegmentFilter)
+      .sort((a, b) => {
+        const an = adminById[a.admin_id || ""] || "";
+        const bn = adminById[b.admin_id || ""] || "";
+        return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
+      });
+  }, [simTables, tableRuleAdminFilter, tableRuleSegmentFilter, adminById]);
+
+  const partSegmentOptions = useMemo(() => {
+    let base = simTables;
+    if (partAdminFilter !== "all") base = base.filter((t) => t.admin_id === partAdminFilter);
+    return Array.from(new Set(base.map((t) => t.segmento).filter(Boolean))).sort() as string[];
+  }, [simTables, partAdminFilter]);
+
+  const partTableOptions = useMemo(() => {
+    return simTables
+      .filter((t) => partAdminFilter === "all" || t.admin_id === partAdminFilter)
+      .filter((t) => partSegmentFilter === "all" || t.segmento === partSegmentFilter)
+      .filter((t) => tableRules.some((r) => r.sim_table_id === t.id || normalize(r.nome_tabela) === normalize(t.nome_tabela)))
+      .sort((a, b) => {
+        const an = adminById[a.admin_id || ""] || "";
+        const bn = adminById[b.admin_id || ""] || "";
+        return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
+      });
+  }, [simTables, partAdminFilter, partSegmentFilter, adminById, tableRules]);
+
+  const selectedPartTable = useMemo(() => simTables.find((t) => t.id === partRuleTableId) || null, [simTables, partRuleTableId]);
+  const selectedPartTableRule = useMemo(() => {
+    if (!selectedPartTable) return null;
+    return (
+      tableRules.find((r) => r.sim_table_id === selectedPartTable.id && r.is_active !== false) ||
+      tableRules.find((r) => normalize(r.nome_tabela) === normalize(selectedPartTable.nome_tabela) && r.is_active !== false) ||
+      null
+    );
+  }, [tableRules, selectedPartTable]);
+
+  const selectedPartCommissionPreview = useMemo(() => {
+    const rule = selectedPartTableRule;
+    if (!rule) return null;
+    const vendaExemplo = 100000;
+    const comissaoTotal = vendaExemplo * (Number(rule.percent_total) || 0);
+    const vendedorFrac = parsePctHumanToNumber(partSplitVendedor) / 100;
+    const unidadeFrac = parsePctHumanToNumber(partSplitUnidade) / 100;
+    const empresaFrac = Math.max(0, 1 - vendedorFrac - unidadeFrac);
+    return {
+      comissaoTotal,
+      vendedorFrac,
+      unidadeFrac,
+      empresaFrac,
+      fluxo: Array.isArray(rule.fluxo_percentuais) ? rule.fluxo_percentuais : [],
+    };
+  }, [selectedPartTableRule, partSplitVendedor, partSplitUnidade]);
 
   const ruleSegmentOptions = useMemo(() => {
     let base = simTables;
@@ -2074,50 +2144,102 @@ export default function ComissoesPage() {
     );
   }
 
+  async function salvarRegraTabelaParticionada() {
+    if (!canEdit) return alert("Somente admin pode configurar regras de comissão.");
+    if (!tableRuleTableId) return alert("Selecione a tabela.");
+
+    const table = simTables.find((t) => t.id === tableRuleTableId);
+    if (!table) return alert("Tabela não encontrada.");
+
+    const percentTotal = parsePctHumanToNumber(tableRuleTotalPct) / 100;
+    if (percentTotal <= 0) return alert("Informe a comissão total da tabela.");
+
+    const fluxoRaw = (tableRuleFluxoPct || "")
+      .split(/[;|]/g)
+      .map((x) => parsePctHumanToNumber(x.trim()) / 100)
+      .filter((x) => x > 0);
+
+    const fluxoComoPercentualDaVenda = fluxoRaw.reduce((a, b) => a + b, 0);
+    if (Math.abs(fluxoComoPercentualDaVenda - percentTotal) > 0.001) {
+      return alert(
+        `O fluxo precisa somar a comissão total da tabela. Comissão total: ${formatPctHuman(percentTotal * 100)}. Soma do fluxo: ${formatPctHuman(fluxoComoPercentualDaVenda * 100)}.`
+      );
+    }
+
+    const fluxoPercentuais = fluxoRaw.map((x) => x / percentTotal);
+    const adminName = table.admin_id ? adminById[table.admin_id] || null : null;
+    const payload = {
+      sim_table_id: table.id,
+      administradora: adminName,
+      segmento: table.segmento,
+      nome_tabela: table.nome_tabela,
+      percent_total: percentTotal,
+      fluxo_meses: fluxoPercentuais.length,
+      fluxo_percentuais: fluxoPercentuais,
+      is_active: true,
+      created_by: authUserId,
+    } as any;
+
+    const existing = tableRules.find((r) => r.sim_table_id === table.id && r.is_active !== false);
+    const { error } = existing
+      ? await supabase.from("commission_table_rules").update(payload).eq("id", existing.id)
+      : await supabase.from("commission_table_rules").insert(payload);
+
+    if (error) return alert("Erro ao salvar regra da tabela: " + error.message);
+
+    await fetchData();
+    alert("Regra da tabela salva com sucesso.");
+  }
+
   async function salvarRegraParticionada() {
     if (!canEdit) return alert("Somente admin pode configurar partilhas.");
     if (!partRuleTableId) return alert("Selecione a tabela.");
     if (!partRuleUnitId) return alert("Selecione a unidade.");
+    if (!partVendorId) return alert("Selecione o vendedor de referência da unidade.");
 
     const table = simTables.find((t) => t.id === partRuleTableId);
     if (!table) return alert("Tabela não encontrada.");
 
-    const fluxo = parseFluxoPercentuais(partRuleFluxoPct);
+    const rule =
+      tableRules.find((r) => r.sim_table_id === table.id && r.is_active !== false) ||
+      tableRules.find((r) => normalize(r.nome_tabela) === normalize(table.nome_tabela) && r.is_active !== false);
+
+    if (!rule) return alert("Cadastre primeiro a regra de comissão dessa tabela em Regras de Comissão.");
+
     const splitVendedor = parsePctHumanToNumber(partSplitVendedor) / 100;
     const splitUnidade = parsePctHumanToNumber(partSplitUnidade) / 100;
-    const splitEmpresa = parsePctHumanToNumber(partSplitEmpresa) / 100;
+    const splitEmpresa = 1 - splitVendedor - splitUnidade;
 
-    if (!isCloseTo100(fluxo)) return alert("O fluxo de pagamento precisa fechar 100%.");
-    if (!isCloseTo100([splitVendedor, splitUnidade, splitEmpresa])) return alert("A partilha precisa fechar 100%.");
+    if (splitVendedor < 0 || splitUnidade < 0 || splitEmpresa < -0.001) {
+      return alert("A soma de Vendedor + Unidade não pode passar de 100%.");
+    }
 
-    const percentTotal = parsePctHumanToNumber(partRuleTotalPct) / 100;
-    if (percentTotal <= 0) return alert("Informe a comissão total da tabela.");
+    const unidade = unitById[partRuleUnitId];
+    const vendedor = usersById[partVendorId];
+    if (!unidade) return alert("Unidade não encontrada.");
+    if (!vendedor) return alert("Vendedor não encontrado.");
+    if (vendedor.unit_id && vendedor.unit_id !== partRuleUnitId) {
+      return alert("O vendedor selecionado não está vinculado à unidade escolhida.");
+    }
 
-    const adminName = table.admin_id ? adminById[table.admin_id] || null : null;
+    const matrixManagerId = matrixUnit?.manager_user_id || null;
+    const unitManagerId = unidade.manager_user_id || null;
 
-    const { data: rule, error } = await supabase
-      .from("commission_table_rules")
-      .insert({
-        sim_table_id: table.id,
-        administradora: adminName,
-        segmento: table.segmento,
-        nome_tabela: table.nome_tabela,
-        percent_total: percentTotal,
-        fluxo_meses: fluxo.length,
-        fluxo_percentuais: fluxo,
-        is_active: true,
-        created_by: authUserId,
-      } as any)
-      .select("*")
-      .single();
+    const { error: delErr } = await supabase
+      .from("commission_split_rules")
+      .delete()
+      .eq("table_rule_id", rule.id)
+      .eq("business_unit_id", partRuleUnitId);
 
-    if (error) return alert("Erro ao salvar regra da tabela: " + error.message);
+    if (delErr) return alert("Erro ao substituir partilha anterior: " + delErr.message);
 
     const splitPayload = [
       {
         table_rule_id: rule.id,
         business_unit_id: partRuleUnitId,
         recipient_type: "vendedor",
+        recipient_user_id: partVendorId,
+        recipient_unit_id: partRuleUnitId,
         split_percent: splitVendedor,
         is_active: true,
         created_by: authUserId,
@@ -2126,6 +2248,8 @@ export default function ComissoesPage() {
         table_rule_id: rule.id,
         business_unit_id: partRuleUnitId,
         recipient_type: "unidade",
+        recipient_user_id: unitManagerId,
+        recipient_unit_id: partRuleUnitId,
         split_percent: splitUnidade,
         is_active: true,
         created_by: authUserId,
@@ -2134,7 +2258,9 @@ export default function ComissoesPage() {
         table_rule_id: rule.id,
         business_unit_id: partRuleUnitId,
         recipient_type: "empresa",
-        split_percent: splitEmpresa,
+        recipient_user_id: matrixManagerId,
+        recipient_unit_id: matrixUnit?.id || null,
+        split_percent: Math.max(0, splitEmpresa),
         is_active: true,
         created_by: authUserId,
       },
@@ -2143,9 +2269,8 @@ export default function ComissoesPage() {
     const { error: splitErr } = await supabase.from("commission_split_rules").insert(splitPayload as any[]);
     if (splitErr) return alert("Erro ao salvar partilha: " + splitErr.message);
 
-    setOpenPartitionRules(false);
     await fetchData();
-    window.location.reload();
+    alert("Partilha da unidade salva com sucesso.");
   }
 
   async function gerarComissaoParticionadaDeVenda(venda: Venda) {
@@ -2621,7 +2746,7 @@ export default function ComissoesPage() {
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Recibo Nº: ${numeroRecibo}`, 40, 60);
+    doc.text(`Demonstrativo Nº: ${numeroRecibo}`, 40, 60);
     doc.text(`Data: ${formatISODateBR(dataRecibo)}`, 40, 74);
 
     let y = 92;
@@ -2648,7 +2773,7 @@ export default function ComissoesPage() {
     });
 
     y += 6;
-    doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y);
+    doc.text("Descrição: Demonstrativo das comissões, pagamentos e estornos abaixo relacionados.", 40, y);
     y += 16;
 
     const head = [["CLIENTE", "PROPOSTA", "PARCELA", "R$ VENDA", "COM. BRUTA", "IMPOSTOS", "COM. LÍQUIDA"]];
@@ -2715,10 +2840,9 @@ export default function ComissoesPage() {
     doc.text(`Forma de Pagamento: PIX`, 40, endY + 18);
     doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado || ""]?.pix_key || "—"}`, 40, endY + 34);
 
-    const signY = endY + 100;
-    doc.line(40, signY, 320, signY);
-    doc.text(`${userLabel(vendedorUsado || "")}`, 40, signY + 14);
-    doc.text(`${secureById[vendedorUsado || ""]?.cpf || "—"}`, 40, signY + 28);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("Documento demonstrativo. O pagamento deve ser comprovado pelo comprovante bancário anexado ao lançamento.", 40, endY + 58);
 
     doc.save(`demonstrativo_${dataRecibo}_${userLabel(vendedorUsado || "")}.pdf`);
   }
@@ -2815,12 +2939,12 @@ export default function ComissoesPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>Início</Label>
+              <Label>Início do período</Label>
               <Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>Fim</Label>
+              <Label>Fim do período</Label>
               <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
             </div>
 
@@ -3296,7 +3420,7 @@ export default function ComissoesPage() {
 
                 <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
                   <div className="flex flex-col gap-2">
-                    <Label>Data do Recibo</Label>
+                    <Label>Data do Demonstrativo</Label>
                     <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
                   </div>
 
@@ -3502,7 +3626,7 @@ export default function ComissoesPage() {
                                 if (u) window.open(u, "_blank");
                               }}
                             >
-                              Recibo
+                              Demonstrativo
                             </a>
                           )}
 
@@ -3545,21 +3669,41 @@ export default function ComissoesPage() {
 
 
         <Dialog open={openPartitionRules} onOpenChange={setOpenPartitionRules}>
-          <DialogContent className="max-w-4xl">
+          <DialogContent className="max-w-6xl">
             <DialogHeader>
-              <DialogTitle>Regras e Partilhas por Unidade</DialogTitle>
+              <DialogTitle>Partilhas por Unidade</DialogTitle>
             </DialogHeader>
 
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="flex flex-col gap-2">
+                  <Label>Administradora</Label>
+                  <Select value={partAdminFilter} onValueChange={(v) => { setPartAdminFilter(v); setPartSegmentFilter("all"); setPartRuleTableId(""); }}>
+                    <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas</SelectItem>
+                      {adminOptions.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Segmento</Label>
+                  <Select value={partSegmentFilter} onValueChange={(v) => { setPartSegmentFilter(v); setPartRuleTableId(""); }}>
+                    <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      {partSegmentOptions.map((seg) => <SelectItem key={seg} value={seg}>{seg}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="flex flex-col gap-2 md:col-span-2">
                   <Label>Tabela</Label>
                   <Select value={partRuleTableId} onValueChange={setPartRuleTableId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a tabela" />
-                    </SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Selecione a tabela com regra cadastrada" /></SelectTrigger>
                     <SelectContent>
-                      {simTables.map((t) => (
+                      {partTableOptions.map((t) => (
                         <SelectItem key={t.id} value={t.id}>
                           {(t.admin_id && adminById[t.admin_id] ? `${adminById[t.admin_id]} • ` : "") + t.segmento + " • " + t.nome_tabela}
                         </SelectItem>
@@ -3570,86 +3714,85 @@ export default function ComissoesPage() {
 
                 <div className="flex flex-col gap-2">
                   <Label>Unidade</Label>
-                  <Select value={partRuleUnitId} onValueChange={setPartRuleUnitId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a unidade" />
-                    </SelectTrigger>
+                  <Select value={partRuleUnitId} onValueChange={(v) => { setPartRuleUnitId(v); setPartVendorId(""); }}>
+                    <SelectTrigger><SelectValue placeholder="Selecione a unidade" /></SelectTrigger>
                     <SelectContent>
-                      {units
-                        .filter((u) => u.tipo !== "matriz")
-                        .map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.nome}
-                          </SelectItem>
-                        ))}
+                      {units.filter((u) => u.tipo !== "matriz").map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label>Comissão total da tabela (%)</Label>
-                  <Input value={partRuleTotalPct} onChange={(e) => setPartRuleTotalPct(e.target.value)} placeholder="4,00" />
-                </div>
-
-                <div className="flex flex-col gap-2 md:col-span-2">
-                  <Label>Fluxo de pagamento (%)</Label>
-                  <Input value={partRuleFluxoPct} onChange={(e) => setPartRuleFluxoPct(e.target.value)} placeholder="50,00;50,00" />
-                  <div className="text-xs text-gray-500">Separe por ponto e vírgula. A soma deve fechar 100%.</div>
+                  <Label>Vendedor</Label>
+                  <Select value={partVendorId} onValueChange={setPartVendorId}>
+                    <SelectTrigger><SelectValue placeholder="Selecione o vendedor" /></SelectTrigger>
+                    <SelectContent>
+                      {activeUsers
+                        .filter((u) => !partRuleUnitId || u.unit_id === partRuleUnitId)
+                        .map((u) => <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email || u.id}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label>Vendedor (% da comissão gerada)</Label>
+                  <Label>Vendedor (% da comissão)</Label>
                   <Input value={partSplitVendedor} onChange={(e) => setPartSplitVendedor(e.target.value)} placeholder="25,00" />
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label>Unidade/Gestor (% da comissão gerada)</Label>
+                  <Label>Unidade/Gestor (% da comissão)</Label>
                   <Input value={partSplitUnidade} onChange={(e) => setPartSplitUnidade(e.target.value)} placeholder="25,00" />
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label>Empresa/Matriz (% da comissão gerada)</Label>
-                  <Input value={partSplitEmpresa} onChange={(e) => setPartSplitEmpresa(e.target.value)} placeholder="50,00" />
                 </div>
               </div>
 
-              <div className="rounded-md border bg-gray-50 p-4 text-sm text-gray-700">
-                Comissão da tabela é calculada sobre o valor da venda. A partilha é calculada sobre a comissão gerada.
-                Ex.: venda R$ 100.000, tabela 4% = R$ 4.000. Vendedor 25% = R$ 1.000.
+              <div className="rounded-md border bg-gray-50 p-4 text-sm text-gray-700 space-y-2">
+                <div className="font-semibold text-[#1E293F]">Informações da tabela selecionada</div>
+                {selectedPartTableRule ? (
+                  <>
+                    <div>Comissão total da tabela: <b>{pct100(selectedPartTableRule.percent_total)}</b></div>
+                    <div>Fluxo de pagamento: <b>{(selectedPartTableRule.fluxo_percentuais || []).map((x) => pct100(x)).join(" / ")}</b></div>
+                    {selectedPartCommissionPreview && (
+                      <div className="text-xs leading-relaxed">
+                        Exemplo em venda de R$ 100.000,00: comissão gerada {BRL(selectedPartCommissionPreview.comissaoTotal)} •
+                        Matriz {pct100(selectedPartCommissionPreview.empresaFrac)} = {BRL(selectedPartCommissionPreview.comissaoTotal * selectedPartCommissionPreview.empresaFrac)} •
+                        Unidade {pct100(selectedPartCommissionPreview.unidadeFrac)} = {BRL(selectedPartCommissionPreview.comissaoTotal * selectedPartCommissionPreview.unidadeFrac)} •
+                        Vendedor {pct100(selectedPartCommissionPreview.vendedorFrac)} = {BRL(selectedPartCommissionPreview.comissaoTotal * selectedPartCommissionPreview.vendedorFrac)}.
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div>Selecione uma tabela que já tenha regra de comissão cadastrada.</div>
+                )}
               </div>
 
               <div className="overflow-x-auto border rounded-md">
-                <table className="min-w-[900px] w-full text-sm">
+                <table className="min-w-[950px] w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50">
                       <th className="p-2 text-left">Tabela</th>
                       <th className="p-2 text-left">Administradora</th>
                       <th className="p-2 text-left">Unidade</th>
-                      <th className="p-2 text-right">Comissão Total</th>
-                      <th className="p-2 text-left">Fluxo</th>
+                      <th className="p-2 text-left">Favorecidos</th>
                       <th className="p-2 text-left">Partilha</th>
                     </tr>
                   </thead>
                   <tbody>
                     {tableRules.map((r) => {
                       const sp = splitRules.filter((s) => s.table_rule_id === r.id);
+                      if (!sp.length) return null;
+                      const unidadeId = sp[0]?.business_unit_id || "";
                       return (
-                        <tr key={r.id} className="border-t">
+                        <tr key={r.id + unidadeId} className="border-t">
                           <td className="p-2">{r.nome_tabela}</td>
                           <td className="p-2">{r.administradora || "—"}</td>
-                          <td className="p-2">{unitById[sp[0]?.business_unit_id || ""]?.nome || "—"}</td>
-                          <td className="p-2 text-right">{pct100(r.percent_total)}</td>
-                          <td className="p-2">{(r.fluxo_percentuais || []).map((x) => pct100(x)).join(" / ")}</td>
+                          <td className="p-2">{unitById[unidadeId]?.nome || "—"}</td>
+                          <td className="p-2">{sp.map((s) => `${s.recipient_type}: ${userLabel(s.recipient_user_id)}`).join(" • ")}</td>
                           <td className="p-2">{sp.map((s) => `${s.recipient_type}: ${pct100(s.split_percent)}`).join(" • ")}</td>
                         </tr>
                       );
                     })}
-                    {!tableRules.length && (
-                      <tr>
-                        <td colSpan={6} className="p-4 text-gray-500">
-                          Nenhuma regra particionada cadastrada.
-                        </td>
-                      </tr>
+                    {!splitRules.length && (
+                      <tr><td colSpan={5} className="p-4 text-gray-500">Nenhuma partilha cadastrada.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -3657,9 +3800,7 @@ export default function ComissoesPage() {
             </div>
 
             <DialogFooter className="pt-6">
-              <Button variant="secondary" onClick={() => setOpenPartitionRules(false)}>
-                Fechar
-              </Button>
+              <Button variant="secondary" onClick={() => setOpenPartitionRules(false)}>Fechar</Button>
               <Button onClick={salvarRegraParticionada} disabled={!canEdit}>
                 <Save className="w-4 h-4 mr-1" /> Salvar Partilha
               </Button>
@@ -3676,126 +3817,94 @@ export default function ComissoesPage() {
             {!canEdit && <div className="text-sm text-gray-600">Modo vendedor: visualização apenas.</div>}
 
             <div className="space-y-6">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="flex flex-col gap-2">
-                  <Label>Vendedor</Label>
-                  <Select value={ruleVendorId} onValueChange={(v) => setRuleVendorId(v)} disabled={!canEdit && !isAdmin}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeUsers.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.nome?.trim() || u.email?.trim() || u.id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                 <div className="flex flex-col gap-2">
                   <Label>Administradora</Label>
-                  <Select value={ruleAdminFilter} onValueChange={setRuleAdminFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todas" />
-                    </SelectTrigger>
+                  <Select value={tableRuleAdminFilter} onValueChange={(v) => { setTableRuleAdminFilter(v); setTableRuleSegmentFilter("all"); setTableRuleTableId(""); }}>
+                    <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todas</SelectItem>
-                      {adminOptions.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.name}
-                        </SelectItem>
-                      ))}
+                      {tableRuleAdminOptions.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="flex flex-col gap-2">
                   <Label>Segmento</Label>
-                  <Select value={ruleSegmentFilter} onValueChange={setRuleSegmentFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todos" />
-                    </SelectTrigger>
+                  <Select value={tableRuleSegmentFilter} onValueChange={(v) => { setTableRuleSegmentFilter(v); setTableRuleTableId(""); }}>
+                    <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos</SelectItem>
-                      {ruleSegmentOptions.map((seg) => (
-                        <SelectItem key={seg} value={seg}>
-                          {seg}
+                      {tableRuleSegmentOptions.map((seg) => <SelectItem key={seg} value={seg}>{seg}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-2 lg:col-span-3">
+                  <Label>Tabela</Label>
+                  <Select value={tableRuleTableId} onValueChange={setTableRuleTableId}>
+                    <SelectTrigger><SelectValue placeholder="Selecione a tabela" /></SelectTrigger>
+                    <SelectContent>
+                      {tableRuleTableOptions.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {(t.admin_id && adminById[t.admin_id] ? `${adminById[t.admin_id]} • ` : "") + t.segmento + " • " + t.nome_tabela}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label>Comissão total da tabela (%)</Label>
+                  <Input value={tableRuleTotalPct} onChange={(e) => setTableRuleTotalPct(e.target.value)} placeholder="5,00" disabled={!canEdit} />
+                </div>
+
+                <div className="flex flex-col gap-2 lg:col-span-3">
+                  <Label>Fluxo de pagamento sobre a venda (%)</Label>
+                  <Input value={tableRuleFluxoPct} onChange={(e) => setTableRuleFluxoPct(e.target.value)} placeholder="2,00;1,00;1,00;1,00" disabled={!canEdit} />
+                  <div className="text-xs text-gray-500">
+                    Exemplo: comissão total 5% e fluxo 2% + 1% + 1% + 1%. A soma do fluxo precisa ser igual à comissão total da tabela.
+                  </div>
+                </div>
+
+                <div className="flex items-end">
+                  <Button onClick={salvarRegraTabelaParticionada} disabled={!canEdit}>
+                    <Save className="w-4 h-4 mr-1" /> Salvar Regra
+                  </Button>
+                </div>
               </div>
 
-              <div className="border rounded-md max-h-[45vh] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
+              <div className="overflow-x-auto border rounded-md">
+                <table className="min-w-[900px] w-full text-sm">
+                  <thead className="bg-gray-50">
                     <tr>
                       <th className="p-2 text-left">Administradora</th>
                       <th className="p-2 text-left">Segmento</th>
                       <th className="p-2 text-left">Tabela</th>
-                      <th className="p-2 text-right">% Padrão</th>
-                      <th className="p-2 text-left">Fluxo</th>
-                      <th className="p-2 text-left">Ações</th>
+                      <th className="p-2 text-right">Comissão total</th>
+                      <th className="p-2 text-left">Fluxo de pagamento</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {dedupedTables.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="p-4 text-gray-500">
-                          Nenhuma tabela encontrada para os filtros selecionados.
-                        </td>
+                    {tableRules.map((r) => (
+                      <tr key={r.id} className="border-t">
+                        <td className="p-2">{r.administradora || "—"}</td>
+                        <td className="p-2">{r.segmento || "—"}</td>
+                        <td className="p-2">{r.nome_tabela}</td>
+                        <td className="p-2 text-right">{pct100(r.percent_total)}</td>
+                        <td className="p-2">{(r.fluxo_percentuais || []).map((x) => pct100(x)).join(" / ")}</td>
                       </tr>
+                    ))}
+                    {!tableRules.length && (
+                      <tr><td colSpan={5} className="p-4 text-gray-500">Nenhuma regra de comissão cadastrada.</td></tr>
                     )}
-
-                    {dedupedTables.map(({ rep, all }) => {
-                      const groupIds = new Set(all.map((t) => t.id));
-                      const rule = ruleRows.find((r) => r.vendedor_id === ruleVendorId && groupIds.has(r.sim_table_id));
-
-                      return (
-                        <tr key={rep.id} className="border-t">
-                          <td className="p-2">{adminById[rep.admin_id || ""] || "—"}</td>
-                          <td className="p-2">{rep.segmento || "—"}</td>
-                          <td className="p-2">
-                            {rep.nome_tabela}
-                            {all.length > 1 && <span className="ml-2 text-xs text-gray-500">({all.length} duplicadas)</span>}
-                          </td>
-                          <td className="p-2 text-right">{rule ? pct100(rule.percent_padrao) : "—"}</td>
-                          <td className="p-2">{rule ? `${rule.fluxo_meses} pgtos` : "—"}</td>
-                          <td className="p-2">
-                            <div className="flex flex-wrap gap-2">
-                              <Button size="sm" variant="secondary" onClick={() => openRuleFormForTable(rep)} disabled={!canEdit || !ruleVendorId}>
-                                <Pencil className="w-4 h-4 mr-1" /> {rule ? "Editar" : "Cadastrar"}
-                              </Button>
-
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={!canEdit || !rule}
-                                onClick={() => rule && deleteRuleGroup(rule.vendedor_id, rule.sim_table_id)}
-                                title={!canEdit ? "Vendedor não pode limpar" : ""}
-                              >
-                                <RotateCcw className="w-4 h-4 mr-1" /> Limpar
-                              </Button>
-
-                              <Button size="icon" variant="ghost" disabled={!rule} onClick={() => rule && setViewRule(rule)} title="Visualizar regra">
-                                <Eye className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
                   </tbody>
                 </table>
               </div>
             </div>
 
             <DialogFooter className="pt-6">
-              <Button variant="secondary" onClick={() => setOpenRules(false)}>
-                Fechar
-              </Button>
+              <Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -4208,7 +4317,7 @@ function UploadArea({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="flex flex-col gap-2">
-          <Label>Recibo assinado (PDF)</Label>
+          <Label>Demonstrativo anexado (PDF)</Label>
           <Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} />
         </div>
         <div className="flex flex-col gap-2">
@@ -4218,7 +4327,7 @@ function UploadArea({
       </div>
 
       <div className="text-xs text-gray-500 leading-relaxed">
-        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>.
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Não é necessário recibo assinado; anexe o demonstrativo e/ou comprovante bancário.
       </div>
     </div>
   );

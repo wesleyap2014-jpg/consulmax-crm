@@ -215,6 +215,7 @@ type CommissionEntryFlow = {
   data_pagamento: string | null;
   comprovante_url?: string | null;
   demonstrativo_url?: string | null;
+  comprovante_dispensado?: boolean | null;
   status: "a_pagar" | "pago" | "estornado" | "cancelado" | string;
 };
 
@@ -1009,6 +1010,8 @@ export default function ComissoesPage() {
   const [partitionPayValue, setPartitionPayValue] = useState<string>("");
   const [partitionPayDate, setPartitionPayDate] = useState<string>(() => toDateInput(new Date()));
   const [partitionPayFile, setPartitionPayFile] = useState<File | null>(null);
+  const [partitionPayDispensar, setPartitionPayDispensar] = useState<boolean>(false);
+  const [expandedPartitionBatchIds, setExpandedPartitionBatchIds] = useState<Record<string, boolean>>({});
   const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
   const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
@@ -1704,6 +1707,39 @@ export default function ComissoesPage() {
     adminFilter,
     partitionVendaById,
   ]);
+
+  const partitionBatchRowsVisible = useMemo(() => {
+    const visibleEntryIds = new Set(partitionEntriesVisible.map((entry) => entry.id));
+    return partitionBatches
+      .filter((batch) => partitionEntries.some((entry) => entry.batch_id === batch.id && visibleEntryIds.has(entry.id)))
+      .map((batch) => {
+        const batchEntries = partitionEntries.filter((entry) => entry.batch_id === batch.id && visibleEntryIds.has(entry.id));
+        const allBatchEntries = partitionEntries.filter((entry) => entry.batch_id === batch.id);
+        const venda = partitionVendaById[batch.venda_id];
+        const unidade = unitById[batch.business_unit_id || ""];
+        const vendedor = usersById[batch.vendedor_id];
+        const flows = partitionFlows.filter((flow) => flow.batch_id === batch.id).sort((a, b) => a.mes - b.mes);
+        const gross = batchEntries.reduce((acc, entry) => acc + (Number(entry.gross_amount) || 0), 0);
+        const tax = batchEntries.reduce((acc, entry) => acc + (Number(entry.tax_amount) || 0), 0);
+        const net = batchEntries.reduce((acc, entry) => acc + (Number(entry.net_amount) || 0), 0);
+        const clienteId = venda?.lead_id || venda?.cliente_lead_id || "";
+
+        return {
+          batch,
+          venda,
+          unidade,
+          vendedor,
+          entries: batchEntries,
+          allEntries: allBatchEntries,
+          flows,
+          clienteId,
+          gross,
+          tax,
+          net,
+        };
+      })
+      .sort((a, b) => String(b.batch.data_venda || "").localeCompare(String(a.batch.data_venda || "")));
+  }, [partitionBatches, partitionEntries, partitionEntriesVisible, partitionVendaById, unitById, usersById, partitionFlows]);
 
   function paidInRangeGross(s: Date, e: Date) {
     const operationalRows = rows.filter(isOperationalCommission);
@@ -2601,10 +2637,12 @@ export default function ComissoesPage() {
     const dataISO = brDateToISO(partitionScheduleDateBR);
     if (!dataISO) return alert("Informe a data no formato dd/mm/aaaa.");
 
+    // Programa a mesma parcela da venda para Matriz, Unidade e Vendedor de uma só vez.
     const { error } = await supabase
       .from("commission_entry_flow")
       .update({ data_pagamento: dataISO, status: "a_pagar" } as any)
-      .eq("id", partitionScheduleFlow.id);
+      .eq("batch_id", partitionScheduleFlow.batch_id)
+      .eq("mes", partitionScheduleFlow.mes);
 
     if (error) return alert("Erro ao programar pagamento: " + error.message);
 
@@ -2617,6 +2655,7 @@ export default function ComissoesPage() {
     setPartitionPayDate(flow.data_pagamento || toDateInput(new Date()));
     setPartitionPayValue(String(Number(flow.valor_previsto || 0).toFixed(2)).replace(".", ","));
     setPartitionPayFile(null);
+    setPartitionPayDispensar(false);
   }
 
   async function confirmarPagamentoParticionado() {
@@ -2627,6 +2666,12 @@ export default function ComissoesPage() {
     if (valorPago <= 0) return alert("Informe o valor pago.");
     if (!partitionPayDate) return alert("Informe a data do pagamento.");
 
+    const entry = partitionEntries.find((e) => e.id === partitionPayFlow.entry_id);
+    const exigeComprovante = entry?.recipient_type === "vendedor" || entry?.recipient_type === "unidade";
+    if (exigeComprovante && !partitionPayFile && !partitionPayDispensar) {
+      return alert("Anexe o comprovante ou marque a opção Dispensar comprovante.");
+    }
+
     let comprovantePath: string | null = null;
     if (partitionPayFile) {
       comprovantePath = await uploadToBucket(partitionPayFile, partitionPayFlow.entry_id);
@@ -2635,6 +2680,7 @@ export default function ComissoesPage() {
 
     const payload: any = { valor_pago: valorPago, data_pagamento: partitionPayDate, status: "pago" };
     if (comprovantePath) payload.comprovante_url = comprovantePath;
+    if (partitionPayDispensar) payload.comprovante_dispensado = true;
 
     const { error } = await supabase
       .from("commission_entry_flow")
@@ -2643,8 +2689,24 @@ export default function ComissoesPage() {
 
     if (error) return alert("Erro ao registrar pagamento: " + error.message);
 
+    // Se todas as parcelas com valor da venda foram pagas, marca automaticamente as parcelas zeradas como pagas.
+    const batchFlows = partitionFlows.filter((f) => f.batch_id === partitionPayFlow.batch_id);
+    const simulated = batchFlows.map((f) => f.id === partitionPayFlow.id ? { ...f, valor_pago: valorPago, status: "pago" } : f);
+    const positive = simulated.filter((f) => (Number(f.valor_previsto) || 0) > 0);
+    const allPositivePaid = positive.length > 0 && positive.every((f) => f.status === "pago" || (Number(f.valor_pago) || 0) > 0);
+    if (allPositivePaid) {
+      const zeroIds = batchFlows.filter((f) => (Number(f.valor_previsto) || 0) <= 0 && f.status !== "pago").map((f) => f.id);
+      if (zeroIds.length) {
+        await supabase
+          .from("commission_entry_flow")
+          .update({ valor_pago: 0, data_pagamento: partitionPayDate, status: "pago", comprovante_dispensado: true } as any)
+          .in("id", zeroIds);
+      }
+    }
+
     setPartitionPayFlow(null);
     setPartitionPayFile(null);
+    setPartitionPayDispensar(false);
     fetchData();
   }
 
@@ -2676,8 +2738,18 @@ export default function ComissoesPage() {
   }
 
   function renderPartitionFlowAction(flow: CommissionEntryFlow) {
+    const value = Number(flow.valor_previsto) || 0;
+    const isZero = value <= 0;
     const isPaid = flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0;
     const isProgrammed = !!flow.data_pagamento && !isPaid;
+
+    if (isZero && !isPaid) {
+      return (
+        <Button size="sm" className="h-6 px-2 bg-gray-200 text-gray-500 opacity-60" disabled title="Parcela sem valor. Será marcada automaticamente após o pagamento da última parcela com valor.">
+          —
+        </Button>
+      );
+    }
 
     if (isPaid) {
       return (
@@ -2700,6 +2772,22 @@ export default function ComissoesPage() {
         Prog
       </Button>
     );
+  }
+
+  function flowProgressText(flows: CommissionEntryFlow[]) {
+    const ordered = [...flows].sort((a, b) => a.mes - b.mes);
+    const total = ordered.length;
+    const paid = ordered.filter((f) => f.status === "pago" || (Number(f.valor_pago) || 0) > 0).length;
+    return `${paid}/${total}`;
+  }
+
+  function isFlowGroupProgrammed(flows: CommissionEntryFlow[]) {
+    return flows.some((f) => !!f.data_pagamento && f.status !== "pago" && (Number(f.valor_previsto) || 0) > 0);
+  }
+
+  function isFlowGroupPaid(flows: CommissionEntryFlow[]) {
+    const payable = flows.filter((f) => (Number(f.valor_previsto) || 0) > 0);
+    return payable.length > 0 && payable.every((f) => f.status === "pago" || (Number(f.valor_pago) || 0) > 0);
   }
 
   function downloadDemonstrativoParticionadoPDF() {
@@ -3758,75 +3846,160 @@ export default function ComissoesPage() {
               )}
             </div>
 
-            <table className="min-w-[1250px] w-full text-sm">
+            <table className="min-w-[1180px] w-full text-sm">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Tipo</th>
-                  <th className="p-2 text-left">Favorecido</th>
                   <th className="p-2 text-left">Unidade</th>
+                  <th className="p-2 text-left">Vendedor</th>
                   <th className="p-2 text-left">Cliente</th>
                   <th className="p-2 text-left">Proposta</th>
-                  <th className="p-2 text-right">Partilha</th>
                   <th className="p-2 text-right">Comissão Bruta</th>
                   <th className="p-2 text-right">Impostos</th>
                   <th className="p-2 text-right">Comissão Líquida</th>
-                  <th className="p-2 text-left">Status</th>
                   <th className="p-2 text-left">Fluxo</th>
                   <th className="p-2 text-left">Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {partitionEntriesVisible.length === 0 && (
+                {partitionBatchRowsVisible.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="p-4 text-gray-500">
+                    <td colSpan={9} className="p-4 text-gray-500">
                       Nenhuma comissão particionada encontrada para os filtros atuais.
                     </td>
                   </tr>
                 )}
 
-                {partitionEntriesVisible.map((entry) => {
-                  const batch = partitionBatches.find((b) => b.id === entry.batch_id);
-                  const venda = batch ? partitionVendaById[batch.venda_id] : null;
-                  const unidade = unitById[entry.business_unit_id || batch?.business_unit_id || ""];
-                  const favorecido = entry.recipient_user_id
-                    ? userLabel(entry.recipient_user_id)
-                    : unitById[entry.recipient_unit_id || ""]?.nome || "—";
-                  const entryFlows = partitionFlows.filter((f) => f.entry_id === entry.id).sort((a, b) => a.mes - b.mes);
-                  const clienteId = venda?.lead_id || venda?.cliente_lead_id || "";
+                {partitionBatchRowsVisible.map((row) => {
+                  const expanded = !!expandedPartitionBatchIds[row.batch.id];
+                  const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
+                  const flowStatusLabel = isFlowGroupPaid(row.flows)
+                    ? "Pago"
+                    : isFlowGroupProgrammed(row.flows)
+                      ? "Programado"
+                      : "A programar";
 
                   return (
-                    <tr key={entry.id} className="border-b align-top">
-                      <td className="p-2 capitalize">{entry.recipient_type}</td>
-                      <td className="p-2">{favorecido}</td>
-                      <td className="p-2">{unidade?.nome || "—"}</td>
-                      <td className="p-2">{(clienteId && clientesMap[clienteId]?.trim()) || "—"}</td>
-                      <td className="p-2">{venda?.numero_proposta || "—"}</td>
-                      <td className="p-2 text-right">{pct100(entry.split_percent)}</td>
-                      <td className="p-2 text-right">{BRL(entry.gross_amount)}</td>
-                      <td className="p-2 text-right">{BRL(entry.tax_amount)}</td>
-                      <td className="p-2 text-right">{BRL(entry.net_amount)}</td>
-                      <td className="p-2">{entry.status}</td>
-                      <td className="p-2">
-                        <div className="space-y-1">
-                          {entryFlows.map((flow) => (
-                            <div key={flow.id} className="flex items-center justify-between gap-2 rounded-md bg-gray-50 px-2 py-1 text-xs">
-                              <span>
-                                M{flow.mes} • {BRL(flow.valor_previsto)}
-                              </span>
-                              <span>{flow.status === "pago" ? `Pago ${formatISODateBR(flow.data_pagamento)}` : flow.data_pagamento ? `Prog. ${formatISODateBR(flow.data_pagamento)}` : "A programar"}</span>
-                              {canEdit && renderPartitionFlowAction(flow)}
+                    <React.Fragment key={row.batch.id}>
+                      <tr className="border-b align-middle hover:bg-gray-50">
+                        <td className="p-2">{row.unidade?.nome || "—"}</td>
+                        <td className="p-2">{row.vendedor?.nome || userLabel(row.batch.vendedor_id)}</td>
+                        <td className="p-2">{clienteNome}</td>
+                        <td className="p-2">{row.venda?.numero_proposta || "—"}</td>
+                        <td className="p-2 text-right">{BRL(row.gross)}</td>
+                        <td className="p-2 text-right">{BRL(row.tax)}</td>
+                        <td className="p-2 text-right">{BRL(row.net)}</td>
+                        <td className="p-2">
+                          <div className="flex flex-col gap-1 text-xs">
+                            <span className="font-semibold">{flowProgressText(row.flows)}</span>
+                            <span className="text-gray-500">{flowStatusLabel}</span>
+                          </div>
+                        </td>
+                        <td className="p-2">
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setExpandedPartitionBatchIds((prev) => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}
+                            >
+                              {expanded ? "Ocultar" : "Detalhes"}
+                            </Button>
+                            {canEdit && (
+                              <Button size="sm" variant="outline" onClick={() => row.entries[0] && registrarEstornoParticionado(row.entries[0])}>
+                                Estornar
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {expanded && (
+                        <tr className="border-b bg-slate-50/60">
+                          <td colSpan={9} className="p-3">
+                            <div className="space-y-4">
+                              <div className="rounded-lg border bg-white p-3">
+                                <div className="mb-2 text-xs font-semibold uppercase text-gray-500">Distribuição da comissão</div>
+                                <div className="overflow-x-auto">
+                                  <table className="min-w-[800px] w-full text-xs">
+                                    <thead>
+                                      <tr className="bg-gray-50">
+                                        <th className="p-2 text-left">Tipo</th>
+                                        <th className="p-2 text-left">Favorecido</th>
+                                        <th className="p-2 text-left">Unidade</th>
+                                        <th className="p-2 text-right">Partilha</th>
+                                        <th className="p-2 text-right">Bruta</th>
+                                        <th className="p-2 text-right">Impostos</th>
+                                        <th className="p-2 text-right">Líquida</th>
+                                        <th className="p-2 text-left">Status</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {row.allEntries.map((entry) => {
+                                        const unidade = unitById[entry.business_unit_id || row.batch.business_unit_id || ""];
+                                        const favorecido = entry.recipient_user_id
+                                          ? userLabel(entry.recipient_user_id)
+                                          : unitById[entry.recipient_unit_id || ""]?.nome || "—";
+                                        return (
+                                          <tr key={entry.id} className="border-b last:border-b-0">
+                                            <td className="p-2 capitalize">{entry.recipient_type}</td>
+                                            <td className="p-2">{favorecido}</td>
+                                            <td className="p-2">{unidade?.nome || "—"}</td>
+                                            <td className="p-2 text-right">{pct100(entry.split_percent)}</td>
+                                            <td className="p-2 text-right">{BRL(entry.gross_amount)}</td>
+                                            <td className="p-2 text-right">{BRL(entry.tax_amount)}</td>
+                                            <td className="p-2 text-right">{BRL(entry.net_amount)}</td>
+                                            <td className="p-2">{entry.status}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              <div className="rounded-lg border bg-white p-3">
+                                <div className="mb-2 text-xs font-semibold uppercase text-gray-500">Fluxo de pagamento</div>
+                                <div className="space-y-2">
+                                  {Array.from(new Set(row.flows.map((flow) => flow.mes))).sort((a, b) => a - b).map((mes) => {
+                                    const flowsMes = row.flows.filter((flow) => flow.mes === mes).sort((a, b) => {
+                                      const ea = row.allEntries.find((entry) => entry.id === a.entry_id);
+                                      const eb = row.allEntries.find((entry) => entry.id === b.entry_id);
+                                      return String(ea?.recipient_type || "").localeCompare(String(eb?.recipient_type || ""));
+                                    });
+                                    const totalMes = flowsMes.reduce((acc, flow) => acc + (Number(flow.valor_previsto) || 0), 0);
+                                    const pagosMes = flowsMes.filter((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0).length;
+
+                                    return (
+                                      <div key={mes} className="rounded-md bg-gray-50 p-2">
+                                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
+                                          <span>M{mes} • Total {BRL(totalMes)} • {pagosMes}/{flowsMes.length}</span>
+                                          <span className="text-gray-500">{flowsMes[0]?.data_pagamento ? `Data: ${formatISODateBR(flowsMes[0].data_pagamento)}` : "A programar"}</span>
+                                        </div>
+                                        <div className="grid gap-2 md:grid-cols-3">
+                                          {flowsMes.map((flow) => {
+                                            const entry = row.allEntries.find((e) => e.id === flow.entry_id);
+                                            return (
+                                              <div key={flow.id} className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-1 text-xs">
+                                                <div className="flex flex-col">
+                                                  <span className="font-medium capitalize">{entry?.recipient_type || "—"} • {BRL(flow.valor_previsto)}</span>
+                                                  <span className="text-gray-500">
+                                                    {flow.status === "pago" ? `Pago ${formatISODateBR(flow.data_pagamento)}` : flow.data_pagamento ? `Prog. ${formatISODateBR(flow.data_pagamento)}` : "A programar"}
+                                                  </span>
+                                                </div>
+                                                {canEdit && renderPartitionFlowAction(flow)}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
                             </div>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-2">
-                        {canEdit && (
-                          <Button size="sm" variant="outline" onClick={() => registrarEstornoParticionado(entry)}>
-                            Estornar
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -4745,7 +4918,17 @@ export default function ComissoesPage() {
               </div>
               <div className="flex flex-col gap-2">
                 <Label>Comprovante de pagamento</Label>
-                <Input type="file" accept="application/pdf,image/*" onChange={(e) => setPartitionPayFile(e.target.files?.[0] || null)} />
+                <Input type="file" accept="application/pdf,image/*" disabled={partitionPayDispensar} onChange={(e) => setPartitionPayFile(e.target.files?.[0] || null)} />
+                <label className="mt-1 flex items-center gap-2 text-sm text-gray-600">
+                  <Checkbox
+                    checked={partitionPayDispensar}
+                    onCheckedChange={(v) => {
+                      setPartitionPayDispensar(!!v);
+                      if (v) setPartitionPayFile(null);
+                    }}
+                  />
+                  Dispensar comprovante
+                </label>
               </div>
             </div>
 

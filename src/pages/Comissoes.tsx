@@ -2651,9 +2651,12 @@ export default function ComissoesPage() {
   }
 
   function abrirPagamentoParticionado(flow: CommissionEntryFlow) {
+    const sameParcelFlows = partitionFlows.filter((f) => f.batch_id === flow.batch_id && f.mes === flow.mes);
+    const totalParcela = sameParcelFlows.reduce((acc, f) => acc + (Number(f.valor_previsto) || 0), 0);
+
     setPartitionPayFlow(flow);
     setPartitionPayDate(flow.data_pagamento || toDateInput(new Date()));
-    setPartitionPayValue(String(Number(flow.valor_previsto || 0).toFixed(2)).replace(".", ","));
+    setPartitionPayValue(String(Number(totalParcela || flow.valor_previsto || 0).toFixed(2)).replace(".", ","));
     setPartitionPayFile(null);
     setPartitionPayDispensar(false);
   }
@@ -2662,12 +2665,16 @@ export default function ComissoesPage() {
     if (!canEdit) return alert("Somente admin pode registrar pagamento.");
     if (!partitionPayFlow) return;
 
-    const valorPago = parseBRL(partitionPayValue);
-    if (valorPago <= 0) return alert("Informe o valor pago.");
+    const valorPagoTotal = parseBRL(partitionPayValue);
+    if (valorPagoTotal <= 0) return alert("Informe o valor pago.");
     if (!partitionPayDate) return alert("Informe a data do pagamento.");
 
-    const entry = partitionEntries.find((e) => e.id === partitionPayFlow.entry_id);
-    const exigeComprovante = entry?.recipient_type === "vendedor" || entry?.recipient_type === "unidade";
+    // Pagamento é por venda/parcela. Uma confirmação sensibiliza Empresa, Unidade e Vendedor de uma vez.
+    const sameParcelFlows = partitionFlows.filter((f) => f.batch_id === partitionPayFlow.batch_id && f.mes === partitionPayFlow.mes);
+    const payableFlows = sameParcelFlows.filter((f) => (Number(f.valor_previsto) || 0) > 0);
+    const relatedEntries = partitionEntries.filter((entry) => sameParcelFlows.some((flow) => flow.entry_id === entry.id));
+    const exigeComprovante = relatedEntries.some((entry) => entry.recipient_type === "vendedor" || entry.recipient_type === "unidade");
+
     if (exigeComprovante && !partitionPayFile && !partitionPayDispensar) {
       return alert("Anexe o comprovante ou marque a opção Dispensar comprovante.");
     }
@@ -2678,20 +2685,31 @@ export default function ComissoesPage() {
       if (!comprovantePath) return;
     }
 
-    const payload: any = { valor_pago: valorPago, data_pagamento: partitionPayDate, status: "pago" };
-    if (comprovantePath) payload.comprovante_url = comprovantePath;
-    if (partitionPayDispensar) payload.comprovante_dispensado = true;
+    const expectedTotal = payableFlows.reduce((acc, f) => acc + (Number(f.valor_previsto) || 0), 0);
+    let allocated = 0;
 
-    const { error } = await supabase
-      .from("commission_entry_flow")
-      .update(payload)
-      .eq("id", partitionPayFlow.id);
+    for (let i = 0; i < payableFlows.length; i++) {
+      const flow = payableFlows[i];
+      const expected = Number(flow.valor_previsto) || 0;
+      const valorPago =
+        i === payableFlows.length - 1
+          ? Math.round((valorPagoTotal - allocated) * 100) / 100
+          : Math.round((expectedTotal > 0 ? valorPagoTotal * (expected / expectedTotal) : expected) * 100) / 100;
 
-    if (error) return alert("Erro ao registrar pagamento: " + error.message);
+      allocated += valorPago;
+
+      const payload: any = { valor_pago: valorPago, data_pagamento: partitionPayDate, status: "pago" };
+      if (comprovantePath) payload.comprovante_url = comprovantePath;
+      if (partitionPayDispensar) payload.comprovante_dispensado = true;
+
+      const { error } = await supabase.from("commission_entry_flow").update(payload).eq("id", flow.id);
+      if (error) return alert("Erro ao registrar pagamento: " + error.message);
+    }
 
     // Se todas as parcelas com valor da venda foram pagas, marca automaticamente as parcelas zeradas como pagas.
     const batchFlows = partitionFlows.filter((f) => f.batch_id === partitionPayFlow.batch_id);
-    const simulated = batchFlows.map((f) => f.id === partitionPayFlow.id ? { ...f, valor_pago: valorPago, status: "pago" } : f);
+    const paidIds = new Set(payableFlows.map((f) => f.id));
+    const simulated = batchFlows.map((f) => (paidIds.has(f.id) ? { ...f, valor_pago: Number(f.valor_previsto) || 0, status: "pago" } : f));
     const positive = simulated.filter((f) => (Number(f.valor_previsto) || 0) > 0);
     const allPositivePaid = positive.length > 0 && positive.every((f) => f.status === "pago" || (Number(f.valor_pago) || 0) > 0);
     if (allPositivePaid) {
@@ -2769,6 +2787,46 @@ export default function ComissoesPage() {
 
     return (
       <Button size="sm" className="h-6 px-2 bg-[#A11C27] text-white hover:bg-[#A11C27]/90" onClick={() => programarPagamentoParticionado(flow)}>
+        Prog
+      </Button>
+    );
+  }
+
+
+
+  function renderPartitionMonthAction(flowsMes: CommissionEntryFlow[]) {
+    const payable = flowsMes.filter((flow) => (Number(flow.valor_previsto) || 0) > 0);
+    const total = payable.reduce((acc, flow) => acc + (Number(flow.valor_previsto) || 0), 0);
+    const allPaid = payable.length > 0 && payable.every((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0);
+    const isProgrammed = payable.some((flow) => !!flow.data_pagamento && flow.status !== "pago" && (Number(flow.valor_pago) || 0) <= 0);
+    const representative = payable[0] || flowsMes[0];
+
+    if (!representative || total <= 0) {
+      return (
+        <Button size="sm" className="h-7 px-3 bg-gray-200 text-gray-500 opacity-60" disabled title="Parcela sem valor. Será marcada automaticamente após o pagamento da última parcela com valor.">
+          Prog
+        </Button>
+      );
+    }
+
+    if (allPaid) {
+      return (
+        <Button size="sm" className="h-7 px-3 bg-green-600 text-white hover:bg-green-700" disabled>
+          Pago
+        </Button>
+      );
+    }
+
+    if (isProgrammed) {
+      return (
+        <Button size="sm" className="h-7 px-3 bg-[#1E293F] text-white hover:bg-[#1E293F]/90" onClick={() => abrirPagamentoParticionado(representative)}>
+          Pagar
+        </Button>
+      );
+    }
+
+    return (
+      <Button size="sm" className="h-7 px-3 bg-[#A11C27] text-white hover:bg-[#A11C27]/90" onClick={() => programarPagamentoParticionado(representative)}>
         Prog
       </Button>
     );
@@ -3926,48 +3984,47 @@ export default function ComissoesPage() {
                       {expanded && (
                         <tr className="border-b bg-slate-50/60">
                           <td colSpan={9} className="p-3">
-                            <div className="space-y-4">
-                              <div className="rounded-lg border bg-white p-3">
-                                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold uppercase text-gray-500">
-                                  <span>Detalhes do fluxo de pagamento</span>
-                                  <span>Clique novamente no vendedor/cliente para recolher</span>
-                                </div>
-                                <div className="space-y-2">
+                            <div className="rounded-lg border bg-white p-3">
+                              <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold uppercase text-gray-500">
+                                <span>Fluxo de pagamento da venda</span>
+                                <span>Clique novamente no vendedor/cliente para recolher</span>
+                              </div>
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="bg-gray-50">
+                                    <th className="p-2 text-left">Fluxo</th>
+                                    <th className="p-2 text-left">Situação</th>
+                                    <th className="p-2 text-left">Ações</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
                                   {Array.from(new Set(row.flows.map((flow) => flow.mes))).sort((a, b) => a - b).map((mes) => {
-                                    const flowsMes = row.flows.filter((flow) => flow.mes === mes).sort((a, b) => {
-                                      const ea = row.allEntries.find((entry) => entry.id === a.entry_id);
-                                      const eb = row.allEntries.find((entry) => entry.id === b.entry_id);
-                                      return String(ea?.recipient_type || "").localeCompare(String(eb?.recipient_type || ""));
-                                    });
+                                    const flowsMes = row.flows.filter((flow) => flow.mes === mes);
+                                    const payable = flowsMes.filter((flow) => (Number(flow.valor_previsto) || 0) > 0);
                                     const totalMes = flowsMes.reduce((acc, flow) => acc + (Number(flow.valor_previsto) || 0), 0);
-                                    const pagosMes = flowsMes.filter((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0).length;
+                                    const allPaid = payable.length > 0 && payable.every((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0);
+                                    const firstDate = flowsMes.find((flow) => !!flow.data_pagamento)?.data_pagamento || null;
+                                    const situacao =
+                                      totalMes <= 0
+                                        ? "Parcela sem valor"
+                                        : allPaid
+                                          ? `Pago ${formatISODateBR(firstDate)}`
+                                          : firstDate
+                                            ? `Prog. ${formatISODateBR(firstDate)}`
+                                            : "A programar";
 
                                     return (
-                                      <div key={mes} className="rounded-md bg-gray-50 p-2">
-                                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
-                                          <span>M{mes} • Total {BRL(totalMes)} • {pagosMes}/{flowsMes.length}</span>
-                                          <span className="text-gray-500">{flowsMes[0]?.data_pagamento ? `Data: ${formatISODateBR(flowsMes[0].data_pagamento)}` : "A programar"}</span>
-                                        </div>
-                                        <div className="grid gap-2 md:grid-cols-3">
-                                          {flowsMes.map((flow) => {
-                                            const entry = row.allEntries.find((e) => e.id === flow.entry_id);
-                                            return (
-                                              <div key={flow.id} className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-1 text-xs">
-                                                <div className="flex flex-col">
-                                                  <span className="font-medium capitalize">{entry?.recipient_type || "—"} • {BRL(flow.valor_previsto)}</span>
-                                                  <span className="text-gray-500">
-                                                    {flow.status === "pago" ? `Pago ${formatISODateBR(flow.data_pagamento)}` : flow.data_pagamento ? `Prog. ${formatISODateBR(flow.data_pagamento)}` : "A programar"}
-                                                  </span>
-                                                </div>
-                                                {canEdit && renderPartitionFlowAction(flow)}
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
+                                      <tr key={mes} className="border-b last:border-0">
+                                        <td className="p-2 font-medium">M{mes} • {BRL(totalMes)}</td>
+                                        <td className="p-2 text-gray-600">{situacao}</td>
+                                        <td className="p-2">{canEdit ? renderPartitionMonthAction(flowsMes) : null}</td>
+                                      </tr>
                                     );
                                   })}
-                                </div>
+                                </tbody>
+                              </table>
+                              <div className="mt-2 text-xs text-gray-500">
+                                A programação e o pagamento são feitos uma única vez por parcela da venda e espelham para Empresa, Unidade e Vendedor.
                               </div>
                             </div>
                           </td>

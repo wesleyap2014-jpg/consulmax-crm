@@ -2703,7 +2703,6 @@ export default function ComissoesPage() {
   }
 
   function downloadDemonstrativoParticionadoPDF() {
-    const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
     const periodoIni = demonstrativoTipo === "data" ? reciboDate : `${demonstrativoMes}-01`;
     const periodoFim =
       demonstrativoTipo === "data"
@@ -2716,7 +2715,6 @@ export default function ComissoesPage() {
       vendedorId: string;
       vendedorName: string;
       recipientType: string;
-      favorecido: string;
       vendaId: string;
       tipo: string;
       proposta: string;
@@ -2731,11 +2729,20 @@ export default function ComissoesPage() {
       status: string;
     };
 
-    const lines: DemoLine[] = [];
+    const getReportLevel = (): "matriz" | "unidade" | "vendedor" => {
+      if (vendedorId !== "all") return "vendedor";
+      if (!isMatrixAdmin && !isBranchManager) return "vendedor";
+      if (unitFilter !== "all") return "unidade";
+      if (isBranchManager) return "unidade";
+      return "matriz";
+    };
+
+    const reportLevel = getReportLevel();
+    const targetRecipientType = reportLevel === "matriz" ? "empresa" : reportLevel === "unidade" ? "unidade" : "vendedor";
 
     const flowInPeriod = (flow: CommissionEntryFlow) => {
       if (demonstrativoTipo === "data") return flow.data_pagamento === reciboDate;
-      return flow.data_pagamento ? flow.data_pagamento >= periodoIni && flow.data_pagamento <= periodoFim : true;
+      return !!flow.data_pagamento && flow.data_pagamento >= periodoIni && flow.data_pagamento <= periodoFim;
     };
 
     const getClienteNome = (venda?: Venda | null) => {
@@ -2749,36 +2756,56 @@ export default function ComissoesPage() {
     };
 
     const getSaleUnitId = (batch?: CommissionBatch | null, venda?: Venda | null, entry?: CommissionEntry | null) => {
-      const saleVendor = batch?.vendedor_id ? usersById[batch.vendedor_id] : venda?.vendedor_id ? usersById[venda.vendedor_id] || usersByAuth[venda.vendedor_id] : null;
+      const saleVendor =
+        batch?.vendedor_id
+          ? usersById[batch.vendedor_id]
+          : venda?.vendedor_id
+            ? usersById[venda.vendedor_id] || usersByAuth[venda.vendedor_id]
+            : null;
       return batch?.business_unit_id || saleVendor?.unit_id || entry?.business_unit_id || "";
     };
 
-    const getRecipientLabel = (entry: CommissionEntry) => {
-      if (entry.recipient_type === "empresa") return "Matriz";
-      if (entry.recipient_type === "unidade") return "Unidade";
-      if (entry.recipient_type === "vendedor") return "Vendedor";
-      return entry.recipient_type || "Comissão";
+    const getSaleVendorId = (batch?: CommissionBatch | null, venda?: Venda | null) => {
+      const raw = batch?.vendedor_id || venda?.vendedor_id || "";
+      return usersById[raw]?.id || usersByAuth[raw]?.id || raw;
     };
+
+    const canIncludeSale = (entry: CommissionEntry, batch?: CommissionBatch | null, venda?: Venda | null) => {
+      const saleVendorId = getSaleVendorId(batch, venda);
+      const saleUnitId = getSaleUnitId(batch, venda, entry);
+
+      if (entry.recipient_type !== targetRecipientType) return false;
+
+      if (reportLevel === "vendedor") {
+        const targetVendor = vendedorId !== "all" ? vendedorId : currentUser?.id || "";
+        if (!targetVendor) return false;
+        if (saleVendorId !== targetVendor) return false;
+        if (entry.recipient_user_id !== targetVendor) return false;
+        return true;
+      }
+
+      if (reportLevel === "unidade") {
+        const targetUnit = unitFilter !== "all" ? unitFilter : currentUser?.unit_id || "";
+        if (!targetUnit) return false;
+        if (saleUnitId !== targetUnit) return false;
+        return true;
+      }
+
+      return true;
+    };
+
+    const lines: DemoLine[] = [];
 
     for (const entry of partitionEntriesVisible) {
       const batch = partitionBatches.find((b) => b.id === entry.batch_id);
       const venda = batch ? partitionVendaById[batch.venda_id] : partitionVendaById[entry.venda_id];
-      const saleVendorId = batch?.vendedor_id || venda?.vendedor_id || "";
 
-      if (!isMatrixAdmin && !isBranchManager) {
-        if (entry.recipient_type !== "vendedor" || entry.recipient_user_id !== currentUser?.id) continue;
-      }
-
-      if (vendedorId !== "all" && saleVendorId !== vendedorId) continue;
-      if (unitFilter !== "all") {
-        const saleUnitIdCheck = getSaleUnitId(batch, venda, entry);
-        if (saleUnitIdCheck !== unitFilter) continue;
-      }
+      if (!canIncludeSale(entry, batch, venda)) continue;
 
       const unitId = getSaleUnitId(batch, venda, entry);
       const unitName = unitById[unitId]?.nome || "Sem unidade";
+      const saleVendorId = getSaleVendorId(batch, venda);
       const vendedorName = saleVendorId ? userLabel(saleVendorId) : "—";
-      const favorecido = entry.recipient_user_id ? userLabel(entry.recipient_user_id) : unitById[entry.recipient_unit_id || ""]?.nome || "—";
       const allFlows = partitionFlows.filter((f) => f.entry_id === entry.id).sort((a, b) => (a.mes || 0) - (b.mes || 0));
       const totalParcelas = Math.max(1, allFlows.length);
 
@@ -2791,9 +2818,8 @@ export default function ComissoesPage() {
           vendedorId: saleVendorId,
           vendedorName,
           recipientType: entry.recipient_type,
-          favorecido,
           vendaId: entry.venda_id,
-          tipo: getRecipientLabel(entry),
+          tipo: entry.recipient_type === "empresa" ? "Comissão Matriz" : entry.recipient_type === "unidade" ? "Comissão Unidade" : "Comissão Vendedor",
           proposta: venda?.numero_proposta || "—",
           cliente: getClienteNome(venda),
           grupo: (venda as any)?.grupo || "—",
@@ -2818,26 +2844,21 @@ export default function ComissoesPage() {
         if (!entry) return;
         const batch = partitionBatches.find((b) => b.id === entry.batch_id);
         const venda = batch ? partitionVendaById[batch.venda_id] : partitionVendaById[entry.venda_id];
-        const saleVendorId = batch?.vendedor_id || venda?.vendedor_id || "";
 
-        if (!isMatrixAdmin && !isBranchManager) {
-          if (entry.recipient_type !== "vendedor" || entry.recipient_user_id !== currentUser?.id) return;
-        }
-        if (vendedorId !== "all" && saleVendorId !== vendedorId) return;
+        if (!canIncludeSale(entry, batch, venda)) return;
 
         const unitId = getSaleUnitId(batch, venda, entry);
-        if (unitFilter !== "all" && unitId !== unitFilter) return;
-
+        const saleVendorId = getSaleVendorId(batch, venda);
         const bruto = -Math.abs(Number(a.amount) || 0);
+
         lines.push({
           unitId,
           unitName: unitById[unitId]?.nome || "Sem unidade",
           vendedorId: saleVendorId,
           vendedorName: saleVendorId ? userLabel(saleVendorId) : "—",
           recipientType: entry.recipient_type,
-          favorecido: entry.recipient_user_id ? userLabel(entry.recipient_user_id) : unitById[entry.recipient_unit_id || ""]?.nome || "—",
           vendaId: a.venda_id || entry.venda_id,
-          tipo: a.adjustment_type === "estorno" ? "Estorno" : "Ajuste",
+          tipo: a.adjustment_type === "estorno" ? "(-) Estorno" : "Ajuste",
           proposta: venda?.numero_proposta || "—",
           cliente: getClienteNome(venda),
           grupo: a.grupo || (venda as any)?.grupo || "—",
@@ -2857,6 +2878,7 @@ export default function ComissoesPage() {
       (a, b) =>
         a.unitName.localeCompare(b.unitName) ||
         a.vendedorName.localeCompare(b.vendedorName) ||
+        a.cliente.localeCompare(b.cliente) ||
         a.proposta.localeCompare(b.proposta) ||
         a.parcela.localeCompare(b.parcela)
     );
@@ -2879,6 +2901,7 @@ export default function ComissoesPage() {
       return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     };
 
+    const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
     let y = 38;
     const pageHeight = doc.internal.pageSize.getHeight();
     const ensureSpace = (needed = 80) => {
@@ -2916,63 +2939,83 @@ export default function ComissoesPage() {
     };
 
     const periodoLabel = `${formatISODateBR(periodoIni)} até ${formatISODateBR(periodoFim)}`;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("DEMONSTRATIVO DE COMISSÃO", 40, y);
-    y += 18;
-    subtitle(`Período: ${periodoLabel}`);
-    subtitle("Documento demonstrativo. O pagamento deve ser comprovado pelo comprovante bancário anexado ao lançamento.");
-    y += 4;
-
-    const detailHead = [["Tipo", "Proposta", "Cliente", "Grupo", "Cota", "Parcela", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida", "Status"]];
+    const detailHead = [["Nível", "Proposta", "Cliente", "Grupo", "Cota", "Parcela", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida", "Status"]];
     const detailBody = (arr: DemoLine[]) =>
-      arr.map((r) => [r.tipo, r.proposta, r.cliente, r.grupo, r.cota, r.parcela, BRL(r.valorVenda), BRL(r.bruto), BRL(r.impostos), BRL(r.liquida), r.status]);
+      arr.map((r) => [
+        r.tipo,
+        r.proposta,
+        r.cliente,
+        r.grupo,
+        r.cota,
+        r.parcela,
+        BRL(r.valorVenda),
+        BRL(r.bruto),
+        BRL(r.impostos),
+        BRL(r.liquida),
+        r.status,
+      ]);
     const totalLine = (label: string, arr: DemoLine[]) => {
       const t = totals(arr);
       return [[label, "", "", "", "", "", BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida), `${t.vendas} venda(s)`]];
     };
 
-    const vendedorSelecionado = vendedorId !== "all" ? userLabel(vendedorId) : null;
-    const unidadeSelecionada = unitFilter !== "all" ? unitById[unitFilter]?.nome : currentUnit?.nome;
-    const mode = vendedorSelecionado || (!isMatrixAdmin && !isBranchManager) ? "vendedor" : isMatrixAdmin && unitFilter === "all" ? "matriz" : "unidade";
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("DEMONSTRATIVO DE COMISSÃO", 40, y);
+    y += 18;
+    subtitle(`Período: ${periodoLabel}`);
+    subtitle("Estrutura por hierarquia: clientes somam vendedor; vendedores somam unidade; unidades somam matriz.");
+    subtitle("Documento demonstrativo. O pagamento deve ser comprovado pelo comprovante bancário anexado ao lançamento.");
+    y += 4;
 
-    if (mode === "matriz") {
-      title("MODELO MATRIZ", 13);
-      subtitle(`EMPRESA: ${matrixUnit?.nome || "Consulmax Consórcios"}`);
+    if (reportLevel === "matriz") {
+      title(`MATRIZ: ${matrixUnit?.nome || "Consulmax Consórcios"}`, 13);
       const resumoUnidades = groupBy(lines, (r) => r.unitName).map(([unidade, arr]) => {
         const t = totals(arr);
-        return [unidade, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
+        return [`(+) ${unidade}`, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
       });
-      table([["Unidade", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]], resumoUnidades.concat([["TOTAL GERAL", String(totals(lines).vendas), BRL(totals(lines).valorVenda), BRL(totals(lines).bruto), BRL(totals(lines).impostos), BRL(totals(lines).liquida)]]), 8);
+      const totalGeral = totals(lines);
+      table(
+        [["Plano", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]],
+        resumoUnidades.concat([["TOTAL MATRIZ", String(totalGeral.vendas), BRL(totalGeral.valorVenda), BRL(totalGeral.bruto), BRL(totalGeral.impostos), BRL(totalGeral.liquida)]]),
+        8
+      );
 
       for (const [unidade, unitRows] of groupBy(lines, (r) => r.unitName)) {
-        title(`UNIDADE: ${unidade}`, 11);
+        title(`(+) UNIDADE: ${unidade}`, 11);
         const resumoVendedores = groupBy(unitRows, (r) => r.vendedorName).map(([vendedor, arr]) => {
           const t = totals(arr);
-          return [vendedor, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
+          return [`   (+) ${vendedor}`, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
         });
-        table([["Vendedor", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]], resumoVendedores.concat([["TOTAL DA UNIDADE", String(totals(unitRows).vendas), BRL(totals(unitRows).valorVenda), BRL(totals(unitRows).bruto), BRL(totals(unitRows).impostos), BRL(totals(unitRows).liquida)]]), 8);
+        table(
+          [["Plano", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]],
+          resumoVendedores.concat([["TOTAL DA UNIDADE", String(totals(unitRows).vendas), BRL(totals(unitRows).valorVenda), BRL(totals(unitRows).bruto), BRL(totals(unitRows).impostos), BRL(totals(unitRows).liquida)]]),
+          8
+        );
         for (const [vendedor, vendedorRows] of groupBy(unitRows, (r) => r.vendedorName)) {
-          title(`VENDEDOR: ${vendedor}`, 10);
-          table(detailHead, detailBody(vendedorRows).concat(totalLine("TOTAL A RECEBER", vendedorRows)), 7);
+          title(`   (+) VENDEDOR: ${vendedor}`, 10);
+          table(detailHead, detailBody(vendedorRows).concat(totalLine("TOTAL DO VENDEDOR", vendedorRows)), 7);
         }
       }
-    } else if (mode === "unidade") {
-      title("MODELO UNIDADE", 13);
-      subtitle(`UNIDADE: ${unidadeSelecionada || lines[0]?.unitName || "—"}`);
+    } else if (reportLevel === "unidade") {
+      const unidadeNome = unitFilter !== "all" ? unitById[unitFilter]?.nome : currentUnit?.nome || lines[0]?.unitName || "—";
+      title(`UNIDADE: ${unidadeNome}`, 13);
       const resumoVendedores = groupBy(lines, (r) => r.vendedorName).map(([vendedor, arr]) => {
         const t = totals(arr);
-        return [vendedor, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
+        return [`(+) ${vendedor}`, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
       });
-      table([["Vendedor", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]], resumoVendedores.concat([["TOTAL DA UNIDADE", String(totals(lines).vendas), BRL(totals(lines).valorVenda), BRL(totals(lines).bruto), BRL(totals(lines).impostos), BRL(totals(lines).liquida)]]), 8);
+      table(
+        [["Plano", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]],
+        resumoVendedores.concat([["TOTAL DA UNIDADE", String(totals(lines).vendas), BRL(totals(lines).valorVenda), BRL(totals(lines).bruto), BRL(totals(lines).impostos), BRL(totals(lines).liquida)]]),
+        8
+      );
       for (const [vendedor, vendedorRows] of groupBy(lines, (r) => r.vendedorName)) {
-        title(`VENDEDOR: ${vendedor}`, 10);
-        table(detailHead, detailBody(vendedorRows).concat(totalLine("TOTAL A RECEBER", vendedorRows)), 7);
+        title(`(+) VENDEDOR: ${vendedor}`, 10);
+        table(detailHead, detailBody(vendedorRows).concat(totalLine("TOTAL DO VENDEDOR", vendedorRows)), 7);
       }
     } else {
-      const vendedorNome = vendedorSelecionado || currentUser?.nome || lines[0]?.vendedorName || "—";
-      title("MODELO VENDEDOR", 13);
-      subtitle(`VENDEDOR: ${vendedorNome}`);
+      const vendedorNome = vendedorId !== "all" ? userLabel(vendedorId) : currentUser?.nome || lines[0]?.vendedorName || "—";
+      title(`VENDEDOR: ${vendedorNome}`, 13);
       table(detailHead, detailBody(lines).concat(totalLine("TOTAL A RECEBER", lines)), 7);
     }
 
@@ -2982,7 +3025,7 @@ export default function ComissoesPage() {
     doc.setFontSize(10);
     doc.text(`TOTAL GERAL LÍQUIDO: ${BRL(grand.liquida)}  •  COMISSÃO BRUTA: ${BRL(grand.bruto)}  •  IMPOSTOS: ${BRL(grand.impostos)}`, 40, y);
 
-    doc.save(`demonstrativo_comissao_${periodoIni}_${periodoFim}.pdf`);
+    doc.save(`demonstrativo_comissao_${reportLevel}_${periodoIni}_${periodoFim}.pdf`);
   }
 
   async function gerarComissaoDeVenda(venda: Venda) {

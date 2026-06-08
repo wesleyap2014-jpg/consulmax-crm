@@ -1018,7 +1018,8 @@ export default function ComissoesPage() {
   const [partitionPayDispensarVendedor, setPartitionPayDispensarVendedor] = useState<boolean>(false);
   const [expandedPartitionBatchIds, setExpandedPartitionBatchIds] = useState<Record<string, boolean>>({});
   const [commissionSearch, setCommissionSearch] = useState<string>("");
-  const [showFinalizadas, setShowFinalizadas] = useState<boolean>(true);
+  const [showFinalizadas, setShowFinalizadas] = useState<boolean>(false);
+  const [showPerdidas, setShowPerdidas] = useState<boolean>(false);
   const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
   const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
@@ -1776,13 +1777,21 @@ export default function ComissoesPage() {
       }>;
   }, [partitionBatches, partitionEntries, partitionEntriesVisible, partitionVendaById, unitById, usersById, partitionFlows, clientesMap, commissionSearch]);
 
+  const isPartitionBatchCancelada = (row: { venda?: Venda }) =>
+    isVendaCancelada({ codigo: row.venda?.codigo ?? null, cancelada_em: row.venda?.cancelada_em ?? null });
+
   const partitionBatchRowsAPagar = useMemo(() =>
-    partitionBatchRowsVisible.filter((row) => !isFlowGroupPaid(row.flows)),
+    partitionBatchRowsVisible.filter((row) => !isPartitionBatchCancelada(row) && !isFlowGroupPaid(row.flows)),
     [partitionBatchRowsVisible]
   );
 
   const partitionBatchRowsFinalizadas = useMemo(() =>
     partitionBatchRowsVisible.filter((row) => isFlowGroupPaid(row.flows)),
+    [partitionBatchRowsVisible]
+  );
+
+  const partitionBatchRowsPerdidas = useMemo(() =>
+    partitionBatchRowsVisible.filter((row) => isPartitionBatchCancelada(row) && !isFlowGroupPaid(row.flows)),
     [partitionBatchRowsVisible]
   );
 
@@ -2374,26 +2383,51 @@ export default function ComissoesPage() {
 
 
   const combinedKpi = useMemo(() => {
-    const partitionBruta = partitionEntriesVisible.reduce((acc, entry) => acc + (Number(entry.gross_amount) || 0), 0);
-    const partitionPaga = partitionEntriesVisible.reduce((acc, entry) => {
-      const paid = partitionFlows
-        .filter((f) => f.entry_id === entry.id)
-        .reduce((a, f) => a + (Number(f.valor_pago) || 0), 0);
-      return acc + paid;
-    }, 0);
-    const partitionPerdida = partitionAdjustments.reduce((acc, adjustment) => {
-      if (!partitionEntriesVisible.some((entry) => entry.id === adjustment.entry_id)) return acc;
-      if (adjustment.adjustment_type !== "estorno" && adjustment.adjustment_type !== "desconto") return acc;
-      return acc + Math.abs(Number(adjustment.amount) || 0);
-    }, 0);
-    const partitionProgramada = partitionFlows.reduce((acc, flow) => {
-      const entry = partitionEntriesVisible.find((e) => e.id === flow.entry_id);
-      if (!entry) return acc;
-      const isPaid = flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0;
-      if (isPaid) return acc;
-      return acc + Math.max(0, Number(flow.valor_previsto) || 0);
-    }, 0);
-    const partitionVendaIds = new Set<string>(partitionEntriesVisible.map((entry) => entry.venda_id));
+    const visibleEntryIds = new Set(partitionEntriesVisible.map((entry) => entry.id));
+    const paidByEntry = new Map<string, number>();
+    const scheduledByEntry = new Map<string, number>();
+
+    for (const flow of partitionFlows) {
+      if (!visibleEntryIds.has(flow.entry_id)) continue;
+      const previsto = Number(flow.valor_previsto) || 0;
+      const pago = Number(flow.valor_pago) || 0;
+      const isPaid = flow.status === "pago" || pago > 0;
+
+      if (pago > 0) {
+        paidByEntry.set(flow.entry_id, (paidByEntry.get(flow.entry_id) || 0) + pago);
+      }
+
+      if (!isPaid && previsto > 0 && !!flow.data_pagamento) {
+        scheduledByEntry.set(flow.entry_id, (scheduledByEntry.get(flow.entry_id) || 0) + Math.max(0, previsto - pago));
+      }
+    }
+
+    let partitionBruta = 0;
+    let partitionPaga = 0;
+    let partitionPendente = 0;
+    let partitionPerdida = 0;
+    let partitionProgramada = 0;
+    const partitionVendaIds = new Set<string>();
+
+    for (const entry of partitionEntriesVisible) {
+      const batch = partitionBatches.find((b) => b.id === entry.batch_id);
+      const venda = batch ? partitionVendaById[batch.venda_id] : partitionVendaById[entry.venda_id];
+      const cancelada = isVendaCancelada({ codigo: venda?.codigo ?? null, cancelada_em: venda?.cancelada_em ?? null });
+      const gross = Number(entry.gross_amount) || 0;
+      const paid = paidByEntry.get(entry.id) || 0;
+      const unpaid = Math.max(0, gross - paid);
+
+      if (!cancelada) {
+        partitionVendaIds.add(entry.venda_id);
+        partitionBruta += gross;
+        partitionPaga += paid;
+        partitionPendente += unpaid;
+        partitionProgramada += scheduledByEntry.get(entry.id) || 0;
+      } else {
+        partitionPerdida += unpaid;
+      }
+    }
+
     const partitionVendasTotal = Array.from(partitionVendaIds).reduce<number>((acc, vendaId) => {
       const venda = partitionVendaById[vendaId];
       const batch = partitionBatches.find((b) => b.venda_id === vendaId);
@@ -2406,14 +2440,14 @@ export default function ComissoesPage() {
       comLiquida: commissionNet(partitionBruta, impostoFrac),
       comPagaBruta: partitionPaga,
       comPagaLiquida: commissionNet(partitionPaga, impostoFrac),
-      comPendenteBruta: Math.max(0, partitionBruta - partitionPaga - partitionPerdida),
-      comPendenteLiquida: commissionNet(Math.max(0, partitionBruta - partitionPaga - partitionPerdida), impostoFrac),
+      comPendenteBruta: partitionPendente,
+      comPendenteLiquida: commissionNet(partitionPendente, impostoFrac),
       comPerdidaBruta: partitionPerdida,
       comPerdidaLiquida: commissionNet(partitionPerdida, impostoFrac),
       comProgramadaBruta: partitionProgramada,
       comProgramadaLiquida: commissionNet(partitionProgramada, impostoFrac),
     };
-  }, [partitionEntriesVisible, partitionFlows, partitionAdjustments, partitionVendaById, partitionBatches, impostoFrac]);
+  }, [partitionEntriesVisible, partitionFlows, partitionVendaById, partitionBatches, impostoFrac]);
 
   function findPartitionRuleForVenda(venda: Venda) {
     const vendaTabela = normalize(venda.tabela);
@@ -3776,8 +3810,20 @@ export default function ComissoesPage() {
                 <Settings className="w-4 h-4 mr-1" /> Regras de Comissão
               </Button>
 
-              <Button variant="secondary" onClick={() => setOpenPartitionRules(true)} disabled={!canEdit} title={!canEdit ? "Vendedor não pode editar partilhas" : ""}>
+              <Button
+                variant="secondary"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setOpenPartitionRules(true);
+                }}
+                disabled={!canEdit}
+                title={!canEdit ? "Vendedor não pode editar partilhas" : ""}
+              >
                 <Settings className="w-4 h-4 mr-1" /> Partilhas por Unidade
+              </Button>
+
+              <Button variant="outline" onClick={() => setOpenImpostoCfg(true)} disabled={!canEdit} title={!canEdit ? "Somente admin pode configurar imposto" : ""}>
+                <Settings className="w-4 h-4 mr-1" /> Configurar Imposto
               </Button>
 
               <Button onClick={fetchData}>
@@ -3882,82 +3928,104 @@ export default function ComissoesPage() {
           </Card>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>🔥 Vendas</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(combinedKpi.vendasTotal)}</CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>🧾 Comissão Bruta</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(combinedKpi.comBruta)}</CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>✅ Comissão Líquida</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(combinedKpi.comLiquida)}</CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>📤 Comissão Paga</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1">
-                <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comPagaBruta)}</div>
-                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(combinedKpi.comPagaLiquida)}</div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>⏳ Comissão Pendente</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1">
-                <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comPendenteBruta)}</div>
-                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(combinedKpi.comPendenteLiquida)}</div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>💔 Comissão Perdida</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1">
-                <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comPerdidaBruta)}</div>
-                <div className="text-lg font-bold text-[#A11C27]">Líquida: {BRL(combinedKpi.comPerdidaLiquida)}</div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>📅 Comissão programada</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {combinedKpi.comProgramadaBruta > 0 ? (
-                <div className="space-y-1">
-                  <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comProgramadaBruta)}</div>
-                  <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(combinedKpi.comProgramadaLiquida)}</div>
-                  <div className="text-sm text-gray-600">Comissões com data programada e ainda não pagas</div>
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500">Sem comissão programada.</div>
-              )}
-            </CardContent>
-          </Card>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-4">
+          {[
+            { title: "Vendas", value: BRL(combinedKpi.vendasTotal), hint: "Crédito vendido", tone: "navy" },
+            { title: "Comissão Bruta", value: BRL(combinedKpi.comBruta), hint: "Base total", tone: "navy" },
+            { title: "Comissão Líquida", value: BRL(combinedKpi.comLiquida), hint: `Imposto ${reciboImpostoPct}`, tone: "gold" },
+            { title: "Comissão Paga", value: BRL(combinedKpi.comPagaBruta), hint: `Líquida ${BRL(combinedKpi.comPagaLiquida)}`, tone: "green" },
+            { title: "Comissão Pendente", value: BRL(combinedKpi.comPendenteBruta), hint: `Líquida ${BRL(combinedKpi.comPendenteLiquida)}`, tone: "navy" },
+            { title: "Comissão Perdida", value: BRL(combinedKpi.comPerdidaBruta), hint: "Canceladas não quitadas", tone: "red" },
+            { title: "Comissão Programada", value: BRL(combinedKpi.comProgramadaBruta), hint: "Com data e ainda não paga", tone: "blue" },
+          ].map((item) => {
+            const toneColor = item.tone === "red" ? "#A11C27" : item.tone === "gold" ? "#B5A573" : item.tone === "green" ? "#047857" : item.tone === "blue" ? "#1E40AF" : "#1E293F";
+            return (
+              <Card key={item.title} className="overflow-hidden border border-slate-200/70 bg-white shadow-sm">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{item.title}</div>
+                      <div className="mt-2 text-xl font-bold tabular-nums" style={{ color: "#1E293F" }}>{item.value}</div>
+                      <div className="mt-1 text-xs text-slate-400">{item.hint}</div>
+                    </div>
+                    <span className="mt-1 h-8 w-1.5 rounded-full" style={{ background: toneColor }} />
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
+
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center justify-between">
+              <span>Nova Venda</span>
+              <div className="flex items-center gap-3">
+                <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>
+                  {showVendasSem ? "Ocultar" : "Expandir"}
+                </Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+
+          {showVendasSem && (
+            <CardContent className="overflow-x-auto">
+              <table className="min-w-[1100px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Data</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left hidden md:table-cell">Nº Proposta</th>
+                    <th className="p-2 text-left hidden md:table-cell">Administradora</th>
+                    <th className="p-2 text-left">Segmento</th>
+                    <th className="p-2 text-left">Tabela</th>
+                    <th className="p-2 text-right">Crédito</th>
+                    <th className="p-2 text-left">Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {vendasSemCom.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="p-4 text-gray-500">
+                        Sem pendências 🎉
+                      </td>
+                    </tr>
+                  )}
+
+                  {vendasSemCom.map((v) => {
+                    const clienteId = v.lead_id || v.cliente_lead_id || "";
+
+                    return (
+                      <tr key={v.id} className="border-b">
+                        <td className="p-2">{formatISODateBR(v.data_venda)}</td>
+                        <td className="p-2">{userLabel(v.vendedor_id)}</td>
+                        <td className="p-2">{(clienteId && clientesMap[clienteId]?.trim()) || "—"}</td>
+                        <td className="p-2 hidden md:table-cell">{v.numero_proposta || "—"}</td>
+                        <td className="p-2 hidden md:table-cell">{v.administradora || "—"}</td>
+                        <td className="p-2">{v.segmento || "—"}</td>
+                        <td className="p-2">{v.tabela || "—"}</td>
+                        <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
+                        <td className="p-2">
+                          <Button
+                            size="sm"
+                            onClick={() => gerarComissaoDeVenda(v)}
+                            disabled={!canEdit || genBusy === v.id}
+                            title={!canEdit ? "Vendedor não pode gerar comissão" : ""}
+                          >
+                            {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
+                            Gerar Comissão
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </CardContent>
+          )}
+        </Card>
 
         <Card>
           <CardHeader className="pb-4">
@@ -4150,6 +4218,70 @@ export default function ComissoesPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex items-center justify-between">
+              <span>Perdidas</span>
+              <Button size="sm" variant="outline" onClick={() => setShowPerdidas((v) => !v)}>
+                {showPerdidas ? "Ocultar" : "Expandir"}
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          {showPerdidas && (
+            <CardContent className="space-y-4 overflow-x-auto">
+              <div className="text-xs text-gray-500">
+                Vendas canceladas (código diferente de 00 ou cancelada_em preenchido) que ainda possuem comissão não quitada.
+              </div>
+              <table className="min-w-[1380px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Unidade</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left">Proposta</th>
+                    <th className="p-2 text-left">Segmento</th>
+                    <th className="p-2 text-left">Tabela</th>
+                    <th className="p-2 text-right">Crédito</th>
+                    <th className="p-2 text-right">Comissão Bruta</th>
+                    <th className="p-2 text-right">Pago</th>
+                    <th className="p-2 text-right">Perdida</th>
+                    <th className="p-2 text-left">Fluxo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {partitionBatchRowsPerdidas.length === 0 && (
+                    <tr>
+                      <td colSpan={11} className="p-4 text-gray-500">
+                        Nenhuma comissão perdida para os filtros atuais.
+                      </td>
+                    </tr>
+                  )}
+                  {partitionBatchRowsPerdidas.map((row) => {
+                    const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
+                    const pago = row.flows.reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
+                    const perdida = Math.max(0, row.gross - pago);
+                    return (
+                      <tr key={row.batch.id} className="border-b hover:bg-gray-50">
+                        <td className="p-2">{row.unidade?.nome || "—"}</td>
+                        <td className="p-2">{row.vendedor?.nome || userLabel(row.batch.vendedor_id)}</td>
+                        <td className="p-2">{clienteNome}</td>
+                        <td className="p-2">{row.venda?.numero_proposta || "—"}</td>
+                        <td className="p-2">{row.venda?.segmento || "—"}</td>
+                        <td className="p-2">{row.venda?.tabela || "—"}</td>
+                        <td className="p-2 text-right">{BRL(row.venda?.valor_venda ?? row.batch.valor_venda)}</td>
+                        <td className="p-2 text-right">{BRL(row.gross)}</td>
+                        <td className="p-2 text-right">{BRL(pago)}</td>
+                        <td className="p-2 text-right font-semibold text-[#A11C27]">{BRL(perdida)}</td>
+                        <td className="p-2">{flowProgressText(row.flows)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </CardContent>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center justify-between">
               <span>Finalizadas</span>
               <Button size="sm" variant="outline" onClick={() => setShowFinalizadas((v) => !v)}>
                 {showFinalizadas ? "Ocultar" : "Expandir"}
@@ -4215,75 +4347,7 @@ export default function ComissoesPage() {
           )}
         </Card>
 
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="flex items-center justify-between">
-              <span>Vendas sem comissão (somente encarteiradas)</span>
-              <div className="flex items-center gap-3">
-                <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>
-                  {showVendasSem ? "Ocultar" : "Expandir"}
-                </Button>
-              </div>
-            </CardTitle>
-          </CardHeader>
 
-          {showVendasSem && (
-            <CardContent className="overflow-x-auto">
-              <table className="min-w-[1100px] w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="p-2 text-left">Data</th>
-                    <th className="p-2 text-left">Vendedor</th>
-                    <th className="p-2 text-left">Cliente</th>
-                    <th className="p-2 text-left hidden md:table-cell">Nº Proposta</th>
-                    <th className="p-2 text-left hidden md:table-cell">Administradora</th>
-                    <th className="p-2 text-left">Segmento</th>
-                    <th className="p-2 text-left">Tabela</th>
-                    <th className="p-2 text-right">Crédito</th>
-                    <th className="p-2 text-left">Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {vendasSemCom.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="p-4 text-gray-500">
-                        Sem pendências 🎉
-                      </td>
-                    </tr>
-                  )}
-
-                  {vendasSemCom.map((v) => {
-                    const clienteId = v.lead_id || v.cliente_lead_id || "";
-
-                    return (
-                      <tr key={v.id} className="border-b">
-                        <td className="p-2">{formatISODateBR(v.data_venda)}</td>
-                        <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                        <td className="p-2">{(clienteId && clientesMap[clienteId]?.trim()) || "—"}</td>
-                        <td className="p-2 hidden md:table-cell">{v.numero_proposta || "—"}</td>
-                        <td className="p-2 hidden md:table-cell">{v.administradora || "—"}</td>
-                        <td className="p-2">{v.segmento || "—"}</td>
-                        <td className="p-2">{v.tabela || "—"}</td>
-                        <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
-                        <td className="p-2">
-                          <Button
-                            size="sm"
-                            onClick={() => gerarComissaoDeVenda(v)}
-                            disabled={!canEdit || genBusy === v.id}
-                            title={!canEdit ? "Vendedor não pode gerar comissão" : ""}
-                          >
-                            {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
-                            Gerar Comissão
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </CardContent>
-          )}
-        </Card>
 
         {/* Modelo antigo ocultado após migração: Detalhamento de Comissões e Comissões pagas foram removidos da operação principal. */}
 
@@ -4420,6 +4484,103 @@ export default function ComissoesPage() {
 
             <DialogFooter className="pt-6">
               <Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={openPartitionRules} onOpenChange={setOpenPartitionRules}>
+          <DialogContent className="max-w-5xl">
+            <DialogHeader>
+              <DialogTitle>Partilhas por Unidade</DialogTitle>
+            </DialogHeader>
+
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <div className="flex flex-col gap-2">
+                <Label>Administradora</Label>
+                <Select value={partAdminFilter} onValueChange={(v) => { setPartAdminFilter(v); setPartSegmentFilter("all"); setPartRuleTableId(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas</SelectItem>
+                    {adminOptions.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label>Segmento</Label>
+                <Select value={partSegmentFilter} onValueChange={(v) => { setPartSegmentFilter(v); setPartRuleTableId(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {partSegmentOptions.map((seg) => <SelectItem key={seg} value={seg}>{seg}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-2 lg:col-span-2">
+                <Label>Tabela</Label>
+                <Select value={partRuleTableId} onValueChange={setPartRuleTableId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione a tabela" /></SelectTrigger>
+                  <SelectContent>
+                    {partTableOptions.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {(t.admin_id && adminById[t.admin_id] ? `${adminById[t.admin_id]} • ` : "") + t.segmento + " • " + t.nome_tabela}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label>Unidade</Label>
+                <Select value={partRuleUnitId} onValueChange={(v) => { setPartRuleUnitId(v); setPartVendorId(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {units.filter((u) => u.tipo !== "matriz" && u.is_active !== false).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label>Vendedor</Label>
+                <Select value={partVendorId} onValueChange={setPartVendorId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {activeUsers.filter((u) => !partRuleUnitId || u.unit_id === partRuleUnitId).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome || u.email || u.id}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label>% Vendedor</Label>
+                <Input value={partSplitVendedor} onChange={(e) => setPartSplitVendedor(e.target.value)} placeholder="25,00" />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label>% Unidade</Label>
+                <Input value={partSplitUnidade} onChange={(e) => setPartSplitUnidade(e.target.value)} placeholder="25,00" />
+              </div>
+            </div>
+
+            {selectedPartTableRule && selectedPartCommissionPreview && (
+              <div className="mt-4 rounded-xl border bg-slate-50 p-4 text-sm">
+                <div className="font-semibold text-[#1E293F]">Resumo da tabela selecionada</div>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  <div>Comissão total: <b>{pct100(selectedPartTableRule.percent_total)}</b></div>
+                  <div>Vendedor: <b>{pct100(selectedPartCommissionPreview.vendedorFrac)}</b></div>
+                  <div>Unidade: <b>{pct100(selectedPartCommissionPreview.unidadeFrac)}</b></div>
+                  <div>Matriz: <b>{pct100(selectedPartCommissionPreview.empresaFrac)}</b></div>
+                  <div className="md:col-span-2">Fluxo: <b>{selectedPartCommissionPreview.fluxo.map((p) => formatPctHuman((Number(p) || 0) * (Number(selectedPartTableRule.percent_total) || 0) * 100)).join(" / ") || "—"}</b></div>
+                </div>
+                <div className="mt-2 text-xs text-slate-500">Exemplo: em uma venda de R$ 100.000,00, a comissão total seria {BRL(selectedPartCommissionPreview.comissaoTotal)}.</div>
+              </div>
+            )}
+
+            <DialogFooter className="pt-6">
+              <Button variant="secondary" onClick={() => setOpenPartitionRules(false)}>Fechar</Button>
+              <Button onClick={salvarRegraParticionada} disabled={!canEdit}>
+                <Save className="w-4 h-4 mr-1" /> Salvar Partilha
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

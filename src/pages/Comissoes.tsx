@@ -1017,6 +1017,8 @@ export default function ComissoesPage() {
   const [partitionPayDispensarUnidade, setPartitionPayDispensarUnidade] = useState<boolean>(false);
   const [partitionPayDispensarVendedor, setPartitionPayDispensarVendedor] = useState<boolean>(false);
   const [expandedPartitionBatchIds, setExpandedPartitionBatchIds] = useState<Record<string, boolean>>({});
+  const [commissionSearch, setCommissionSearch] = useState<string>("");
+  const [showFinalizadas, setShowFinalizadas] = useState<boolean>(true);
   const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
   const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
@@ -1728,6 +1730,21 @@ export default function ComissoesPage() {
         const tax = batchEntries.reduce((acc, entry) => acc + (Number(entry.tax_amount) || 0), 0);
         const net = batchEntries.reduce((acc, entry) => acc + (Number(entry.net_amount) || 0), 0);
         const clienteId = venda?.lead_id || venda?.cliente_lead_id || "";
+        const clienteNome = (clienteId && clientesMap[clienteId]?.trim()) || "";
+        const search = normalize(commissionSearch);
+        if (search) {
+          const haystack = normalize([
+            clienteNome,
+            venda?.numero_proposta,
+            venda?.grupo,
+            venda?.cota,
+            venda?.segmento,
+            venda?.tabela,
+            vendedor?.nome,
+            unidade?.nome,
+          ].filter(Boolean).join(" "));
+          if (!haystack.includes(search)) return null;
+        }
 
         return {
           batch,
@@ -1743,20 +1760,33 @@ export default function ComissoesPage() {
           net,
         };
       })
-      .sort((a, b) => String(b.batch.data_venda || "").localeCompare(String(a.batch.data_venda || "")));
-  }, [partitionBatches, partitionEntries, partitionEntriesVisible, partitionVendaById, unitById, usersById, partitionFlows]);
+      .filter(Boolean)
+      .sort((a, b) => String((b as any).batch.data_venda || "").localeCompare(String((a as any).batch.data_venda || ""))) as Array<{
+        batch: CommissionBatch;
+        venda: Venda | undefined;
+        unidade: Unit | undefined;
+        vendedor: User | undefined;
+        entries: CommissionEntry[];
+        allEntries: CommissionEntry[];
+        flows: CommissionEntryFlow[];
+        clienteId: string;
+        gross: number;
+        tax: number;
+        net: number;
+      }>;
+  }, [partitionBatches, partitionEntries, partitionEntriesVisible, partitionVendaById, unitById, usersById, partitionFlows, clientesMap, commissionSearch]);
+
+  const partitionBatchRowsAPagar = useMemo(() =>
+    partitionBatchRowsVisible.filter((row) => !isFlowGroupPaid(row.flows)),
+    [partitionBatchRowsVisible]
+  );
+
+  const partitionBatchRowsFinalizadas = useMemo(() =>
+    partitionBatchRowsVisible.filter((row) => isFlowGroupPaid(row.flows)),
+    [partitionBatchRowsVisible]
+  );
 
   function paidInRangeGross(s: Date, e: Date) {
-    const operationalRows = rows.filter(isOperationalCommission);
-
-    const legacyPaid = sum(
-      operationalRows.flatMap((r) =>
-        (r.flow || [])
-          .filter((f) => f.data_pagamento_vendedor && isBetweenISO(f.data_pagamento_vendedor, s, e) && Number(f.valor_pago_vendedor) > 0)
-          .map((f) => Number(f.valor_pago_vendedor) || 0)
-      )
-    );
-
     const partitionPaid = partitionFlows.reduce((acc, f) => {
       const entry = partitionEntries.find((e0) => e0.id === f.entry_id);
       if (!entry || !partitionEntriesVisible.some((e0) => e0.id === entry.id)) return acc;
@@ -1764,7 +1794,7 @@ export default function ComissoesPage() {
       return acc + (Number(f.valor_pago) || 0);
     }, 0);
 
-    return legacyPaid + partitionPaid;
+    return partitionPaid;
   }
 
   function previstoInRangeGross(s: Date, e: Date) {
@@ -2371,19 +2401,19 @@ export default function ComissoesPage() {
     }, 0);
 
     return {
-      vendasTotal: kpi.vendasTotal + partitionVendasTotal,
-      comBruta: kpi.comBruta + partitionBruta,
-      comLiquida: commissionNet(kpi.comBruta + partitionBruta, impostoFrac),
-      comPagaBruta: kpi.comPagaBruta + partitionPaga,
-      comPagaLiquida: commissionNet(kpi.comPagaBruta + partitionPaga, impostoFrac),
-      comPendenteBruta: kpi.comPendenteBruta + Math.max(0, partitionBruta - partitionPaga - partitionPerdida),
-      comPendenteLiquida: commissionNet(kpi.comPendenteBruta + Math.max(0, partitionBruta - partitionPaga - partitionPerdida), impostoFrac),
-      comPerdidaBruta: kpi.comPerdidaBruta + partitionPerdida,
-      comPerdidaLiquida: commissionNet(kpi.comPerdidaBruta + partitionPerdida, impostoFrac),
+      vendasTotal: partitionVendasTotal,
+      comBruta: partitionBruta,
+      comLiquida: commissionNet(partitionBruta, impostoFrac),
+      comPagaBruta: partitionPaga,
+      comPagaLiquida: commissionNet(partitionPaga, impostoFrac),
+      comPendenteBruta: Math.max(0, partitionBruta - partitionPaga - partitionPerdida),
+      comPendenteLiquida: commissionNet(Math.max(0, partitionBruta - partitionPaga - partitionPerdida), impostoFrac),
+      comPerdidaBruta: partitionPerdida,
+      comPerdidaLiquida: commissionNet(partitionPerdida, impostoFrac),
       comProgramadaBruta: partitionProgramada,
       comProgramadaLiquida: commissionNet(partitionProgramada, impostoFrac),
     };
-  }, [kpi, partitionEntriesVisible, partitionFlows, partitionAdjustments, partitionVendaById, partitionBatches, impostoFrac]);
+  }, [partitionEntriesVisible, partitionFlows, partitionAdjustments, partitionVendaById, partitionBatches, impostoFrac]);
 
   function findPartitionRuleForVenda(venda: Venda) {
     const vendaTabela = normalize(venda.tabela);
@@ -3915,11 +3945,11 @@ export default function ComissoesPage() {
               <CardTitle>📅 Comissão programada</CardTitle>
             </CardHeader>
             <CardContent>
-              {comissaoProgramada ? (
+              {combinedKpi.comProgramadaBruta > 0 ? (
                 <div className="space-y-1">
-                  <div className="text-lg font-bold">Bruta: {BRL(comissaoProgramada.bruto)}</div>
-                  <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(comissaoProgramada.liquido)}</div>
-                  <div className="text-sm text-gray-600">Data do pagamento: {formatISODateBR(comissaoProgramada.data)}</div>
+                  <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comProgramadaBruta)}</div>
+                  <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(combinedKpi.comProgramadaLiquida)}</div>
+                  <div className="text-sm text-gray-600">Comissões com data programada e ainda não pagas</div>
                 </div>
               ) : (
                 <div className="text-sm text-gray-500">Sem comissão programada.</div>
@@ -3932,7 +3962,7 @@ export default function ComissoesPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <span>Comissões particionadas por unidade</span>
+              <span>Comissões a Pagar</span>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={downloadDemonstrativoParticionadoPDF}>
                   <FileText className="w-4 h-4 mr-1" /> Demonstrativo
@@ -3968,13 +3998,25 @@ export default function ComissoesPage() {
               )}
             </div>
 
-            <table className="min-w-[1180px] w-full text-sm">
+            <div className="flex flex-col gap-2 md:max-w-md">
+              <Label>Pesquisar</Label>
+              <Input
+                placeholder="Cliente ou nº da proposta"
+                value={commissionSearch}
+                onChange={(e) => setCommissionSearch(e.target.value)}
+              />
+            </div>
+
+            <table className="min-w-[1380px] w-full text-sm">
               <thead>
                 <tr className="bg-gray-50">
                   <th className="p-2 text-left">Unidade</th>
                   <th className="p-2 text-left">Vendedor</th>
                   <th className="p-2 text-left">Cliente</th>
                   <th className="p-2 text-left">Proposta</th>
+                  <th className="p-2 text-left">Segmento</th>
+                  <th className="p-2 text-left">Tabela</th>
+                  <th className="p-2 text-right">Crédito</th>
                   <th className="p-2 text-right">Comissão Bruta</th>
                   <th className="p-2 text-right">Impostos</th>
                   <th className="p-2 text-right">Comissão Líquida</th>
@@ -3983,15 +4025,15 @@ export default function ComissoesPage() {
                 </tr>
               </thead>
               <tbody>
-                {partitionBatchRowsVisible.length === 0 && (
+                {partitionBatchRowsAPagar.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="p-4 text-gray-500">
-                      Nenhuma comissão particionada encontrada para os filtros atuais.
+                    <td colSpan={12} className="p-4 text-gray-500">
+                      Nenhuma comissão a pagar encontrada para os filtros atuais.
                     </td>
                   </tr>
                 )}
 
-                {partitionBatchRowsVisible.map((row) => {
+                {partitionBatchRowsAPagar.map((row) => {
                   const expanded = !!expandedPartitionBatchIds[row.batch.id];
                   const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
                   const flowStatusLabel = isFlowGroupPaid(row.flows)
@@ -4025,6 +4067,9 @@ export default function ComissoesPage() {
                           </button>
                         </td>
                         <td className="p-2">{row.venda?.numero_proposta || "—"}</td>
+                        <td className="p-2">{row.venda?.segmento || "—"}</td>
+                        <td className="p-2">{row.venda?.tabela || "—"}</td>
+                        <td className="p-2 text-right">{BRL(row.venda?.valor_venda ?? row.batch.valor_venda)}</td>
                         <td className="p-2 text-right">{BRL(row.gross)}</td>
                         <td className="p-2 text-right">{BRL(row.tax)}</td>
                         <td className="p-2 text-right">{BRL(row.net)}</td>
@@ -4047,7 +4092,7 @@ export default function ComissoesPage() {
 
                       {expanded && (
                         <tr className="border-b bg-slate-50/60">
-                          <td colSpan={9} className="p-3">
+                          <td colSpan={12} className="p-3">
                             <div className="rounded-lg border bg-white p-3">
                               <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold uppercase text-gray-500">
                                 <span>Fluxo de pagamento da venda</span>
@@ -4100,6 +4145,74 @@ export default function ComissoesPage() {
               </tbody>
             </table>
           </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center justify-between">
+              <span>Finalizadas</span>
+              <Button size="sm" variant="outline" onClick={() => setShowFinalizadas((v) => !v)}>
+                {showFinalizadas ? "Ocultar" : "Expandir"}
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          {showFinalizadas && (
+            <CardContent className="space-y-4 overflow-x-auto">
+              <div className="text-xs text-gray-500">
+                Vendas em que todas as parcelas com valor já foram pagas.
+              </div>
+              <table className="min-w-[1380px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Unidade</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left">Proposta</th>
+                    <th className="p-2 text-left">Segmento</th>
+                    <th className="p-2 text-left">Tabela</th>
+                    <th className="p-2 text-right">Crédito</th>
+                    <th className="p-2 text-right">Comissão Bruta</th>
+                    <th className="p-2 text-right">Impostos</th>
+                    <th className="p-2 text-right">Comissão Líquida</th>
+                    <th className="p-2 text-left">Fluxo</th>
+                    <th className="p-2 text-left">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {partitionBatchRowsFinalizadas.length === 0 && (
+                    <tr>
+                      <td colSpan={12} className="p-4 text-gray-500">
+                        Nenhuma comissão finalizada para os filtros atuais.
+                      </td>
+                    </tr>
+                  )}
+                  {partitionBatchRowsFinalizadas.map((row) => {
+                    const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
+                    return (
+                      <tr key={row.batch.id} className="border-b hover:bg-gray-50">
+                        <td className="p-2">{row.unidade?.nome || "—"}</td>
+                        <td className="p-2">{row.vendedor?.nome || userLabel(row.batch.vendedor_id)}</td>
+                        <td className="p-2">{clienteNome}</td>
+                        <td className="p-2">{row.venda?.numero_proposta || "—"}</td>
+                        <td className="p-2">{row.venda?.segmento || "—"}</td>
+                        <td className="p-2">{row.venda?.tabela || "—"}</td>
+                        <td className="p-2 text-right">{BRL(row.venda?.valor_venda ?? row.batch.valor_venda)}</td>
+                        <td className="p-2 text-right">{BRL(row.gross)}</td>
+                        <td className="p-2 text-right">{BRL(row.tax)}</td>
+                        <td className="p-2 text-right">{BRL(row.net)}</td>
+                        <td className="p-2">{flowProgressText(row.flows)}</td>
+                        <td className="p-2">
+                          <Button size="sm" variant="outline" onClick={() => downloadDemonstrativoParticionadoPDF()}>
+                            Demonstrativo
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </CardContent>
+          )}
         </Card>
 
         <Card>
@@ -4172,418 +4285,7 @@ export default function ComissoesPage() {
           )}
         </Card>
 
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <span className="text-base font-semibold">Detalhamento de Comissões (a pagar)</span>
-
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:gap-6">
-                <div className="flex flex-col gap-2 min-w-[320px]">
-                  <Label>Vendedor</Label>
-                  <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isAdmin}>
-                    <SelectTrigger className="w-full h-10">
-                      <SelectValue placeholder="Todos" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {isAdmin && <SelectItem value="all">Todos</SelectItem>}
-                      {activeUsers.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.nome?.trim() || u.email?.trim() || u.id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
-                  <div className="flex flex-col gap-2">
-                    <Label>Data do Demonstrativo</Label>
-                    <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <Label>Imposto (parâmetro)</Label>
-                    <div className="flex items-center gap-2">
-                      <Input value={reciboImpostoPct} readOnly className="w-32" />
-                      {isAdmin && (
-                        <Button size="sm" variant="outline" onClick={() => setOpenImpostoCfg(true)}>
-                          Configurar
-                        </Button>
-                      )}
-                    </div>
-                    {!isAdmin && <div className="text-xs text-gray-500">Percentual definido pela administração.</div>}
-                  </div>
-
-                  <div className="flex items-end gap-3">
-                    <Button onClick={downloadReceiptPDFPorData}>
-                      <FileText className="w-4 h-4 mr-1" /> Demonstrativo
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>
-                      {showUnpaid ? "Ocultar" : "Expandir"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </CardTitle>
-          </CardHeader>
-
-          {showUnpaid && (
-            <CardContent className="overflow-x-auto">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 pb-3">
-                <Input placeholder="Buscar pelo nº da proposta" value={unpaidPropSearch} onChange={(e) => setUnpaidPropSearch(e.target.value)} className="w-[280px]" />
-              </div>
-
-              <table className="min-w-[1200px] w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="p-2 text-left">Data</th>
-                    <th className="p-2 text-left">Vendedor</th>
-                    <th className="p-2 text-left">Cliente</th>
-                    <th className="p-2 text-left hidden md:table-cell">Nº Proposta</th>
-                    <th className="p-2 text-left">Segmento</th>
-                    <th className="p-2 text-left">Tabela</th>
-                    <th className="p-2 text-right">Crédito</th>
-                    <th className="p-2 text-right hidden md:table-cell">% Comissão</th>
-                    <th className="p-2 text-right">Valor Comissão</th>
-                    <th className="p-2 text-left">Pgto</th>
-                    <th className="p-2 text-left">% Pago</th>
-                    <th className="p-2 text-left">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading && (
-                    <tr>
-                      <td colSpan={12} className="p-6">
-                        <Loader2 className="animate-spin inline mr-2" /> Carregando...
-                      </td>
-                    </tr>
-                  )}
-
-                  {!loading && rowsAPagar.length === 0 && (
-                    <tr>
-                      <td colSpan={12} className="p-6 text-gray-500">
-                        Sem registros.
-                      </td>
-                    </tr>
-                  )}
-
-                  {!loading &&
-                    rowsAPagar.map((r) => {
-                      const isConfirm = hasRegisteredButUnpaid(r.flow);
-                      const chipClasses = isConfirm
-                        ? "!bg-[#1E293F] !text-white hover:!bg-[#1E293F]/90 focus-visible:!ring-[#1E293F]"
-                        : "!bg-[#A11C27] !text-white hover:!bg-[#A11C27]/90 focus-visible:!ring-[#A11C27]";
-
-                      const { paid, total } = flowStats(r.flow);
-                      const { pct } = pctPagoFromCommission(r);
-
-                      return (
-                        <tr key={r.id} className="border-b hover:bg-gray-50">
-                          <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
-                          <td className="p-2">{userLabel(r.vendedor_id)}</td>
-                          <td className="p-2">{r.cliente_nome || "—"}</td>
-                          <td className="p-2 hidden md:table-cell">{r.numero_proposta || "—"}</td>
-                          <td className="p-2">{r.segmento || "—"}</td>
-                          <td className="p-2">{r.tabela || "—"}</td>
-                          <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
-                          <td className="p-2 text-right hidden md:table-cell">{pct100(r.percent_aplicado)}</td>
-                          <td className="p-2 text-right">{BRL(totalCommissionGross(r))}</td>
-                          <td className="p-2">
-                            <span className="font-medium tabular-nums">{total ? `${paid}/${total}` : "—"}</span>
-                          </td>
-                          <td className="p-2">
-                            <span className="font-medium tabular-nums">{`${pct.toFixed(0)}%`}</span>
-                          </td>
-                          <td className="p-2">
-                            <div className="flex flex-col gap-2 sm:flex-row">
-                              <Button
-                                size="sm"
-                                variant="default"
-                                className={chipClasses}
-                                onClick={() => openPaymentFor(r)}
-                                disabled={!canEdit}
-                                title={
-                                  !canEdit
-                                    ? "Vendedor não pode registrar pagamentos"
-                                    : isConfirm
-                                      ? "Existe pagamento registrado sem valor — confirmar"
-                                      : "Registrar pagamento"
-                                }
-                              >
-                                <DollarSign className="w-4 h-4 mr-1" />
-                                {isConfirm ? "Confirmar Pagamento" : "Registrar pagamento"}
-                              </Button>
-
-                              <Button size="sm" variant="outline" onClick={() => retornarComissao(r)} disabled={!canEdit} title={!canEdit ? "Vendedor não pode retornar" : ""}>
-                                <RotateCcw className="w-4 h-4 mr-1" /> Retornar
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </CardContent>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <span className="text-base font-semibold">Comissões pagas</span>
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:gap-4">
-                <Input
-                  placeholder="Buscar por cliente ou nº proposta"
-                  value={paidSearch}
-                  onChange={(e) => {
-                    setPaidSearch(e.target.value);
-                    setPaidPage(1);
-                  }}
-                  className="w-[280px]"
-                />
-                <div className="flex items-center gap-3">
-                  <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>
-                    {showPaid ? "Ocultar" : "Expandir"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setOpenBulkRefund(true)}
-                    className="!bg-[#A11C27] !text-white hover:!bg-[#A11C27]/90"
-                    disabled={!canEdit}
-                    title={!canEdit ? "Vendedor não pode estornar" : ""}
-                  >
-                    Estorno
-                  </Button>
-                </div>
-              </div>
-            </CardTitle>
-          </CardHeader>
-
-          {showPaid && (
-            <CardContent className="overflow-x-auto">
-              <table className="min-w-[1100px] w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="p-2 text-left">Data Pagto</th>
-                    <th className="p-2 text-left">Vendedor</th>
-                    <th className="p-2 text-left">Cliente</th>
-                    <th className="p-2 text-left hidden md:table-cell">Nº Proposta</th>
-                    <th className="p-2 text-left">Parcela</th>
-                    <th className="p-2 text-right">Valor Pago (Bruto)</th>
-                    <th className="p-2 text-left">Arquivos</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagosPage.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="p-6 text-gray-500">
-                        Nenhum pagamento encontrado.
-                      </td>
-                    </tr>
-                  )}
-
-                  {pagosPage.map(({ flow, comm }) => (
-                    <tr key={flow.id} className="border-b">
-                      <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
-                      <td className="p-2">{userLabel(comm.vendedor_id)}</td>
-                      <td className="p-2">{comm.cliente_nome || "—"}</td>
-                      <td className="p-2 hidden md:table-cell">{comm.numero_proposta || "—"}</td>
-                      <td className="p-2">M{flow.mes}</td>
-                      <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
-                      <td className="p-2">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
-                          {flow.recibo_vendedor_url && (
-                            <a
-                              className="underline text-blue-700"
-                              href="#"
-                              onClick={async (e) => {
-                                e.preventDefault();
-                                const u = await getSignedUrl(flow.recibo_vendedor_url);
-                                if (u) window.open(u, "_blank");
-                              }}
-                            >
-                              Demonstrativo
-                            </a>
-                          )}
-
-                          {flow.comprovante_pagto_url && (
-                            <a
-                              className="underline text-blue-700"
-                              href="#"
-                              onClick={async (e) => {
-                                e.preventDefault();
-                                const u = await getSignedUrl(flow.comprovante_pagto_url);
-                                if (u) window.open(u, "_blank");
-                              }}
-                            >
-                              Comprovante
-                            </a>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-4 pt-6">
-                <div className="text-sm text-gray-600">
-                  Mostrando {pagosPage.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageSize, pagosFiltered.length)} de {pagosFiltered.length}
-                </div>
-                <div className="flex items-center gap-3">
-                  <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.max(1, p - 1))} disabled={paidPage <= 1}>
-                    Anterior
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))} disabled={paidPage >= totalPages}>
-                    Próxima
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          )}
-        </Card>
-
-
-        <Dialog open={openPartitionRules} onOpenChange={setOpenPartitionRules}>
-          <DialogContent className="max-w-6xl">
-            <DialogHeader>
-              <DialogTitle>Partilhas por Unidade</DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="flex flex-col gap-2">
-                  <Label>Administradora</Label>
-                  <Select value={partAdminFilter} onValueChange={(v) => { setPartAdminFilter(v); setPartSegmentFilter("all"); setPartRuleTableId(""); }}>
-                    <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todas</SelectItem>
-                      {adminOptions.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label>Segmento</Label>
-                  <Select value={partSegmentFilter} onValueChange={(v) => { setPartSegmentFilter(v); setPartRuleTableId(""); }}>
-                    <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      {partSegmentOptions.map((seg) => <SelectItem key={seg} value={seg}>{seg}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2 md:col-span-2">
-                  <Label>Tabela</Label>
-                  <Select value={partRuleTableId} onValueChange={setPartRuleTableId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione a tabela com regra cadastrada" /></SelectTrigger>
-                    <SelectContent>
-                      {partTableOptions.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {(t.admin_id && adminById[t.admin_id] ? `${adminById[t.admin_id]} • ` : "") + t.segmento + " • " + t.nome_tabela}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label>Unidade</Label>
-                  <Select value={partRuleUnitId} onValueChange={(v) => { setPartRuleUnitId(v); setPartVendorId(""); }}>
-                    <SelectTrigger><SelectValue placeholder="Selecione a unidade" /></SelectTrigger>
-                    <SelectContent>
-                      {units.filter((u) => u.tipo !== "matriz").map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label>Vendedor</Label>
-                  <Select value={partVendorId} onValueChange={setPartVendorId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione o vendedor" /></SelectTrigger>
-                    <SelectContent>
-                      {activeUsers
-                        .filter((u) => !partRuleUnitId || u.unit_id === partRuleUnitId)
-                        .map((u) => <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email || u.id}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label>Vendedor (% da comissão)</Label>
-                  <Input value={partSplitVendedor} onChange={(e) => setPartSplitVendedor(e.target.value)} placeholder="25,00" />
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label>Unidade/Gestor (% da comissão)</Label>
-                  <Input value={partSplitUnidade} onChange={(e) => setPartSplitUnidade(e.target.value)} placeholder="25,00" />
-                </div>
-              </div>
-
-              <div className="rounded-md border bg-gray-50 p-4 text-sm text-gray-700 space-y-2">
-                <div className="font-semibold text-[#1E293F]">Informações da tabela selecionada</div>
-                {selectedPartTableRule ? (
-                  <>
-                    <div>Comissão total da tabela: <b>{pct100(selectedPartTableRule.percent_total)}</b></div>
-                    <div>Fluxo de pagamento sobre a venda: <b>{(selectedPartTableRule.fluxo_percentuais || []).map((x) => formatPctHuman((Number(x) || 0) * (Number(selectedPartTableRule.percent_total) || 0) * 100)).join(" / ")}</b></div>
-                    {selectedPartCommissionPreview && (
-                      <div className="text-xs leading-relaxed">
-                        Exemplo em venda de R$ 100.000,00: comissão gerada {BRL(selectedPartCommissionPreview.comissaoTotal)} •
-                        Matriz {pct100(selectedPartCommissionPreview.empresaFrac)} = {BRL(selectedPartCommissionPreview.comissaoTotal * selectedPartCommissionPreview.empresaFrac)} •
-                        Unidade {pct100(selectedPartCommissionPreview.unidadeFrac)} = {BRL(selectedPartCommissionPreview.comissaoTotal * selectedPartCommissionPreview.unidadeFrac)} •
-                        Vendedor {pct100(selectedPartCommissionPreview.vendedorFrac)} = {BRL(selectedPartCommissionPreview.comissaoTotal * selectedPartCommissionPreview.vendedorFrac)}.
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div>Selecione uma tabela que já tenha regra de comissão cadastrada.</div>
-                )}
-              </div>
-
-              <div className="overflow-x-auto border rounded-md">
-                <table className="min-w-[950px] w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50">
-                      <th className="p-2 text-left">Tabela</th>
-                      <th className="p-2 text-left">Administradora</th>
-                      <th className="p-2 text-left">Unidade</th>
-                      <th className="p-2 text-left">Favorecidos</th>
-                      <th className="p-2 text-left">Partilha</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tableRules.map((r) => {
-                      const sp = splitRules.filter((s) => s.table_rule_id === r.id);
-                      if (!sp.length) return null;
-                      const unidadeId = sp[0]?.business_unit_id || "";
-                      return (
-                        <tr key={r.id + unidadeId} className="border-t">
-                          <td className="p-2">{r.nome_tabela}</td>
-                          <td className="p-2">{r.administradora || "—"}</td>
-                          <td className="p-2">{unitById[unidadeId]?.nome || "—"}</td>
-                          <td className="p-2">{sp.map((s) => `${s.recipient_type}: ${userLabel(s.recipient_user_id)}`).join(" • ")}</td>
-                          <td className="p-2">{sp.map((s) => `${s.recipient_type}: ${pct100(s.split_percent)}`).join(" • ")}</td>
-                        </tr>
-                      );
-                    })}
-                    {!splitRules.length && (
-                      <tr><td colSpan={5} className="p-4 text-gray-500">Nenhuma partilha cadastrada.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <DialogFooter className="pt-6">
-              <Button variant="secondary" onClick={() => setOpenPartitionRules(false)}>Fechar</Button>
-              <Button onClick={salvarRegraParticionada} disabled={!canEdit}>
-                <Save className="w-4 h-4 mr-1" /> Salvar Partilha
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        {/* Modelo antigo ocultado após migração: Detalhamento de Comissões e Comissões pagas foram removidos da operação principal. */}
 
         <Dialog open={openRules} onOpenChange={(v) => setOpenRules(v)}>
           <DialogContent className="max-w-6xl">

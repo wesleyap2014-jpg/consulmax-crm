@@ -11,6 +11,7 @@ import {
   Sparkles,
   PlusCircle,
   Pencil,
+  Target,
 } from "lucide-react";
 
 type AdminRow = {
@@ -222,18 +223,41 @@ export default function SimuladoresHub() {
             <h1 className="text-2xl md:text-4xl font-black tracking-tight">Escolha a administradora para iniciar a simulação</h1>
           </div>
 
-          {canManage && (
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Button
               type="button"
-              onClick={() => navigate("/simuladores/add")}
-              className="h-11 shrink-0 rounded-2xl bg-white px-4 font-semibold text-slate-900 hover:bg-white/90"
+              onClick={() => navigate("/radar-ofertas")}
+              className="h-11 shrink-0 rounded-2xl border border-white/25 bg-white/10 px-4 font-semibold text-white backdrop-blur hover:bg-white/20"
             >
-              <PlusCircle className="mr-2 h-4 w-4" />
-              Nova administradora
+              <Target className="mr-2 h-4 w-4" />
+              Radar de Ofertas
             </Button>
-          )}
+
+            {canManage && (
+              <Button
+                type="button"
+                onClick={() => navigate("/simuladores/add")}
+                className="h-11 shrink-0 rounded-2xl bg-white px-4 font-semibold text-slate-900 hover:bg-white/90"
+              >
+                <PlusCircle className="mr-2 h-4 w-4" />
+                Nova administradora
+              </Button>
+            )}
+          </div>
         </div>
       </section>
+
+      <Card className="rounded-[28px] border bg-white/75 shadow-sm backdrop-blur">
+        <CardContent className="flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-sm font-black" style={{ color: C.navy }}>Não sabe por qual administradora começar?</div>
+            <p className="text-sm text-slate-600">Use o Radar de Ofertas para cruzar crédito líquido, parcela, lance e média de grupo antes de abrir uma simulação.</p>
+          </div>
+          <Button type="button" className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => navigate("/radar-ofertas")}>
+            Buscar melhor oferta <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {orderedAdmins.map((admin) => {

@@ -14,6 +14,7 @@ const Oportunidades = React.lazy(() => import("./pages/OportunidadesPipelineV7")
 const Agenda = React.lazy(() => import("./pages/AgendaLiveKit"));
 const AgendaSala = React.lazy(() => import("./pages/AgendaSala"));
 const Simuladores = React.lazy(() => import("./pages/SimuladoresHub"));
+const RadarOfertas = React.lazy(() => import("./pages/RadarOfertas"));
 const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdministradora"));
 const EmbraconSimulator = React.lazy(() => import("./pages/simuladores/EmbraconSimulator"));
 const MaggiSimulator = React.lazy(() => import("./pages/simuladores/MaggiSimulator"));
@@ -134,6 +135,8 @@ export const router = createBrowserRouter([
           { path: "estoque-contempladas", element: withSuspense(<EstoqueContempladas />) },
           { path: "estoque", element: <Navigate to="/estoque-contempladas" replace /> },
           { path: "cotas-contempladas", element: <Navigate to="/estoque-contempladas" replace /> },
+          { path: "radar-ofertas", element: withSuspense(<RadarOfertas />) },
+          { path: "buscar-ofertas", element: <Navigate to="/radar-ofertas" replace /> },
 
           {
             path: "simuladores",

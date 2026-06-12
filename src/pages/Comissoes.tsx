@@ -1381,9 +1381,9 @@ export default function ComissoesPage() {
 
         if (partAdminFilter !== "all" && table?.admin_id !== partAdminFilter && normalize(rule.administradora) !== normalize(adminName)) return null;
         if (partSegmentFilter !== "all" && table?.segmento !== partSegmentFilter && rule.segmento !== partSegmentFilter) return null;
-        if (partRuleTableId && partRuleTableId !== table?.id && partRuleTableId !== rule.sim_table_id) return null;
-        if (partRuleUnitId && unitId !== partRuleUnitId) return null;
-        if (partVendorId && vendorId !== partVendorId) return null;
+        if (partRuleTableId && partRuleTableId !== "all" && partRuleTableId !== table?.id && partRuleTableId !== rule.sim_table_id) return null;
+        if (partRuleUnitId && partRuleUnitId !== "all" && unitId !== partRuleUnitId) return null;
+        if (partVendorId && partVendorId !== "all" && vendorId !== partVendorId) return null;
 
         return {
           key,
@@ -1396,6 +1396,7 @@ export default function ComissoesPage() {
           unidadePct: Number(unidadeSplit?.split_percent) || 0,
           matrizPct: Number(empresaSplit?.split_percent) || Math.max(0, 1 - (Number(vendedorSplit?.split_percent) || 0) - (Number(unidadeSplit?.split_percent) || 0)),
           commissionPct: Number(rule.percent_total) || 0,
+          fluxo: Array.isArray(rule.fluxo_percentuais) ? rule.fluxo_percentuais : [],
         };
       })
       .filter(Boolean)
@@ -1415,6 +1416,7 @@ export default function ComissoesPage() {
         unidadePct: number;
         matrizPct: number;
         commissionPct: number;
+        fluxo: number[];
       }>;
   }, [splitRules, tableRules, simTables, unitById, usersById, adminById, partAdminFilter, partSegmentFilter, partRuleTableId, partRuleUnitId, partVendorId]);
 
@@ -2941,7 +2943,7 @@ export default function ComissoesPage() {
     const paidMeses = Array.from(
       new Set(
         row.flows
-          .filter((flow) => (Number(flow.valor_pago) || 0) > 0)
+          .filter((flow) => (Number(flow.valor_pago) || 0) > 0 && !monthHasActiveRefund([flow]))
           .map((flow) => Number(flow.mes))
       )
     ).sort((a, b) => a - b);
@@ -2975,6 +2977,10 @@ export default function ComissoesPage() {
 
     const dataISO = brDateToISO(partitionRefundDateBR);
     if (!dataISO) return alert("Informe a data do estorno no formato dd/mm/aaaa.");
+
+    if (activeRefundsForMonth(partitionRefundBatchId, mes).length > 0) {
+      return alert("Essa parcela já possui estorno ativo. Reverta o estorno antes de lançar outro.");
+    }
 
     const flowsMes = partitionFlows.filter(
       (flow) =>
@@ -3029,16 +3035,26 @@ export default function ComissoesPage() {
 
   async function reverterEstornosParticionados(batchId: string) {
     if (!canEdit) return alert("Somente admin pode reverter estorno.");
-    if (!confirm("Confirmar reversão dos estornos ativos desta venda?")) return;
 
-    const activeRefundIds = partitionAdjustments
-      .filter((a) => a.batch_id === batchId && a.adjustment_type === "estorno" && !a.is_reversed)
-      .map((a) => a.id);
+    const activeRefunds = partitionAdjustments.filter((a) => a.batch_id === batchId && a.adjustment_type === "estorno" && !a.is_reversed);
+    const activeRefundIds = activeRefunds.map((a) => a.id);
+    const totalAtivo = activeRefunds.reduce((acc, cur) => acc + (Number(cur.amount) || 0), 0);
 
     if (!activeRefundIds.length) {
       alert("Essa venda não possui estorno ativo para reverter.");
       return;
     }
+
+    const valorInformado = prompt(`Valor bruto da reversão. Estorno ativo: ${BRL(totalAtivo)}`, String(totalAtivo.toFixed(2)).replace(".", ","));
+    if (valorInformado === null) return;
+
+    const valorReversao = parseBRL(valorInformado);
+    if (valorReversao <= 0) return alert("Informe um valor bruto válido para a reversão.");
+    if (Math.abs(valorReversao - totalAtivo) > 0.01) {
+      return alert(`Por segurança, a reversão atual precisa ser pelo valor total do estorno ativo: ${BRL(totalAtivo)}.`);
+    }
+
+    if (!confirm("Confirmar reversão dos estornos ativos desta venda?")) return;
 
     const { error } = await supabase
       .from("commission_adjustments")
@@ -3113,12 +3129,37 @@ export default function ComissoesPage() {
     if (gerar) downloadDemonstrativoParticionadoPDF();
   }
 
+  function activeRefundsForMonth(batchId: string, mes: number) {
+    return partitionAdjustments.filter(
+      (a) =>
+        a.batch_id === batchId &&
+        a.adjustment_type === "estorno" &&
+        !a.is_reversed &&
+        String(a.parcela || "") === String(mes)
+    );
+  }
+
+  function monthHasActiveRefund(flowsMes: CommissionEntryFlow[]) {
+    const representative = flowsMes[0];
+    if (!representative) return false;
+    return activeRefundsForMonth(representative.batch_id, Number(representative.mes)).length > 0;
+  }
+
   function renderPartitionMonthAction(flowsMes: CommissionEntryFlow[]) {
     const payable = flowsMes.filter((flow) => (Number(flow.valor_previsto) || 0) > 0);
     const total = payable.reduce((acc, flow) => acc + (Number(flow.valor_previsto) || 0), 0);
     const allPaid = payable.length > 0 && payable.every((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0);
     const isProgrammed = payable.some((flow) => !!flow.data_pagamento && flow.status !== "pago" && (Number(flow.valor_pago) || 0) <= 0);
     const representative = payable[0] || flowsMes[0];
+    const hasRefund = monthHasActiveRefund(flowsMes);
+
+    if (hasRefund) {
+      return (
+        <Button size="sm" className="h-7 px-3 bg-[#A11C27] text-white hover:bg-[#A11C27]/90" disabled title="Parcela estornada">
+          Est
+        </Button>
+      );
+    }
 
     if (!representative || total <= 0) {
       return (
@@ -4387,14 +4428,17 @@ export default function ComissoesPage() {
                                     const totalMes = flowsMes.reduce((acc, flow) => acc + (Number(flow.valor_previsto) || 0), 0);
                                     const allPaid = payable.length > 0 && payable.every((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0);
                                     const firstDate = flowsMes.find((flow) => !!flow.data_pagamento)?.data_pagamento || null;
+                                    const hasRefund = monthHasActiveRefund(flowsMes);
                                     const situacao =
-                                      totalMes <= 0
-                                        ? "Parcela sem valor"
-                                        : allPaid
-                                          ? `Pago ${formatISODateBR(firstDate)}`
-                                          : firstDate
-                                            ? `Prog. ${formatISODateBR(firstDate)}`
-                                            : "A programar";
+                                      hasRefund
+                                        ? "Estornada"
+                                        : totalMes <= 0
+                                          ? "Parcela sem valor"
+                                          : allPaid
+                                            ? `Pago ${formatISODateBR(firstDate)}`
+                                            : firstDate
+                                              ? `Prog. ${formatISODateBR(firstDate)}`
+                                              : "A programar";
 
                                     return (
                                       <tr key={mes} className="border-b last:border-0">
@@ -4695,7 +4739,7 @@ export default function ComissoesPage() {
         </Dialog>
 
         <Dialog open={openPartitionRules} onOpenChange={setOpenPartitionRules}>
-          <DialogContent className="max-w-5xl">
+          <DialogContent className="max-w-[96vw] xl:max-w-[1400px] max-h-[92vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Partilhas por Unidade</DialogTitle>
             </DialogHeader>
@@ -4728,6 +4772,7 @@ export default function ComissoesPage() {
                 <Select value={partRuleTableId} onValueChange={setPartRuleTableId}>
                   <SelectTrigger><SelectValue placeholder="Selecione a tabela" /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="all">Todas</SelectItem>
                     {partTableOptions.map((t) => (
                       <SelectItem key={t.id} value={t.id}>
                         {(t.admin_id && adminById[t.admin_id] ? `${adminById[t.admin_id]} • ` : "") + t.segmento + " • " + t.nome_tabela}
@@ -4742,6 +4787,7 @@ export default function ComissoesPage() {
                 <Select value={partRuleUnitId} onValueChange={(v) => { setPartRuleUnitId(v); setPartVendorId(""); }}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="all">Todas</SelectItem>
                     {units.filter((u) => u.tipo !== "matriz" && u.is_active !== false).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -4752,7 +4798,8 @@ export default function ComissoesPage() {
                 <Select value={partVendorId} onValueChange={setPartVendorId}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
-                    {activeUsers.filter((u) => !partRuleUnitId || u.unit_id === partRuleUnitId).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome || u.email || u.id}</SelectItem>)}
+                    <SelectItem value="all">Todos</SelectItem>
+                    {activeUsers.filter((u) => !partRuleUnitId || partRuleUnitId === "all" || u.unit_id === partRuleUnitId).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome || u.email || u.id}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -4821,7 +4868,7 @@ export default function ComissoesPage() {
               </div>
 
               <div className="max-h-[320px] overflow-auto rounded-lg border">
-                <table className="min-w-[980px] w-full text-sm">
+                <table className="min-w-[1180px] w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50">
                       <th className="p-2 text-left">Unidade</th>
@@ -4830,6 +4877,7 @@ export default function ComissoesPage() {
                       <th className="p-2 text-left">Segmento</th>
                       <th className="p-2 text-left">Tabela</th>
                       <th className="p-2 text-right">Comissão tabela</th>
+                      <th className="p-2 text-left">Fluxo da tabela</th>
                       <th className="p-2 text-right">Matriz</th>
                       <th className="p-2 text-right">Unidade</th>
                       <th className="p-2 text-right">Vendedor</th>
@@ -4838,7 +4886,7 @@ export default function ComissoesPage() {
                   <tbody>
                     {splitRulesConfiguredRows.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="p-4 text-center text-slate-500">Nenhuma partilha cadastrada para os filtros selecionados.</td>
+                        <td colSpan={10} className="p-4 text-center text-slate-500">Nenhuma partilha cadastrada para os filtros selecionados.</td>
                       </tr>
                     )}
                     {splitRulesConfiguredRows.map((row) => (
@@ -4849,6 +4897,7 @@ export default function ComissoesPage() {
                         <td className="p-2">{row.segmento}</td>
                         <td className="p-2">{row.tabela}</td>
                         <td className="p-2 text-right">{pct100(row.commissionPct)}</td>
+                        <td className="p-2 text-left text-xs">{row.fluxo?.length ? row.fluxo.map((x) => formatPctHuman((Number(x) || 0) * row.commissionPct * 100)).join(" / ") : "—"}</td>
                         <td className="p-2 text-right">{pct100(row.matrizPct)}</td>
                         <td className="p-2 text-right">{pct100(row.unidadePct)}</td>
                         <td className="p-2 text-right">{pct100(row.vendedorPct)}</td>
@@ -5252,7 +5301,7 @@ export default function ComissoesPage() {
             {(() => {
               const row = partitionBatchRowsVisible.find((item) => item.batch.id === partitionRefundBatchId);
               const paidMeses = row
-                ? Array.from(new Set(row.flows.filter((flow) => (Number(flow.valor_pago) || 0) > 0).map((flow) => Number(flow.mes)))).sort((a, b) => a - b)
+                ? Array.from(new Set(row.flows.filter((flow) => (Number(flow.valor_pago) || 0) > 0 && !monthHasActiveRefund([flow])).map((flow) => Number(flow.mes)))).sort((a, b) => a - b)
                 : [];
               const selectedMes = Number(partitionRefundMes);
               const flowsMes = row?.flows.filter((flow) => Number(flow.mes) === selectedMes && (Number(flow.valor_pago) || 0) > 0) || [];

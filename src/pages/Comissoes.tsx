@@ -230,6 +230,10 @@ type CommissionAdjustment = {
   venda_id: UUID | null;
   adjustment_type: "estorno" | "desconto" | "ajuste_manual" | "bonus" | string;
   amount: number;
+  tax_amount?: number | null;
+  data_estorno?: string | null;
+  is_reversed?: boolean | null;
+  reversed_at?: string | null;
   description: string | null;
   grupo?: string | null;
   cota?: string | null;
@@ -1016,6 +1020,12 @@ export default function ComissoesPage() {
   const [partitionPayVendedorFile, setPartitionPayVendedorFile] = useState<File | null>(null);
   const [partitionPayDispensarUnidade, setPartitionPayDispensarUnidade] = useState<boolean>(false);
   const [partitionPayDispensarVendedor, setPartitionPayDispensarVendedor] = useState<boolean>(false);
+
+  const [partitionRefundBatchId, setPartitionRefundBatchId] = useState<string | null>(null);
+  const [partitionRefundMes, setPartitionRefundMes] = useState<string>("");
+  const [partitionRefundAmount, setPartitionRefundAmount] = useState<string>("");
+  const [partitionRefundDateBR, setPartitionRefundDateBR] = useState<string>(() => isoToBRDate(toDateInput(new Date())));
+  const [partitionRefundDescription, setPartitionRefundDescription] = useState<string>("Estorno de comissão");
   const [expandedPartitionBatchIds, setExpandedPartitionBatchIds] = useState<Record<string, boolean>>({});
   const [commissionSearch, setCommissionSearch] = useState<string>("");
   const [showFinalizadas, setShowFinalizadas] = useState<boolean>(false);
@@ -2920,30 +2930,123 @@ export default function ComissoesPage() {
     fetchData();
   }
 
-  async function registrarEstornoParticionado(entry: CommissionEntry) {
+  function abrirEstornoParticionado(row: {
+    batch: CommissionBatch;
+    venda?: Venda;
+    entries: CommissionEntry[];
+    flows: CommissionEntryFlow[];
+  }) {
     if (!canEdit) return alert("Somente admin pode registrar estorno.");
 
-    const valor = prompt("Valor bruto do estorno:", String(Number(entry.gross_amount || 0).toFixed(2)).replace(".", ","));
-    if (valor === null) return;
+    const paidMeses = Array.from(
+      new Set(
+        row.flows
+          .filter((flow) => (Number(flow.valor_pago) || 0) > 0)
+          .map((flow) => Number(flow.mes))
+      )
+    ).sort((a, b) => a - b);
 
-    const amount = parseBRL(valor);
-    if (amount <= 0) return alert("Valor inválido.");
+    if (!paidMeses.length) {
+      alert("Essa venda ainda não possui parcelas pagas para estornar.");
+      return;
+    }
 
-    const descricao = prompt("Descrição do estorno:", "Estorno de comissão") || "Estorno de comissão";
+    const firstMes = paidMeses[0];
+    const totalPagoMes = row.flows
+      .filter((flow) => Number(flow.mes) === firstMes)
+      .reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
 
-    const { error } = await supabase.from("commission_adjustments").insert({
-      entry_id: entry.id,
-      batch_id: entry.batch_id,
-      venda_id: entry.venda_id,
-      adjustment_type: "estorno",
-      amount,
-      description: descricao,
-      created_by: authUserId,
-    } as any);
+    setPartitionRefundBatchId(row.batch.id);
+    setPartitionRefundMes(String(firstMes));
+    setPartitionRefundAmount(String(totalPagoMes.toFixed(2)).replace(".", ","));
+    setPartitionRefundDateBR(isoToBRDate(toDateInput(new Date())));
+    setPartitionRefundDescription("Estorno de comissão");
+  }
 
-    if (error) return alert("Erro ao registrar estorno: " + error.message);
+  async function confirmarEstornoParticionado() {
+    if (!canEdit) return alert("Somente admin pode registrar estorno.");
+    if (!partitionRefundBatchId) return;
 
-    await supabase.from("commission_entries").update({ status: "estornado" } as any).eq("id", entry.id);
+    const mes = Number(partitionRefundMes);
+    if (!mes) return alert("Selecione a parcela que será estornada.");
+
+    const amount = parseBRL(partitionRefundAmount);
+    if (amount <= 0) return alert("Informe o valor bruto do estorno.");
+
+    const dataISO = brDateToISO(partitionRefundDateBR);
+    if (!dataISO) return alert("Informe a data do estorno no formato dd/mm/aaaa.");
+
+    const flowsMes = partitionFlows.filter(
+      (flow) =>
+        flow.batch_id === partitionRefundBatchId &&
+        Number(flow.mes) === mes &&
+        (Number(flow.valor_pago) || 0) > 0
+    );
+
+    if (!flowsMes.length) {
+      alert("Nenhuma parcela paga encontrada para estornar.");
+      return;
+    }
+
+    const totalPagoMes = flowsMes.reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
+    if (amount > totalPagoMes + 0.01) {
+      return alert(`O estorno não pode ser maior que o valor bruto pago nessa parcela (${BRL(totalPagoMes)}).`);
+    }
+
+    for (const flow of flowsMes) {
+      const entry = partitionEntries.find((item) => item.id === flow.entry_id);
+      if (!entry) continue;
+
+      const paid = Number(flow.valor_pago) || 0;
+      const share = totalPagoMes > 0 ? paid / totalPagoMes : 0;
+      const entryAmount = Math.round(amount * share * 100) / 100;
+      const entryTax = Math.round(entryAmount * impostoFrac * 100) / 100;
+
+      if (entryAmount <= 0) continue;
+
+      const { error } = await supabase.from("commission_adjustments").insert({
+        entry_id: entry.id,
+        batch_id: entry.batch_id,
+        venda_id: entry.venda_id,
+        adjustment_type: "estorno",
+        amount: entryAmount,
+        tax_amount: entryTax,
+        data_estorno: dataISO,
+        description: partitionRefundDescription || "Estorno de comissão",
+        parcela: `${mes}`,
+        created_by: authUserId,
+      } as any);
+
+      if (error) return alert("Erro ao registrar estorno: " + error.message);
+    }
+
+    setPartitionRefundBatchId(null);
+    setPartitionRefundMes("");
+    setPartitionRefundAmount("");
+    setPartitionRefundDescription("Estorno de comissão");
+    fetchData();
+  }
+
+  async function reverterEstornosParticionados(batchId: string) {
+    if (!canEdit) return alert("Somente admin pode reverter estorno.");
+    if (!confirm("Confirmar reversão dos estornos ativos desta venda?")) return;
+
+    const activeRefundIds = partitionAdjustments
+      .filter((a) => a.batch_id === batchId && a.adjustment_type === "estorno" && !a.is_reversed)
+      .map((a) => a.id);
+
+    if (!activeRefundIds.length) {
+      alert("Essa venda não possui estorno ativo para reverter.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("commission_adjustments")
+      .update({ is_reversed: true, reversed_at: new Date().toISOString() } as any)
+      .in("id", activeRefundIds);
+
+    if (error) return alert("Erro ao reverter estorno: " + error.message);
+
     fetchData();
   }
 
@@ -3208,7 +3311,8 @@ export default function ComissoesPage() {
 
     partitionAdjustments
       .filter((a) => {
-        const d = String(a.created_at || "").slice(0, 10);
+        if (a.is_reversed) return false;
+        const d = String(a.data_estorno || a.created_at || "").slice(0, 10);
         return d >= periodoIni && d <= periodoFim;
       })
       .forEach((a) => {
@@ -3238,8 +3342,8 @@ export default function ComissoesPage() {
           parcela: a.parcela || "—",
           valorVenda: Number(batch?.valor_venda ?? venda?.valor_venda) || 0,
           bruto,
-          impostos: 0,
-          liquida: bruto,
+          impostos: -Math.abs(Number(a.tax_amount) || Math.round(Math.abs(bruto) * impostoFrac * 100) / 100),
+          liquida: bruto - (-Math.abs(Number(a.tax_amount) || Math.round(Math.abs(bruto) * impostoFrac * 100) / 100)),
           status: "Descontado",
         });
       });
@@ -3336,8 +3440,7 @@ export default function ComissoesPage() {
     doc.text("DEMONSTRATIVO DE COMISSÃO", 40, y);
     y += 18;
     subtitle(`Período: ${periodoLabel}`);
-    subtitle("Estrutura por hierarquia: clientes somam vendedor; vendedores somam unidade; unidades somam matriz.");
-    subtitle("Documento demonstrativo. O pagamento deve ser comprovado pelo comprovante bancário anexado ao lançamento.");
+    subtitle("Demonstrativo de comissões com pagamento programado.");
     y += 4;
 
     if (reportLevel === "matriz") {
@@ -3395,8 +3498,6 @@ export default function ComissoesPage() {
     ensureSpace(42);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text(`TOTAL GERAL LÍQUIDO: ${BRL(grand.liquida)}  •  COMISSÃO BRUTA: ${BRL(grand.bruto)}  •  IMPOSTOS: ${BRL(grand.impostos)}`, 40, y);
-
     doc.save(`demonstrativo_comissao_${reportLevel}_${periodoIni}_${periodoFim}.pdf`);
   }
 
@@ -3731,7 +3832,7 @@ export default function ComissoesPage() {
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text("Documento demonstrativo. O pagamento deve ser comprovado pelo comprovante bancário anexado ao lançamento.", 40, endY + 58);
+    doc.text("Demonstrativo de comissões com pagamento programado.", 40, endY + 58);
 
     doc.save(`demonstrativo_${dataRecibo}_${userLabel(vendedorUsado || "")}.pdf`);
   }
@@ -4248,9 +4349,16 @@ export default function ComissoesPage() {
                         <td className="p-2">
                           <div className="flex flex-wrap gap-2">
                             {canEdit && (
-                              <Button size="sm" variant="outline" onClick={() => row.entries[0] && registrarEstornoParticionado(row.entries[0])}>
-                                Estornar
-                              </Button>
+                              <>
+                                <Button size="sm" variant="outline" onClick={() => abrirEstornoParticionado(row)}>
+                                  Estornar
+                                </Button>
+                                {partitionAdjustments.some((a) => a.batch_id === row.batch.id && a.adjustment_type === "estorno" && !a.is_reversed) && (
+                                  <Button size="sm" variant="outline" className="border-[#A11C27] text-[#A11C27]" onClick={() => reverterEstornosParticionados(row.batch.id)}>
+                                    Reverter Estorno
+                                  </Button>
+                                )}
+                              </>
                             )}
                           </div>
                         </td>
@@ -4671,6 +4779,35 @@ export default function ComissoesPage() {
                   <div className="md:col-span-2">Fluxo: <b>{selectedPartCommissionPreview.fluxo.map((p) => formatPctHuman((Number(p) || 0) * (Number(selectedPartTableRule.percent_total) || 0) * 100)).join(" / ") || "—"}</b></div>
                 </div>
                 <div className="mt-2 text-xs text-slate-500">Exemplo: em uma venda de R$ 100.000,00, a comissão total seria {BRL(selectedPartCommissionPreview.comissaoTotal)}.</div>
+                <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
+                  <table className="min-w-[720px] w-full text-xs">
+                    <thead>
+                      <tr className="bg-slate-50">
+                        <th className="p-2 text-left">Parcela</th>
+                        <th className="p-2 text-right">% da venda</th>
+                        <th className="p-2 text-right">Comissão total</th>
+                        <th className="p-2 text-right">Matriz</th>
+                        <th className="p-2 text-right">Unidade</th>
+                        <th className="p-2 text-right">Vendedor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedPartCommissionPreview.fluxo.map((p, idx) => {
+                        const parcelaTotal = selectedPartCommissionPreview.comissaoTotal * (Number(p) || 0);
+                        return (
+                          <tr key={idx} className="border-t">
+                            <td className="p-2">M{idx + 1}</td>
+                            <td className="p-2 text-right">{formatPctHuman((Number(p) || 0) * (Number(selectedPartTableRule.percent_total) || 0) * 100)}</td>
+                            <td className="p-2 text-right">{BRL(parcelaTotal)}</td>
+                            <td className="p-2 text-right">{BRL(parcelaTotal * selectedPartCommissionPreview.empresaFrac)}</td>
+                            <td className="p-2 text-right">{BRL(parcelaTotal * selectedPartCommissionPreview.unidadeFrac)}</td>
+                            <td className="p-2 text-right">{BRL(parcelaTotal * selectedPartCommissionPreview.vendedorFrac)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -5102,6 +5239,93 @@ export default function ComissoesPage() {
               <Button onClick={saveImpostoParam} disabled={!canEdit}>
                 Salvar
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!partitionRefundBatchId} onOpenChange={(open) => !open && setPartitionRefundBatchId(null)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Estorno de comissão particionada</DialogTitle>
+            </DialogHeader>
+
+            {(() => {
+              const row = partitionBatchRowsVisible.find((item) => item.batch.id === partitionRefundBatchId);
+              const paidMeses = row
+                ? Array.from(new Set(row.flows.filter((flow) => (Number(flow.valor_pago) || 0) > 0).map((flow) => Number(flow.mes)))).sort((a, b) => a - b)
+                : [];
+              const selectedMes = Number(partitionRefundMes);
+              const flowsMes = row?.flows.filter((flow) => Number(flow.mes) === selectedMes && (Number(flow.valor_pago) || 0) > 0) || [];
+              const totalPagoMes = flowsMes.reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
+              const impostoEstorno = parseBRL(partitionRefundAmount) * impostoFrac;
+
+              return (
+                <div className="space-y-4">
+                  <div className="rounded-xl border bg-slate-50 p-3 text-sm">
+                    <div><b>Cliente:</b> {(row?.clienteId && clientesMap[row.clienteId]?.trim()) || "—"}</div>
+                    <div><b>Proposta:</b> {row?.venda?.numero_proposta || "—"} • <b>Vendedor:</b> {row?.vendedor?.nome || "—"}</div>
+                    <div><b>Unidade:</b> {row?.unidade?.nome || "—"}</div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="flex flex-col gap-2">
+                      <Label>Parcela paga</Label>
+                      <Select value={partitionRefundMes} onValueChange={(v) => {
+                        setPartitionRefundMes(v);
+                        const total = (row?.flows || [])
+                          .filter((flow) => Number(flow.mes) === Number(v) && (Number(flow.valor_pago) || 0) > 0)
+                          .reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
+                        setPartitionRefundAmount(String(total.toFixed(2)).replace(".", ","));
+                      }}>
+                        <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                        <SelectContent>
+                          {paidMeses.map((mes) => {
+                            const total = (row?.flows || [])
+                              .filter((flow) => Number(flow.mes) === mes && (Number(flow.valor_pago) || 0) > 0)
+                              .reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
+                            return <SelectItem key={mes} value={String(mes)}>M{mes} • Pago {BRL(total)}</SelectItem>;
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <Label>Valor bruto do estorno</Label>
+                      <Input value={partitionRefundAmount} onChange={(e) => setPartitionRefundAmount(e.target.value)} placeholder="0,00" />
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <Label>Data do estorno</Label>
+                      <Input value={partitionRefundDateBR} onChange={(e) => setPartitionRefundDateBR(e.target.value)} placeholder="dd/mm/aaaa" />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-lg border p-3 text-sm">
+                      <div className="text-slate-500">Valor pago na parcela selecionada</div>
+                      <div className="text-lg font-semibold text-[#1E293F]">{BRL(totalPagoMes)}</div>
+                    </div>
+                    <div className="rounded-lg border p-3 text-sm">
+                      <div className="text-slate-500">Imposto a estornar</div>
+                      <div className="text-lg font-semibold text-[#A11C27]">{BRL(impostoEstorno)}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <Label>Descrição</Label>
+                    <Input value={partitionRefundDescription} onChange={(e) => setPartitionRefundDescription(e.target.value)} />
+                  </div>
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    O estorno será lançado proporcionalmente nos participantes da parcela paga e também registrará o imposto correspondente. A venda poderá ter o estorno revertido depois.
+                  </div>
+                </div>
+              );
+            })()}
+
+            <DialogFooter className="pt-4">
+              <Button variant="secondary" onClick={() => setPartitionRefundBatchId(null)}>Cancelar</Button>
+              <Button onClick={confirmarEstornoParticionado}>Confirmar estorno</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -1975,6 +1975,18 @@ export default function ComissoesPage() {
   const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
 
+  const currentMonthProjectedGross = useMemo(() => {
+    const monthIndex = new Date().getMonth();
+    return Number(monthlyCurr.previstoBruto[monthIndex]) || 0;
+  }, [monthlyCurr]);
+
+  const currentWeekProjectedGross = useMemo(() => {
+    const ref = new Date();
+    const intervals = getWeeklyIntervalsFriToThu(ref.getFullYear(), ref.getMonth());
+    const idx = intervals.findIndex((iv) => ref >= iv.start && ref <= iv.end);
+    return idx >= 0 ? Number(weeklyCurr.previstoBruto[idx]) || 0 : 0;
+  }, [weeklyCurr]);
+
   const previousYearMonthly = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]);
 
   const comissaoProgramada = useMemo(() => {
@@ -4074,99 +4086,94 @@ export default function ComissoesPage() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Nos últimos 5 anos — {userLabel(vendedorId === "all" ? null : vendedorId)}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <Donut
-                paid={paidInRangeGross(new Date(now.getFullYear() - 5, now.getMonth(), 1), now)}
-                pending={0}
-                label="5 anos"
-                hoverPaidText={`Pago bruto no período: ${BRL(paidInRangeGross(new Date(now.getFullYear() - 5, now.getMonth(), 1), now))}`}
-                hoverPendText="—"
-                pendingLegend="—"
-              />
-              <LineChart
-                labels={annual.labels}
-                series={[
-                  { name: "Previsto bruto", data: annual.previstoBruto.map(() => 0) },
-                  { name: "Pago bruto", data: annual.pagoBruto },
-                ]}
-              />
-            </CardContent>
-          </Card>
+        <Card className="border border-slate-200/70 bg-white shadow-sm">
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <div>
+                <CardTitle className="text-lg" style={{ color: "#1E293F" }}>Visão Gerencial</CardTitle>
+                <p className="text-sm text-slate-500">
+                  Previsão de recebimento por mês e por semana, com resumo do status financeiro das comissões.
+                </p>
+              </div>
+              <div className="text-xs text-slate-500">
+                Mês atual: <b>{BRL(currentMonthProjectedGross)}</b> • Semana atual: <b>{BRL(currentWeekProjectedGross)}</b>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <Card className="border border-slate-100 shadow-none">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold text-slate-700">Status financeiro</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Donut
+                    paid={combinedKpi.comPagaBruta}
+                    pending={combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta}
+                    label="Pago"
+                    hoverPaidText={`Pago bruto: ${BRL(combinedKpi.comPagaBruta)}`}
+                    hoverPendText={`Em aberto: ${BRL(combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta)}`}
+                    pendingLegend="Em aberto"
+                  />
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-lg border bg-emerald-50 p-3">
+                      <div className="text-slate-500">Pago</div>
+                      <div className="font-bold text-emerald-700">{BRL(combinedKpi.comPagaBruta)}</div>
+                    </div>
+                    <div className="rounded-lg border bg-blue-50 p-3">
+                      <div className="text-slate-500">Programado</div>
+                      <div className="font-bold text-blue-700">{BRL(combinedKpi.comProgramadaBruta)}</div>
+                    </div>
+                    <div className="rounded-lg border bg-slate-50 p-3">
+                      <div className="text-slate-500">Pendente</div>
+                      <div className="font-bold text-slate-700">{BRL(combinedKpi.comPendenteBruta)}</div>
+                    </div>
+                    <div className="rounded-lg border bg-red-50 p-3">
+                      <div className="text-slate-500">Perdido</div>
+                      <div className="font-bold text-red-700">{BRL(combinedKpi.comPerdidaBruta)}</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Ano anterior — {new Date().getFullYear() - 1}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <Donut
-                paid={paidInRangeGross(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31))}
-                pending={0}
-                label="Ano anterior"
-                hoverPaidText={`Pago bruto no ano anterior: ${BRL(paidInRangeGross(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31)))}`}
-                hoverPendText="—"
-                pendingLegend="—"
-              />
-              <LineChart
-                labels={previousYearMonthly.labels}
-                series={[
-                  { name: "Previsto bruto", data: previousYearMonthly.previstoBruto },
-                  { name: "Pago bruto", data: previousYearMonthly.pagoBruto },
-                ]}
-              />
-            </CardContent>
-          </Card>
+              <Card className="border border-slate-100 shadow-none xl:col-span-2">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold text-slate-700">
+                    Previsão mês a mês — quanto devo receber no mês atual?
+                  </CardTitle>
+                  <p className="text-xs text-slate-500">Previsto bruto no mês atual: {BRL(currentMonthProjectedGross)}</p>
+                </CardHeader>
+                <CardContent>
+                  <LineChart
+                    labels={monthlyCurr.labels}
+                    series={[
+                      { name: "Previsto bruto", data: monthlyCurr.previstoBruto },
+                      { name: "Pago bruto", data: monthlyCurr.pagoBruto },
+                    ]}
+                  />
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <Donut
-                paid={paidInRangeGross(new Date(now.getFullYear(), 0, 1), now)}
-                pending={previstoInRangeGross(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31))}
-                label="Ano"
-                hoverPaidText={`Pago bruto no ano: ${BRL(paidInRangeGross(new Date(now.getFullYear(), 0, 1), now))}`}
-                hoverPendText={`Previsto bruto no ano: ${BRL(previstoInRangeGross(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31)))}`}
-                pendingLegend="Previsto bruto"
-              />
-              <LineChart
-                labels={monthlyCurr.labels}
-                series={[
-                  { name: "Previsto bruto", data: monthlyCurr.previstoBruto },
-                  { name: "Pago bruto", data: monthlyCurr.pagoBruto },
-                ]}
-              />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Mês atual (semanas sex→qui)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <Donut
-                paid={paidInRangeGross(mStart, now)}
-                pending={previstoInRangeGross(mStart, endOfMonth(now))}
-                label="Mês"
-                hoverPaidText={`Pago bruto no mês: ${BRL(paidInRangeGross(mStart, now))}`}
-                hoverPendText={`Previsto bruto no mês: ${BRL(previstoInRangeGross(mStart, endOfMonth(now)))}`}
-                pendingLegend="Previsto bruto"
-              />
-              <LineChart
-                labels={weeklyCurr.labels}
-                series={[
-                  { name: "Previsto bruto", data: weeklyCurr.previstoBruto },
-                  { name: "Pago bruto", data: weeklyCurr.pagoBruto },
-                ]}
-              />
-            </CardContent>
-          </Card>
-        </div>
+              <Card className="border border-slate-100 shadow-none xl:col-span-3">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold text-slate-700">
+                    Previsão semana a semana — quanto devo receber na semana atual?
+                  </CardTitle>
+                  <p className="text-xs text-slate-500">Previsto bruto na semana atual: {BRL(currentWeekProjectedGross)}</p>
+                </CardHeader>
+                <CardContent>
+                  <LineChart
+                    labels={weeklyCurr.labels}
+                    series={[
+                      { name: "Previsto bruto", data: weeklyCurr.previstoBruto },
+                      { name: "Pago bruto", data: weeklyCurr.pagoBruto },
+                    ]}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-4">
           {[

@@ -1324,6 +1324,90 @@ export default function ComissoesPage() {
     };
   }, [selectedPartTableRule, partSplitVendedor, partSplitUnidade]);
 
+  const splitRulesConfiguredRows = useMemo(() => {
+    const activeSplits = splitRules.filter((s) => s.is_active !== false);
+    const keys = new Set<string>();
+
+    activeSplits.forEach((s) => {
+      const vendorId =
+        s.recipient_type === "vendedor"
+          ? s.recipient_user_id || ""
+          : activeSplits.find(
+              (v) =>
+                v.table_rule_id === s.table_rule_id &&
+                v.business_unit_id === s.business_unit_id &&
+                v.recipient_type === "vendedor"
+            )?.recipient_user_id || "";
+
+      keys.add(`${s.table_rule_id}|${s.business_unit_id || ""}|${vendorId}`);
+    });
+
+    return Array.from(keys)
+      .map((key) => {
+        const [tableRuleId, unitId, vendorId] = key.split("|");
+        const rule = tableRules.find((r) => r.id === tableRuleId);
+        if (!rule) return null;
+
+        const table =
+          simTables.find((t) => t.id === rule.sim_table_id) ||
+          simTables.find((t) => normalize(t.nome_tabela) === normalize(rule.nome_tabela));
+
+        const rowSplits = activeSplits.filter(
+          (s) =>
+            s.table_rule_id === tableRuleId &&
+            (s.business_unit_id || "") === unitId &&
+            (
+              s.recipient_type !== "vendedor" ||
+              (s.recipient_user_id || "") === vendorId
+            )
+        );
+
+        const vendedorSplit = rowSplits.find((s) => s.recipient_type === "vendedor");
+        const unidadeSplit = rowSplits.find((s) => s.recipient_type === "unidade");
+        const empresaSplit = rowSplits.find((s) => s.recipient_type === "empresa");
+        const unidade = unitById[unitId];
+        const vendedor = usersById[vendorId];
+        const adminName = table?.admin_id ? adminById[table.admin_id] || rule.administradora || "—" : rule.administradora || "—";
+
+        if (partAdminFilter !== "all" && table?.admin_id !== partAdminFilter && normalize(rule.administradora) !== normalize(adminName)) return null;
+        if (partSegmentFilter !== "all" && table?.segmento !== partSegmentFilter && rule.segmento !== partSegmentFilter) return null;
+        if (partRuleTableId && partRuleTableId !== table?.id && partRuleTableId !== rule.sim_table_id) return null;
+        if (partRuleUnitId && unitId !== partRuleUnitId) return null;
+        if (partVendorId && vendorId !== partVendorId) return null;
+
+        return {
+          key,
+          administradora: adminName,
+          segmento: table?.segmento || rule.segmento || "—",
+          tabela: table?.nome_tabela || rule.nome_tabela || "—",
+          unidadeNome: unidade?.nome || "—",
+          vendedorNome: vendedor?.nome || vendedor?.email || "—",
+          vendedorPct: Number(vendedorSplit?.split_percent) || 0,
+          unidadePct: Number(unidadeSplit?.split_percent) || 0,
+          matrizPct: Number(empresaSplit?.split_percent) || Math.max(0, 1 - (Number(vendedorSplit?.split_percent) || 0) - (Number(unidadeSplit?.split_percent) || 0)),
+          commissionPct: Number(rule.percent_total) || 0,
+        };
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) =>
+        String(a.unidadeNome).localeCompare(String(b.unidadeNome)) ||
+        String(a.vendedorNome).localeCompare(String(b.vendedorNome)) ||
+        String(a.administradora).localeCompare(String(b.administradora)) ||
+        String(a.tabela).localeCompare(String(b.tabela))
+      ) as Array<{
+        key: string;
+        administradora: string;
+        segmento: string;
+        tabela: string;
+        unidadeNome: string;
+        vendedorNome: string;
+        vendedorPct: number;
+        unidadePct: number;
+        matrizPct: number;
+        commissionPct: number;
+      }>;
+  }, [splitRules, tableRules, simTables, unitById, usersById, adminById, partAdminFilter, partSegmentFilter, partRuleTableId, partRuleUnitId, partVendorId]);
+
   const selectedTableRuleForForm = useMemo(() => {
     if (!tableRuleTableId) return null;
     const table = simTables.find((t) => t.id === tableRuleTableId);
@@ -2407,7 +2491,18 @@ export default function ComissoesPage() {
     let partitionPendente = 0;
     let partitionPerdida = 0;
     let partitionProgramada = 0;
+    let proximaDataProgramada: string | null = null;
     const partitionVendaIds = new Set<string>();
+
+    for (const flow of partitionFlows) {
+      if (!visibleEntryIds.has(flow.entry_id)) continue;
+      const previsto = Number(flow.valor_previsto) || 0;
+      const pago = Number(flow.valor_pago) || 0;
+      const isPaid = flow.status === "pago" || pago > 0;
+      if (!isPaid && previsto > 0 && !!flow.data_pagamento) {
+        if (!proximaDataProgramada || flow.data_pagamento < proximaDataProgramada) proximaDataProgramada = flow.data_pagamento;
+      }
+    }
 
     for (const entry of partitionEntriesVisible) {
       const batch = partitionBatches.find((b) => b.id === entry.batch_id);
@@ -2446,6 +2541,7 @@ export default function ComissoesPage() {
       comPerdidaLiquida: commissionNet(partitionPerdida, impostoFrac),
       comProgramadaBruta: partitionProgramada,
       comProgramadaLiquida: commissionNet(partitionProgramada, impostoFrac),
+      proximaDataProgramada,
     };
   }, [partitionEntriesVisible, partitionFlows, partitionVendaById, partitionBatches, impostoFrac]);
 
@@ -3012,7 +3108,9 @@ export default function ComissoesPage() {
     };
 
     const reportLevel = getReportLevel();
-    const targetRecipientType = reportLevel === "matriz" ? "empresa" : reportLevel === "unidade" ? "unidade" : "vendedor";
+    // Para o demonstrativo hierárquico, a base analítica é sempre a comissão do vendedor:
+    // clientes somam vendedor, vendedores somam unidade e unidades somam matriz.
+    const targetRecipientType = "vendedor";
 
     const flowInPeriod = (flow: CommissionEntryFlow) => {
       if (demonstrativoTipo === "data") return flow.data_pagamento === reciboDate;
@@ -3936,7 +4034,7 @@ export default function ComissoesPage() {
             { title: "Comissão Paga", value: BRL(combinedKpi.comPagaBruta), hint: `Líquida ${BRL(combinedKpi.comPagaLiquida)}`, tone: "green" },
             { title: "Comissão Pendente", value: BRL(combinedKpi.comPendenteBruta), hint: `Líquida ${BRL(combinedKpi.comPendenteLiquida)}`, tone: "navy" },
             { title: "Comissão Perdida", value: BRL(combinedKpi.comPerdidaBruta), hint: "Canceladas não quitadas", tone: "red" },
-            { title: "Comissão Programada", value: BRL(combinedKpi.comProgramadaBruta), hint: "Com data e ainda não paga", tone: "blue" },
+            { title: "Comissão Programada", value: BRL(combinedKpi.comProgramadaBruta), hint: combinedKpi.proximaDataProgramada ? `Prevista para: ${formatISODateBR(combinedKpi.proximaDataProgramada)}` : "Sem previsão programada", tone: "blue" },
           ].map((item) => {
             const toneColor = item.tone === "red" ? "#A11C27" : item.tone === "gold" ? "#B5A573" : item.tone === "green" ? "#047857" : item.tone === "blue" ? "#1E40AF" : "#1E293F";
             return (
@@ -4112,7 +4210,7 @@ export default function ComissoesPage() {
 
                   return (
                     <React.Fragment key={row.batch.id}>
-                      <tr className="border-b align-middle hover:bg-gray-50">
+                      <tr className={`border-b align-middle hover:bg-gray-50 ${isFlowGroupProgrammed(row.flows) ? "bg-blue-50/70 border-l-4 border-l-[#1E40AF]" : ""}`}>
                         <td className="p-2">{row.unidade?.nome || "—"}</td>
                         <td className="p-2">
                           <button
@@ -4575,6 +4673,54 @@ export default function ComissoesPage() {
                 <div className="mt-2 text-xs text-slate-500">Exemplo: em uma venda de R$ 100.000,00, a comissão total seria {BRL(selectedPartCommissionPreview.comissaoTotal)}.</div>
               </div>
             )}
+
+            <div className="mt-5 rounded-xl border bg-white p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-[#1E293F]">Configurações já cadastradas</div>
+                  <div className="text-xs text-slate-500">Unidade, vendedor, administradora e tabela com partilha configurada.</div>
+                </div>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{splitRulesConfiguredRows.length} configuração(ões)</span>
+              </div>
+
+              <div className="max-h-[320px] overflow-auto rounded-lg border">
+                <table className="min-w-[980px] w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="p-2 text-left">Unidade</th>
+                      <th className="p-2 text-left">Vendedor</th>
+                      <th className="p-2 text-left">Administradora</th>
+                      <th className="p-2 text-left">Segmento</th>
+                      <th className="p-2 text-left">Tabela</th>
+                      <th className="p-2 text-right">Comissão tabela</th>
+                      <th className="p-2 text-right">Matriz</th>
+                      <th className="p-2 text-right">Unidade</th>
+                      <th className="p-2 text-right">Vendedor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {splitRulesConfiguredRows.length === 0 && (
+                      <tr>
+                        <td colSpan={9} className="p-4 text-center text-slate-500">Nenhuma partilha cadastrada para os filtros selecionados.</td>
+                      </tr>
+                    )}
+                    {splitRulesConfiguredRows.map((row) => (
+                      <tr key={row.key} className="border-b last:border-0 hover:bg-slate-50">
+                        <td className="p-2">{row.unidadeNome}</td>
+                        <td className="p-2">{row.vendedorNome}</td>
+                        <td className="p-2">{row.administradora}</td>
+                        <td className="p-2">{row.segmento}</td>
+                        <td className="p-2">{row.tabela}</td>
+                        <td className="p-2 text-right">{pct100(row.commissionPct)}</td>
+                        <td className="p-2 text-right">{pct100(row.matrizPct)}</td>
+                        <td className="p-2 text-right">{pct100(row.unidadePct)}</td>
+                        <td className="p-2 text-right">{pct100(row.vendedorPct)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
             <DialogFooter className="pt-6">
               <Button variant="secondary" onClick={() => setOpenPartitionRules(false)}>Fechar</Button>

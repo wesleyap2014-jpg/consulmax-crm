@@ -1030,6 +1030,7 @@ export default function ComissoesPage() {
   const [commissionSearch, setCommissionSearch] = useState<string>("");
   const [showFinalizadas, setShowFinalizadas] = useState<boolean>(false);
   const [showPerdidas, setShowPerdidas] = useState<boolean>(false);
+  const [forecastView, setForecastView] = useState<"mes" | "semana">("mes");
   const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
   const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
@@ -1982,8 +1983,13 @@ export default function ComissoesPage() {
 
   const currentWeekProjectedGross = useMemo(() => {
     const ref = new Date();
+    const refDay = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
     const intervals = getWeeklyIntervalsFriToThu(ref.getFullYear(), ref.getMonth());
-    const idx = intervals.findIndex((iv) => ref >= iv.start && ref <= iv.end);
+    const idx = intervals.findIndex((iv) => {
+      const start = new Date(iv.start.getFullYear(), iv.start.getMonth(), iv.start.getDate());
+      const end = new Date(iv.end.getFullYear(), iv.end.getMonth(), iv.end.getDate());
+      return refDay.getTime() >= start.getTime() && refDay.getTime() <= end.getTime();
+    });
     return idx >= 0 ? Number(weeklyCurr.previstoBruto[idx]) || 0 : 0;
   }, [weeklyCurr]);
 
@@ -4101,12 +4107,12 @@ export default function ComissoesPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
               <Card className="border border-slate-100 shadow-none">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold text-slate-700">Status financeiro</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-3">
                   <Donut
                     paid={combinedKpi.comPagaBruta}
                     pending={combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta}
@@ -4116,19 +4122,19 @@ export default function ComissoesPage() {
                     pendingLegend="Em aberto"
                   />
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-lg border bg-emerald-50 p-3">
+                    <div className="rounded-lg border bg-emerald-50 p-2.5">
                       <div className="text-slate-500">Pago</div>
                       <div className="font-bold text-emerald-700">{BRL(combinedKpi.comPagaBruta)}</div>
                     </div>
-                    <div className="rounded-lg border bg-blue-50 p-3">
+                    <div className="rounded-lg border bg-blue-50 p-2.5">
                       <div className="text-slate-500">Programado</div>
                       <div className="font-bold text-blue-700">{BRL(combinedKpi.comProgramadaBruta)}</div>
                     </div>
-                    <div className="rounded-lg border bg-slate-50 p-3">
+                    <div className="rounded-lg border bg-slate-50 p-2.5">
                       <div className="text-slate-500">Pendente</div>
                       <div className="font-bold text-slate-700">{BRL(combinedKpi.comPendenteBruta)}</div>
                     </div>
-                    <div className="rounded-lg border bg-red-50 p-3">
+                    <div className="rounded-lg border bg-red-50 p-2.5">
                       <div className="text-slate-500">Perdido</div>
                       <div className="font-bold text-red-700">{BRL(combinedKpi.comPerdidaBruta)}</div>
                     </div>
@@ -4138,35 +4144,39 @@ export default function ComissoesPage() {
 
               <Card className="border border-slate-100 shadow-none xl:col-span-2">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold text-slate-700">
-                    Previsão mês a mês — quanto devo receber no mês atual?
-                  </CardTitle>
-                  <p className="text-xs text-slate-500">Previsto bruto no mês atual: {BRL(currentMonthProjectedGross)}</p>
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <CardTitle className="text-sm font-semibold text-slate-700">
+                        {forecastView === "mes"
+                          ? "Previsão mês a mês — quanto devo receber no mês atual?"
+                          : "Previsão semana a semana — quanto devo receber na semana atual?"}
+                      </CardTitle>
+                      <p className="text-xs text-slate-500">
+                        {forecastView === "mes"
+                          ? `Previsto bruto no mês atual: ${BRL(currentMonthProjectedGross)}`
+                          : `Previsto bruto na semana atual: ${BRL(currentWeekProjectedGross)}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" className="h-8 px-2" onClick={() => setForecastView("mes")}>
+                        &lt;
+                      </Button>
+                      <div className="min-w-[86px] rounded-full border bg-slate-50 px-3 py-1 text-center text-xs font-semibold text-slate-600">
+                        {forecastView === "mes" ? "Mês" : "Semana"}
+                      </div>
+                      <Button size="sm" variant="outline" className="h-8 px-2" onClick={() => setForecastView("semana")}>
+                        &gt;
+                      </Button>
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <LineChart
-                    labels={monthlyCurr.labels}
+                    height={175}
+                    labels={forecastView === "mes" ? monthlyCurr.labels : weeklyCurr.labels}
                     series={[
-                      { name: "Previsto bruto", data: monthlyCurr.previstoBruto },
-                      { name: "Pago bruto", data: monthlyCurr.pagoBruto },
-                    ]}
-                  />
-                </CardContent>
-              </Card>
-
-              <Card className="border border-slate-100 shadow-none xl:col-span-3">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold text-slate-700">
-                    Previsão semana a semana — quanto devo receber na semana atual?
-                  </CardTitle>
-                  <p className="text-xs text-slate-500">Previsto bruto na semana atual: {BRL(currentWeekProjectedGross)}</p>
-                </CardHeader>
-                <CardContent>
-                  <LineChart
-                    labels={weeklyCurr.labels}
-                    series={[
-                      { name: "Previsto bruto", data: weeklyCurr.previstoBruto },
-                      { name: "Pago bruto", data: weeklyCurr.pagoBruto },
+                      { name: "Previsto bruto", data: forecastView === "mes" ? monthlyCurr.previstoBruto : weeklyCurr.previstoBruto },
+                      { name: "Pago bruto", data: forecastView === "mes" ? monthlyCurr.pagoBruto : weeklyCurr.pagoBruto },
                     ]}
                   />
                 </CardContent>

@@ -89,7 +89,7 @@ async function loadBBRobot() {
   }
 }
 
-async function syncByRpa(administradora: AdminKey): Promise<RobotResult> {
+async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}): Promise<RobotResult> {
   if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
 
   const env = envFor(administradora)
@@ -112,7 +112,7 @@ async function syncByRpa(administradora: AdminKey): Promise<RobotResult> {
   if (administradora === 'bb') {
     try {
       const mod = await loadBBRobot()
-      return await mod.syncBBGroupsRpa(env, admin)
+      return await mod.syncBBGroupsRpa(env, admin, { segmento: options.segmento || options.bbSegmento || null })
     } catch (err: any) {
       return {
         ok: false,
@@ -152,7 +152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const administradora = allowedAdmin(body?.administradora)
     if (!administradora) return res.status(400).json({ ok: false, error: 'Administradora inválida. Use bb ou maggi.' })
 
-    const result = await syncByRpa(administradora)
+    const result = await syncByRpa(administradora, body || {})
     const status = result.status === 'not_configured' ? 409 : result.status === 'error' ? 500 : 200
     return res.status(status).json(result)
   } catch (err: any) {

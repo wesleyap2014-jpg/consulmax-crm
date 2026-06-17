@@ -15,6 +15,7 @@ const Agenda = React.lazy(() => import("./pages/AgendaLiveKit"));
 const AgendaSala = React.lazy(() => import("./pages/AgendaSala"));
 const Simuladores = React.lazy(() => import("./pages/SimuladoresHub"));
 const RadarOfertas = React.lazy(() => import("./pages/RadarOfertas"));
+const CentralGrupos = React.lazy(() => import("./pages/CentralGrupos"));
 const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdministradora"));
 const EmbraconSimulator = React.lazy(() => import("./pages/simuladores/EmbraconSimulator"));
 const MaggiSimulator = React.lazy(() => import("./pages/simuladores/MaggiSimulator"));
@@ -137,6 +138,8 @@ export const router = createBrowserRouter([
           { path: "cotas-contempladas", element: <Navigate to="/estoque-contempladas" replace /> },
           { path: "radar-ofertas", element: withSuspense(<RadarOfertas />) },
           { path: "buscar-ofertas", element: <Navigate to="/radar-ofertas" replace /> },
+          { path: "central-grupos", element: withSuspense(<CentralGrupos />) },
+          { path: "grupos-disponiveis", element: <Navigate to="/central-grupos" replace /> },
 
           {
             path: "simuladores",

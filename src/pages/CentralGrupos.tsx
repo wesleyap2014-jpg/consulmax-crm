@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Bot, Database, Loader2, RefreshCw, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, Bot, Database, Loader2, RefreshCw, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
 
 type AnyRow = Record<string, any>;
 

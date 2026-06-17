@@ -147,6 +147,8 @@ export default function CentralGrupos() {
   const [query, setQuery] = useState("");
   const [admin, setAdmin] = useState("todas");
   const [status, setStatus] = useState("ativos");
+  const [syncing, setSyncing] = useState<"bb" | "maggi" | null>(null);
+  const [syncMessage, setSyncMessage] = useState<{ type: "ok" | "warn" | "error"; text: string } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -158,6 +160,41 @@ export default function CentralGrupos() {
     setBb((bbRes.data || []) as AnyRow[]);
     setMaggi((maggiRes.data || []) as AnyRow[]);
     setLoading(false);
+  }
+
+  async function syncRobot(administradora: "bb" | "maggi") {
+    setSyncing(administradora);
+    setSyncMessage(null);
+
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Sessão expirada. Faça login novamente.");
+
+      const response = await fetch("/api/robots/sync-groups", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ administradora }),
+      });
+
+      const json = await response.json().catch(() => ({}));
+      const message = json?.message || json?.error || "Retorno não identificado do robô.";
+
+      if (!response.ok) {
+        setSyncMessage({ type: response.status === 409 ? "warn" : "error", text: message });
+        return;
+      }
+
+      setSyncMessage({ type: json?.ok ? "ok" : "warn", text: message });
+      await load();
+    } catch (err: any) {
+      setSyncMessage({ type: "error", text: err?.message || "Erro ao chamar robô." });
+    } finally {
+      setSyncing(null);
+    }
   }
 
   useEffect(() => {
@@ -275,10 +312,25 @@ export default function CentralGrupos() {
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ background: C.navy }}><Bot className="h-5 w-5" /></div>
           <div>
             <h2 className="font-black" style={{ color: C.navy }}>Robô das administradoras</h2>
-            <p className="text-sm text-slate-600">Preparado como próxima fase: o robô deve rodar no backend, com credenciais criptografadas, registro de logs e sem expor usuário/senha no navegador.</p>
-            <div className="mt-2 flex items-center gap-2 text-xs text-amber-700"><ShieldCheck className="h-4 w-4" /> Não vamos salvar senha em tela de frontend nem commitar credenciais no GitHub.</div>
+            <p className="text-sm text-slate-600">O robô será executado no backend, como um usuário humano controlado por rotina segura, sem expor usuário/senha no navegador.</p>
+            <div className="mt-2 flex items-center gap-2 text-xs text-amber-700"><ShieldCheck className="h-4 w-4" /> As credenciais devem ser configuradas nas variáveis seguras da Vercel.</div>
+            {syncMessage && (
+              <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm ${syncMessage.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : syncMessage.type === "warn" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+                {syncMessage.text}
+              </div>
+            )}
           </div>
-          <Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => navigate("/radar-ofertas")}>Abrir Radar <ArrowRight className="ml-2 h-4 w-4" /></Button>
+          <div className="flex flex-col gap-2 md:min-w-[220px]">
+            <Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("bb")}>
+              {syncing === "bb" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
+              Sincronizar BB
+            </Button>
+            <Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("maggi")}>
+              {syncing === "maggi" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
+              Sincronizar Maggi
+            </Button>
+            <Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => navigate("/radar-ofertas")}>Abrir Radar <ArrowRight className="ml-2 h-4 w-4" /></Button>
+          </div>
         </CardContent>
       </Card>
     </div>

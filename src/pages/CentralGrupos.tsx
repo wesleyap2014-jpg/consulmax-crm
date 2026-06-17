@@ -91,7 +91,7 @@ export default function CentralGrupos() {
   async function syncBBAssembliesQueue() {
     const { data, error } = await supabase.from("sim_bb_groups").select("grupo,is_active").eq("is_active", true).order("grupo", { ascending: true });
     if (error) throw error;
-    const groups = Array.from(new Set((data || []).map((row: AnyRow) => String(row.grupo || "").trim()).filter(Boolean)));
+    const groups = Array.from(new Set((data || []).map((row: AnyRow) => String(row.grupo || "").trim()).filter((group: string) => group && group !== "000000")));
     setAssemblyErrors([]);
     setAssemblyProgress({ total: groups.length, done: 0, success: 0, error: 0, currentGroup: "", running: true });
     let success = 0;

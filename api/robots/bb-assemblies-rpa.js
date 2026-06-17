@@ -140,9 +140,14 @@ async function openAssemblyResult(page) {
 
 async function searchGroup(page, grupo) {
   const groupNumber = onlyDigits(grupo).padStart(6, '0')
+
+  if (!groupNumber || groupNumber === '000000') {
+    throw new Error(`Grupo inválido para resultado de assembleia: ${grupo}`)
+  }
+
   await page.getByText('Resultado de Assembleias').waitFor({ timeout: 20000 }).catch(() => null)
 
-  const inputs = page.locator('input:visible')
+  const inputs = page.locator('input:visible:not([type="image"]):not([type="button"]):not([type="submit"]):not([type="hidden"]):not([type="password"])')
   const count = await inputs.count()
   if (count < 1) throw new Error('Campo de grupo não encontrado na tela de Resultado de Assembleias.')
 

@@ -46,6 +46,10 @@ function normalizeKey(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
 }
 
+function normalizePortalText(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+}
+
 function segmentsToRun(segmento) {
   const requested = normalizeKey(segmento || 'auto_fipe')
   const found = BB_SEGMENTS.filter((segment) => {
@@ -119,7 +123,7 @@ async function selectByText(page, selectIndex, label) {
 
   if (!found.length) throw new Error(`Opção não encontrada no select ${selectIndex}: ${label}`)
   await select.selectOption(String(found[0].value))
-  await page.waitForTimeout(900)
+  await page.waitForTimeout(1200)
 }
 
 async function login(page, env) {
@@ -132,35 +136,77 @@ async function login(page, env) {
     page.getByText('Entrar', { exact: true }).click(),
   ])
 
-  await page.waitForTimeout(1800)
-  await dismissPostLoginMessages(page)
-}
-
-async function openHome(page, env) {
-  const base = env.portalUrl.split('/frmLogin.aspx')[0]
-  await page.goto(`${base}/acesso_restrito/frmMain.aspx`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null)
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(2200)
   await dismissPostLoginMessages(page)
 }
 
 async function openSimulator(page) {
-  await page.getByText('Simulador/Contratação', { exact: true }).click({ timeout: 20000 })
-  await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(1000)
+  await dismissPostLoginMessages(page)
+
+  const candidates = [
+    page.getByText('Simulador/Contratação').first(),
+    page.getByText('Simulador/Contratacao').first(),
+    page.locator('a').filter({ hasText: /Simulador\/Contrata/i }).first(),
+  ]
+
+  for (const candidate of candidates) {
+    if (await candidate.isVisible().catch(() => false)) {
+      await Promise.all([
+        page.waitForLoadState('domcontentloaded').catch(() => null),
+        candidate.click({ timeout: 10000 }),
+      ])
+      await page.waitForTimeout(1200)
+      return
+    }
+  }
+
+  const clicked = await page.evaluate(() => {
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], img'))
+    const target = elements.find((el) => {
+      const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || '')
+      return text.includes('SIMULADOR/CONTRATACAO') || text.includes('SIMULADOR')
+    })
+    if (target) {
+      target.click()
+      return true
+    }
+    return false
+  })
+
+  if (clicked) {
+    await page.waitForLoadState('domcontentloaded').catch(() => null)
+    await page.waitForTimeout(1200)
+    return
+  }
+
+  const url = page.url()
+  const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
+  throw new Error(`Menu Simulador/Contratação não encontrado. URL atual: ${url}. Texto da tela: ${normalizePortalText(bodyText).slice(0, 500)}`)
 }
 
 async function clickNext(page) {
   const next = page.getByText('Próximo', { exact: true }).or(page.getByText('Proximo', { exact: true })).first()
   if (await next.isVisible().catch(() => false)) {
     await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), next.click()])
-    await page.waitForTimeout(1000)
+    await page.waitForTimeout(1200)
     return
   }
 
-  const link = page.locator('a, button, input').filter({ hasText: /próximo|proximo/i }).first()
-  if (await link.isVisible().catch(() => false)) {
-    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), link.click()])
-    await page.waitForTimeout(1000)
+  const clicked = await page.evaluate(() => {
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
+    const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('PROXIMO'))
+    if (target) {
+      target.click()
+      return true
+    }
+    return false
+  })
+
+  if (clicked) {
+    await page.waitForLoadState('domcontentloaded').catch(() => null)
+    await page.waitForTimeout(1200)
     return
   }
 
@@ -291,7 +337,6 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
 
     for (const segment of selectedSegments) {
       try {
-        await openHome(page, env)
         await openSimulator(page)
         await selectByText(page, SELECT_INDEX.grupo, segment.portalLabel)
 
@@ -301,7 +346,7 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
               await selectByText(page, SELECT_INDEX.venda, vendaLabel)
               await clickNext(page)
               rows.push(...await readGroupsTable(page, segment.crmSegmento))
-              await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => openHome(page, env))
+              await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => null)
             } catch (err) {
               errors.push(`${segment.portalLabel} / ${vendaLabel}: ${err?.message || String(err)}`)
             }

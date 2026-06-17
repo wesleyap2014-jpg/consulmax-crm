@@ -180,11 +180,19 @@ export default function CentralGrupos() {
         body: JSON.stringify({ administradora }),
       });
 
-      const json = await response.json().catch(() => ({}));
-      const message = json?.message || json?.error || "Retorno não identificado do robô.";
+      const rawText = await response.text();
+      let json: any = {};
+      try {
+        json = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        json = {};
+      }
+
+      const rawPreview = rawText ? rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600) : "";
+      const message = json?.message || json?.error || rawPreview || `Robô retornou HTTP ${response.status} sem mensagem em JSON.`;
 
       if (!response.ok) {
-        setSyncMessage({ type: response.status === 409 ? "warn" : "error", text: message });
+        setSyncMessage({ type: response.status === 409 ? "warn" : "error", text: `HTTP ${response.status}: ${message}` });
         return;
       }
 

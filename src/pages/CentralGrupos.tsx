@@ -1,12 +1,20 @@
-// src/pages/CentralGrupos.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Bot, Database, Loader2, RefreshCw, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, Bot, CheckCircle2, Database, Loader2, RefreshCw, Search, SlidersHorizontal, XCircle } from "lucide-react";
 
 type AnyRow = Record<string, any>;
+type StepStatus = "pending" | "running" | "done" | "error";
+
+type SyncStep = {
+  key: string;
+  label: string;
+  status: StepStatus;
+  found?: number;
+  message?: string;
+};
 
 type GrupoCentral = {
   id: string;
@@ -23,11 +31,18 @@ type GrupoCentral = {
   medianaPct: number | null;
   lanceEmbutidoMaxPct: number | null;
   ativo: boolean;
-  observacoes: string;
-  raw: AnyRow;
 };
 
 const C = { ruby: "#A11C27", navy: "#1E293F", gold: "#B5A573" };
+
+const BB_SEGMENTS = [
+  { key: "auto_ipca", label: "Auto IPCA" },
+  { key: "auto_fipe", label: "Auto FIPE" },
+  { key: "outros_bens", label: "Outros Bens" },
+  { key: "pesados", label: "Pesados" },
+  { key: "motocicleta", label: "Motocicleta" },
+  { key: "imoveis", label: "Imóveis" },
+];
 
 function brMoney(v: number) {
   return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
@@ -59,6 +74,7 @@ function normalizeSegmento(value: unknown) {
     imoveis: "Imóveis",
     pesados: "Pesados",
     outros_bens: "Outros Bens",
+    motocicleta: "Motocicleta",
   };
   return map[raw] || raw || "Não informado";
 }
@@ -91,7 +107,6 @@ function toBBGroup(row: AnyRow): GrupoCentral {
   const maior = normalizePct(row.maior_pct_contemplado || row.maior_pct_lance_livre || row.maior_lance_livre);
   const menor = normalizePct(row.menor_pct_contemplado || row.menor_pct_lance_livre || row.menor_lance_livre || minCont);
   const mediana = maior && menor ? (maior + menor) / 2 : maior || menor || minCont || null;
-
   return {
     id: `bb-${row.id}`,
     origem: "bb",
@@ -107,18 +122,14 @@ function toBBGroup(row: AnyRow): GrupoCentral {
     medianaPct: mediana,
     lanceEmbutidoMaxPct: normalizePct(row.lance_embutido_max_pct || row.config?.maxLanceEmbutidoPct),
     ativo: row.is_active !== false,
-    observacoes: String(row.observacoes || row.config?.observacoesRegra || ""),
-    raw: row,
   };
 }
 
 function toMaggiGroup(row: AnyRow): GrupoCentral {
   const credit = creditRangeFromConfig(row);
-  const maxEmb = normalizePct(row.lance_embutido_max_pct || row.config?.maxLanceEmbutidoPct);
   const maior = normalizePct(row.maior_pct_contemplado || row.maior_pct_lance_livre || row.maior_lance_livre);
   const menor = normalizePct(row.menor_pct_contemplado || row.menor_pct_lance_livre || row.menor_lance_livre);
   const mediana = maior && menor ? (maior + menor) / 2 : maior || menor || lanceLivreFromConfig(row) || null;
-
   return {
     id: `maggi-${row.id}`,
     origem: "maggi",
@@ -132,11 +143,13 @@ function toMaggiGroup(row: AnyRow): GrupoCentral {
     maiorPct: maior,
     menorPct: menor,
     medianaPct: mediana,
-    lanceEmbutidoMaxPct: maxEmb,
+    lanceEmbutidoMaxPct: normalizePct(row.lance_embutido_max_pct || row.config?.maxLanceEmbutidoPct),
     ativo: row.is_active !== false,
-    observacoes: String(row.observacoes || row.perfil_grupo || row.config?.customRuleNotes || ""),
-    raw: row,
   };
+}
+
+function newSteps(): SyncStep[] {
+  return BB_SEGMENTS.map((s) => ({ ...s, status: "pending" }));
 }
 
 export default function CentralGrupos() {
@@ -149,6 +162,7 @@ export default function CentralGrupos() {
   const [status, setStatus] = useState("ativos");
   const [syncing, setSyncing] = useState<"bb" | "maggi" | null>(null);
   const [syncMessage, setSyncMessage] = useState<{ type: "ok" | "warn" | "error"; text: string } | null>(null);
+  const [syncSteps, setSyncSteps] = useState<SyncStep[]>([]);
 
   async function load() {
     setLoading(true);
@@ -156,46 +170,67 @@ export default function CentralGrupos() {
       supabase.from("sim_bb_groups").select("*").order("grupo", { ascending: true }),
       supabase.from("sim_maggi_groups").select("*").order("grupo", { ascending: true }),
     ]);
-
     setBb((bbRes.data || []) as AnyRow[]);
     setMaggi((maggiRes.data || []) as AnyRow[]);
     setLoading(false);
   }
 
+  async function callRobot(administradora: "bb" | "maggi", segmento?: string) {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new Error("Sessão expirada. Faça login novamente.");
+
+    const response = await fetch("/api/robots/sync-groups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ administradora, segmento }),
+    });
+
+    const rawText = await response.text();
+    let json: any = {};
+    try { json = rawText ? JSON.parse(rawText) : {}; } catch { json = {}; }
+    const rawPreview = rawText ? rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600) : "";
+    const message = json?.message || json?.error || rawPreview || `Robô retornou HTTP ${response.status} sem mensagem em JSON.`;
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${message}`);
+    return { json, message };
+  }
+
+  async function syncBBQueue() {
+    setSyncing("bb");
+    setSyncMessage(null);
+    setSyncSteps(newSteps());
+    let total = 0;
+    const errors: string[] = [];
+
+    for (const segment of BB_SEGMENTS) {
+      setSyncSteps((steps) => steps.map((s) => s.key === segment.key ? { ...s, status: "running", message: "Sincronizando..." } : s));
+      try {
+        const { json, message } = await callRobot("bb", segment.key);
+        const found = Number(json?.found || 0);
+        total += Number.isFinite(found) ? found : 0;
+        setSyncSteps((steps) => steps.map((s) => s.key === segment.key ? { ...s, status: "done", found, message } : s));
+      } catch (err: any) {
+        const text = err?.message || "Erro ao sincronizar.";
+        errors.push(`${segment.label}: ${text}`);
+        setSyncSteps((steps) => steps.map((s) => s.key === segment.key ? { ...s, status: "error", message: text } : s));
+      }
+    }
+
+    await load();
+    setSyncing(null);
+    setSyncMessage(errors.length ? { type: "warn", text: `Sincronização BB concluída com ${errors.length} erro(s). Total processado: ${total} grupo(s).` } : { type: "ok", text: `Sincronização BB concluída: ${total} grupo(s) processado(s).` });
+  }
+
   async function syncRobot(administradora: "bb" | "maggi") {
+    if (administradora === "bb") {
+      await syncBBQueue();
+      return;
+    }
     setSyncing(administradora);
     setSyncMessage(null);
-
+    setSyncSteps([]);
     try {
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
-      if (!token) throw new Error("Sessão expirada. Faça login novamente.");
-
-      const response = await fetch("/api/robots/sync-groups", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ administradora }),
-      });
-
-      const rawText = await response.text();
-      let json: any = {};
-      try {
-        json = rawText ? JSON.parse(rawText) : {};
-      } catch {
-        json = {};
-      }
-
-      const rawPreview = rawText ? rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600) : "";
-      const message = json?.message || json?.error || rawPreview || `Robô retornou HTTP ${response.status} sem mensagem em JSON.`;
-
-      if (!response.ok) {
-        setSyncMessage({ type: response.status === 409 ? "warn" : "error", text: `HTTP ${response.status}: ${message}` });
-        return;
-      }
-
+      const { json, message } = await callRobot(administradora);
       setSyncMessage({ type: json?.ok ? "ok" : "warn", text: message });
       await load();
     } catch (err: any) {
@@ -205,12 +240,9 @@ export default function CentralGrupos() {
     }
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   const grupos = useMemo(() => [...bb.map(toBBGroup), ...maggi.map(toMaggiGroup)], [bb, maggi]);
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return grupos.filter((g) => {
@@ -224,25 +256,17 @@ export default function CentralGrupos() {
 
   const ativos = grupos.filter((g) => g.ativo).length;
   const comMediana = grupos.filter((g) => g.medianaPct !== null).length;
+  const finished = syncSteps.filter((s) => s.status === "done" || s.status === "error").length;
+  const progress = syncSteps.length ? Math.round((finished / syncSteps.length) * 100) : 0;
 
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center gap-2 text-sm text-slate-600">
-        <Loader2 className="h-5 w-5 animate-spin" /> Carregando Central de Grupos...
-      </div>
-    );
-  }
+  if (loading) return <div className="p-6 flex items-center gap-2 text-sm text-slate-600"><Loader2 className="h-5 w-5 animate-spin" /> Carregando Central de Grupos...</div>;
 
   return (
     <div className="p-4 md:p-6 space-y-6">
       <section className="rounded-[30px] border p-6 md:p-8 text-white shadow-sm" style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}>
-        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium">
-          <Database className="h-3.5 w-3.5" /> Central de Grupos
-        </div>
+        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium"><Database className="h-3.5 w-3.5" /> Central de Grupos</div>
         <h1 className="text-2xl md:text-4xl font-black tracking-tight">Grupos ativos e disponíveis para o Radar de Ofertas</h1>
-        <p className="mt-3 max-w-3xl text-sm md:text-base text-white/80">
-          Esta central consolida os grupos cadastrados nos simuladores BB Consórcios e Maggi, incluindo segmento, faixa de crédito, prazo, lance embutido e média/mediana da última assembleia quando houver informação cadastrada.
-        </p>
+        <p className="mt-3 max-w-3xl text-sm md:text-base text-white/80">Base consolidada dos grupos BB Consórcios e Maggi para uso no Radar de Ofertas.</p>
       </section>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -251,96 +275,31 @@ export default function CentralGrupos() {
         <Metric title="Com mediana/média" value={String(comMediana)} hint="Base para ranquear lance livre" />
       </div>
 
-      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur">
-        <CardContent className="p-5 space-y-4">
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="h-5 w-5" style={{ color: C.ruby }} />
-            <h2 className="font-black" style={{ color: C.navy }}>Filtros</h2>
-          </div>
-          <div className="grid gap-3 md:grid-cols-[1.5fr_.8fr_.8fr_auto]">
-            <label className="relative block">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full rounded-2xl border py-2 pl-9 pr-3 text-sm" placeholder="Buscar por grupo, segmento ou administradora" />
-            </label>
-            <select value={admin} onChange={(e) => setAdmin(e.target.value)} className="rounded-2xl border px-3 py-2 text-sm">
-              <option value="todas">Todas</option>
-              <option value="bb">BB Consórcios</option>
-              <option value="maggi">Maggi</option>
-            </select>
-            <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-2xl border px-3 py-2 text-sm">
-              <option value="ativos">Ativos</option>
-              <option value="todos">Todos</option>
-              <option value="inativos">Inativos</option>
-            </select>
-            <Button variant="outline" className="rounded-2xl" onClick={load}><RefreshCw className="mr-2 h-4 w-4" />Atualizar</Button>
-          </div>
-        </CardContent>
-      </Card>
+      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur"><CardContent className="p-5 space-y-4">
+        <div className="flex items-center gap-2"><SlidersHorizontal className="h-5 w-5" style={{ color: C.ruby }} /><h2 className="font-black" style={{ color: C.navy }}>Filtros</h2></div>
+        <div className="grid gap-3 md:grid-cols-[1.5fr_.8fr_.8fr_auto]">
+          <label className="relative block"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full rounded-2xl border py-2 pl-9 pr-3 text-sm" placeholder="Buscar por grupo, segmento ou administradora" /></label>
+          <select value={admin} onChange={(e) => setAdmin(e.target.value)} className="rounded-2xl border px-3 py-2 text-sm"><option value="todas">Todas</option><option value="bb">BB Consórcios</option><option value="maggi">Maggi</option></select>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-2xl border px-3 py-2 text-sm"><option value="ativos">Ativos</option><option value="todos">Todos</option><option value="inativos">Inativos</option></select>
+          <Button variant="outline" className="rounded-2xl" onClick={load}><RefreshCw className="mr-2 h-4 w-4" />Atualizar</Button>
+        </div>
+      </CardContent></Card>
 
-      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur">
-        <CardContent className="p-0 overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Administradora</th>
-                <th className="px-4 py-3">Grupo</th>
-                <th className="px-4 py-3">Segmento</th>
-                <th className="px-4 py-3">Faixa de crédito</th>
-                <th className="px-4 py-3">Prazo máx.</th>
-                <th className="px-4 py-3">Maior %</th>
-                <th className="px-4 py-3">Menor %</th>
-                <th className="px-4 py-3">Mediana</th>
-                <th className="px-4 py-3">Embutido máx.</th>
-                <th className="px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((g) => (
-                <tr key={g.id} className="border-t hover:bg-slate-50/70">
-                  <td className="px-4 py-3 font-semibold" style={{ color: C.navy }}>{g.administradora}</td>
-                  <td className="px-4 py-3"><div className="font-bold">{g.grupo}</div><div className="max-w-[220px] truncate text-xs text-slate-500">{g.nome}</div></td>
-                  <td className="px-4 py-3">{g.segmento}</td>
-                  <td className="px-4 py-3">{brMoney(g.creditoMin)} até {brMoney(g.creditoMax)}</td>
-                  <td className="px-4 py-3">{g.prazoMax || "—"} meses</td>
-                  <td className="px-4 py-3">{brPct(g.maiorPct)}</td>
-                  <td className="px-4 py-3">{brPct(g.menorPct)}</td>
-                  <td className="px-4 py-3 font-bold" style={{ color: C.ruby }}>{brPct(g.medianaPct)}</td>
-                  <td className="px-4 py-3">{brPct(g.lanceEmbutidoMaxPct)}</td>
-                  <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${g.ativo ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{g.ativo ? "Ativo" : "Inativo"}</span></td>
-                </tr>
-              ))}
-              {filtered.length === 0 && <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">Nenhum grupo encontrado.</td></tr>}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
+      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur"><CardContent className="p-0 overflow-x-auto">
+        <table className="w-full min-w-[980px] text-sm">
+          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Administradora</th><th className="px-4 py-3">Grupo</th><th className="px-4 py-3">Segmento</th><th className="px-4 py-3">Faixa de crédito</th><th className="px-4 py-3">Prazo máx.</th><th className="px-4 py-3">Maior %</th><th className="px-4 py-3">Menor %</th><th className="px-4 py-3">Mediana</th><th className="px-4 py-3">Embutido máx.</th><th className="px-4 py-3">Status</th></tr></thead>
+          <tbody>{filtered.map((g) => <tr key={g.id} className="border-t hover:bg-slate-50/70"><td className="px-4 py-3 font-semibold" style={{ color: C.navy }}>{g.administradora}</td><td className="px-4 py-3"><div className="font-bold">{g.grupo}</div><div className="max-w-[220px] truncate text-xs text-slate-500">{g.nome}</div></td><td className="px-4 py-3">{g.segmento}</td><td className="px-4 py-3">{brMoney(g.creditoMin)} até {brMoney(g.creditoMax)}</td><td className="px-4 py-3">{g.prazoMax || "—"} meses</td><td className="px-4 py-3">{brPct(g.maiorPct)}</td><td className="px-4 py-3">{brPct(g.menorPct)}</td><td className="px-4 py-3 font-bold" style={{ color: C.ruby }}>{brPct(g.medianaPct)}</td><td className="px-4 py-3">{brPct(g.lanceEmbutidoMaxPct)}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${g.ativo ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{g.ativo ? "Ativo" : "Inativo"}</span></td></tr>)}{filtered.length === 0 && <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">Nenhum grupo encontrado.</td></tr>}</tbody>
+        </table>
+      </CardContent></Card>
 
-      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur">
-        <CardContent className="grid gap-4 p-5 md:grid-cols-[auto_1fr_auto] md:items-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ background: C.navy }}><Bot className="h-5 w-5" /></div>
-          <div>
-            <h2 className="font-black" style={{ color: C.navy }}>Robô das administradoras</h2>
-            <p className="text-sm text-slate-600">O robô será executado no backend, como um usuário humano controlado por rotina segura, sem expor usuário/senha no navegador.</p>
-            <div className="mt-2 flex items-center gap-2 text-xs text-amber-700"><ShieldCheck className="h-4 w-4" /> As credenciais devem ser configuradas nas variáveis seguras da Vercel.</div>
-            {syncMessage && (
-              <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm ${syncMessage.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : syncMessage.type === "warn" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>
-                {syncMessage.text}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-2 md:min-w-[220px]">
-            <Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("bb")}>
-              {syncing === "bb" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
-              Sincronizar BB
-            </Button>
-            <Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("maggi")}>
-              {syncing === "maggi" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
-              Sincronizar Maggi
-            </Button>
-            <Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => navigate("/radar-ofertas")}>Abrir Radar <ArrowRight className="ml-2 h-4 w-4" /></Button>
-          </div>
-        </CardContent>
-      </Card>
+      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur"><CardContent className="grid gap-4 p-5 md:grid-cols-[auto_1fr_auto] md:items-start">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ background: C.navy }}><Bot className="h-5 w-5" /></div>
+        <div><h2 className="font-black" style={{ color: C.navy }}>Robô das administradoras</h2><p className="text-sm text-slate-600">O botão BB sincroniza os segmentos em fila para evitar timeout.</p>
+          {syncSteps.length > 0 && <div className="mt-4 rounded-3xl border bg-white p-4"><div className="mb-3 flex justify-between text-sm font-semibold" style={{ color: C.navy }}><span>Progresso da sincronização BB</span><span>{progress}%</span></div><div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: C.ruby }} /></div><div className="grid gap-2 md:grid-cols-2">{syncSteps.map((step) => <div key={step.key} className="flex items-start gap-2 rounded-2xl border bg-slate-50 px-3 py-2 text-xs">{step.status === "running" && <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-amber-600" />}{step.status === "done" && <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />}{step.status === "error" && <XCircle className="mt-0.5 h-4 w-4 text-red-600" />}{step.status === "pending" && <span className="mt-1 h-3 w-3 rounded-full border border-slate-300" />}<div className="min-w-0"><div className="font-bold text-slate-800">{step.label}</div><div className="truncate text-slate-500">{step.status === "done" ? `${step.found || 0} grupo(s) processado(s)` : step.message || "Aguardando"}</div></div></div>)}</div></div>}
+          {syncMessage && <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm ${syncMessage.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : syncMessage.type === "warn" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>{syncMessage.text}</div>}
+        </div>
+        <div className="flex flex-col gap-2 md:min-w-[220px]"><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("bb")}>{syncing === "bb" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Sincronizar BB</Button><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("maggi")}>{syncing === "maggi" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Sincronizar Maggi</Button><Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => navigate("/radar-ofertas")}>Abrir Radar <ArrowRight className="ml-2 h-4 w-4" /></Button></div>
+      </CardContent></Card>
     </div>
   );
 }

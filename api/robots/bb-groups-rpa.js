@@ -24,25 +24,42 @@ function pctDecimal(value) {
   return parsed > 1 ? parsed / 100 : parsed
 }
 
+function browserlessEndpoint() {
+  const explicit = process.env.BROWSERLESS_WS_ENDPOINT || process.env.BROWSERLESS_WS_URL || ''
+  if (explicit) return explicit
+
+  const token = process.env.BROWSERLESS_TOKEN || ''
+  if (token) return `wss://production-sfo.browserless.io?token=${encodeURIComponent(token)}`
+
+  return ''
+}
+
 async function createBrowser() {
-  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_REGION)
   const playwright = await import('playwright-core')
+  const remoteEndpoint = browserlessEndpoint()
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_REGION)
+
+  if (remoteEndpoint) {
+    const browser = await playwright.chromium.connectOverCDP(remoteEndpoint)
+    browser.__remote = true
+    return browser
+  }
 
   if (isServerless) {
-    const chromiumModule = await import('@sparticuz/chromium')
-    const chromium = chromiumModule.default
-    return playwright.chromium.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
-      headless: true,
-    })
+    throw new Error('Chromium local indisponível no runtime da Vercel: falta libnss3.so. Configure BROWSERLESS_TOKEN ou BROWSERLESS_WS_ENDPOINT nas variáveis da Vercel para executar o robô com navegador remoto.')
   }
 
   return playwright.chromium.launch({ headless: true })
 }
 
-function normalizeText(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+async function newRobotPage(browser) {
+  if (browser.__remote) {
+    const context = await browser.newContext({ viewport: { width: 1366, height: 900 } })
+    return { context, page: await context.newPage() }
+  }
+
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
+  return { context: null, page }
 }
 
 async function dismissPostLoginMessages(page) {
@@ -241,7 +258,7 @@ async function upsertGroups(supabase, rows) {
 
 export async function syncBBGroupsRpa(env, supabase) {
   const browser = await createBrowser()
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
+  const { context, page } = await newRobotPage(browser)
   const rows = []
   const errors = []
 
@@ -289,6 +306,7 @@ export async function syncBBGroupsRpa(env, supabase) {
       details: { raw_rows: rows.length, errors },
     }
   } finally {
+    if (context) await context.close().catch(() => null)
     await browser.close().catch(() => null)
   }
 }

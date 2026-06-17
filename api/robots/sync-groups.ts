@@ -1,7 +1,6 @@
 // api/robots/sync-groups.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
-import { syncBBGroupsRpa } from './bb-groups-rpa'
 
 type AdminKey = 'bb' | 'maggi'
 
@@ -15,6 +14,10 @@ type RobotResult = {
   updated?: number
   deactivated?: number
   details?: Record<string, any>
+}
+
+export const config = {
+  maxDuration: 60,
 }
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
@@ -99,7 +102,18 @@ async function syncByRpa(administradora: AdminKey): Promise<RobotResult> {
   }
 
   if (administradora === 'bb') {
-    return await syncBBGroupsRpa(env, admin)
+    try {
+      const mod = await import('./bb-groups-rpa')
+      return await mod.syncBBGroupsRpa(env, admin)
+    } catch (err: any) {
+      return {
+        ok: false,
+        status: 'error',
+        administradora,
+        message: `Falha ao executar robô BB: ${err?.message || String(err)}`,
+        details: { name: err?.name || null },
+      }
+    }
   }
 
   return {
@@ -117,9 +131,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
 
   if (req.method === 'OPTIONS') return res.status(204).end()
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' })
 
   try {
     const auth = await verifyUser(req)
@@ -130,8 +145,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!administradora) return res.status(400).json({ ok: false, error: 'Administradora inválida. Use bb ou maggi.' })
 
     const result = await syncByRpa(administradora)
-    return res.status(result.status === 'not_configured' ? 409 : 200).json(result)
+    const status = result.status === 'not_configured' ? 409 : result.status === 'error' ? 500 : 200
+    return res.status(status).json(result)
   } catch (err: any) {
-    return res.status(500).json({ ok: false, error: err?.message || 'Erro interno ao executar robô.' })
+    return res.status(500).json({
+      ok: false,
+      status: 'error',
+      error: err?.message || 'Erro interno ao executar robô.',
+      details: { name: err?.name || null },
+    })
   }
 }

@@ -112,7 +112,8 @@ async function syncByRpa(administradora: AdminKey, options: Record<string, any> 
   if (administradora === 'bb') {
     try {
       const mod = await loadBBRobot()
-      return await mod.syncBBGroupsRpa(env, admin, { segmento: options.segmento || options.bbSegmento || null })
+      const segmento = options.segmento || options.bbSegmento || 'auto_fipe'
+      return await mod.syncBBGroupsRpa(env, admin, { segmento })
     } catch (err: any) {
       return {
         ok: false,

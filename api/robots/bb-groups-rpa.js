@@ -111,17 +111,22 @@ async function dismissPostLoginMessages(page) {
 }
 
 async function selectByText(page, selectIndex, label) {
-  const select = page.locator('select').nth(selectIndex)
+  const select = page.locator('select:visible').nth(selectIndex)
+  const visibleCount = await page.locator('select:visible').count()
   await select.waitFor({ state: 'visible', timeout: 20000 })
 
-  const found = await select.locator('option').evaluateAll((opts, wanted) => {
-    const target = String(wanted || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
-    return opts
-      .map((option) => ({ value: option.value, text: option.textContent || '' }))
-      .filter((option) => String(option.text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().includes(target))
-  }, label)
+  const options = await select.locator('option').evaluateAll((opts) =>
+    opts.map((option) => ({ value: option.value, text: option.textContent || '' }))
+  )
+  const target = String(label || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+  const found = options.filter((option) =>
+    String(option.text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().includes(target)
+  )
 
-  if (!found.length) throw new Error(`Opção não encontrada no select ${selectIndex}: ${label}`)
+  if (!found.length) {
+    const available = options.map((option) => option.text).join(' | ')
+    throw new Error(`Opção não encontrada no select visível ${selectIndex}/${visibleCount}: ${label}. Opções: ${available}`)
+  }
   await select.selectOption(String(found[0].value))
   await page.waitForTimeout(1200)
 }

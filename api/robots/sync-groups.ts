@@ -89,6 +89,14 @@ async function loadBBRobot() {
   }
 }
 
+async function loadBBAssemblyRobot() {
+  try {
+    return await import('./bb-assemblies-rpa.js')
+  } catch {
+    return await import('./bb-assemblies-rpa')
+  }
+}
+
 async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}): Promise<RobotResult> {
   if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
 
@@ -111,6 +119,15 @@ async function syncByRpa(administradora: AdminKey, options: Record<string, any> 
 
   if (administradora === 'bb') {
     try {
+      const tipo = String(options.tipo || options.mode || '').toLowerCase()
+
+      if (tipo === 'assembleia' || tipo === 'assembly' || tipo === 'resultado_assembleia') {
+        const grupo = options.grupo || options.group
+        if (!grupo) throw new Error('Informe o número do grupo para buscar resultado de assembleia.')
+        const mod = await loadBBAssemblyRobot()
+        return await mod.syncBBAssemblyResultRpa(env, admin, { grupo })
+      }
+
       const mod = await loadBBRobot()
       const segmento = options.segmento || options.bbSegmento || 'auto_fipe'
       return await mod.syncBBGroupsRpa(env, admin, { segmento })

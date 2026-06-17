@@ -1,6 +1,7 @@
 // api/robots/sync-groups.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
+import { syncBBGroupsRpa } from './bb-groups-rpa'
 
 type AdminKey = 'bb' | 'maggi'
 
@@ -78,6 +79,8 @@ function envFor(administradora: AdminKey) {
 }
 
 async function syncByRpa(administradora: AdminKey): Promise<RobotResult> {
+  if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
+
   const env = envFor(administradora)
   const missing = Object.entries(env).filter(([, value]) => !value).map(([key]) => key)
 
@@ -95,13 +98,17 @@ async function syncByRpa(administradora: AdminKey): Promise<RobotResult> {
     }
   }
 
+  if (administradora === 'bb') {
+    return await syncBBGroupsRpa(env, admin)
+  }
+
   return {
     ok: false,
     status: 'ready',
     administradora,
-    message: 'Credenciais encontradas. Próximo passo: mapear telas/campos do portal para ativar a navegação RPA.',
+    message: 'Credenciais Maggi encontradas. Próximo passo: mapear telas/campos do portal Maggi para ativar a navegação RPA.',
     details: {
-      next_step: 'Enviar prints ou HTML das telas de login, listagem de grupos e detalhe da assembleia para mapear os seletores do robô.',
+      next_step: 'Enviar prints das telas de login, listagem de grupos e detalhe dos grupos da Maggi.',
     },
   }
 }

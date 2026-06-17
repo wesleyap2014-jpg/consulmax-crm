@@ -1,3 +1,4 @@
+```js
 // api/robots/bb-assemblies-rpa.js
 
 function browserlessEndpoint() {
@@ -9,7 +10,12 @@ function browserlessEndpoint() {
 }
 
 function normalizeText(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function onlyDigits(value) {
@@ -19,8 +25,15 @@ function onlyDigits(value) {
 function parseNumberBR(value) {
   const raw = String(value ?? '').trim()
   if (!raw) return 0
-  const cleaned = raw.replace(/R\$/gi, '').replace(/%/g, '').replace(/\s/g, '').replace(/[^0-9,.-]/g, '')
+
+  const cleaned = raw
+    .replace(/R\$/gi, '')
+    .replace(/%/g, '')
+    .replace(/\s/g, '')
+    .replace(/[^0-9,.-]/g, '')
+
   if (!cleaned) return 0
+
   const parsed = Number(cleaned.replace(/\./g, '').replace(',', '.'))
   return Number.isFinite(parsed) ? parsed : 0
 }
@@ -68,6 +81,7 @@ async function dismissPostLoginMessages(page) {
     ]
 
     let clicked = false
+
     for (const locator of candidates) {
       if (await locator.isVisible().catch(() => false)) {
         await locator.click().catch(() => null)
@@ -76,12 +90,14 @@ async function dismissPostLoginMessages(page) {
         break
       }
     }
+
     if (!clicked) break
   }
 }
 
 async function login(page, env) {
   await page.goto(env.portalUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+
   await page.locator('input[type="text"], input:not([type])').first().fill(env.username)
   await page.locator('input[type="password"]').first().fill(env.password)
 
@@ -109,22 +125,33 @@ async function openAssemblyResult(page) {
         page.waitForLoadState('domcontentloaded').catch(() => null),
         candidate.click({ timeout: 10000 }),
       ])
+
       await page.waitForTimeout(1200)
       return
     }
   }
 
   const clicked = await page.evaluate(() => {
-    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const normalize = (value) =>
+      String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+
     const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], img'))
+
     const target = elements.find((el) => {
       const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || '')
       return text.includes('RESULTADO DE ASSEMBLEIAS') || text.includes('RESULTADO ASSEMBLEIAS')
     })
+
     if (target) {
       target.click()
       return true
     }
+
     return false
   })
 
@@ -147,27 +174,48 @@ async function searchGroup(page, grupo) {
 
   await page.getByText('Resultado de Assembleias').waitFor({ timeout: 20000 }).catch(() => null)
 
-  const inputs = page.locator('input:visible:not([type="image"]):not([type="button"]):not([type="submit"]):not([type="hidden"]):not([type="password"])')
+  const inputs = page.locator(
+    'input:visible:not([type="image"]):not([type="button"]):not([type="submit"]):not([type="hidden"]):not([type="password"])'
+  )
+
   const count = await inputs.count()
-  if (count < 1) throw new Error('Campo de grupo não encontrado na tela de Resultado de Assembleias.')
+
+  if (count < 1) {
+    throw new Error('Campo de grupo não encontrado na tela de Resultado de Assembleias.')
+  }
 
   const groupInput = inputs.nth(0)
+
   await groupInput.fill('')
   await groupInput.fill(groupNumber)
   await page.waitForTimeout(300)
 
   const clicked = await page.evaluate(() => {
-    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const normalize = (value) =>
+      String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+
     const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
-    const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('PESQUISAR'))
+
+    const target = elements.find((el) =>
+      normalize(el.innerText || el.textContent || el.value || el.title || '').includes('PESQUISAR')
+    )
+
     if (target) {
       target.click()
       return true
     }
+
     return false
   })
 
-  if (!clicked) throw new Error('Botão Pesquisar não encontrado na tela de Resultado de Assembleias.')
+  if (!clicked) {
+    throw new Error('Botão Pesquisar não encontrado na tela de Resultado de Assembleias.')
+  }
 
   await page.waitForLoadState('domcontentloaded').catch(() => null)
   await page.waitForTimeout(1500)
@@ -176,13 +224,20 @@ async function searchGroup(page, grupo) {
 async function readLatestAssembly(page, grupo) {
   const rows = await page.locator('table tr').evaluateAll((trs) => {
     return trs
-      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
+      .map((tr) =>
+        Array.from(tr.querySelectorAll('td')).map((td) =>
+          String(td.innerText || td.textContent || '').trim()
+        )
+      )
       .filter((cells) => cells.length >= 6 && /^\d+/.test(cells[0] || '') && /^\d+/.test(cells[1] || ''))
   })
 
-  if (!rows.length) throw new Error(`Nenhum resultado de assembleia encontrado para o grupo ${grupo}.`)
+  if (!rows.length) {
+    throw new Error(`Nenhum resultado de assembleia encontrado para o grupo ${grupo}.`)
+  }
 
   const last = rows[rows.length - 1]
+
   const maiorPct = pctDecimal(last[4])
   const menorPct = pctDecimal(last[5])
   const medianaPct = maiorPct && menorPct ? (maiorPct + menorPct) / 2 : 0
@@ -203,29 +258,65 @@ async function updateGroupAssembly(supabase, result) {
   const grupo = String(result.grupo || '').replace(/^0+/, '') || String(result.grupo || '')
   const padded = String(result.grupo || '').padStart(6, '0')
 
-  const payload = {
-    maior_pct_contemplado: result.maiorPct,
-    menor_pct_contemplado: result.menorPct,
-    mediana_pct_contemplado: result.medianaPct,
-    ultima_assembleia: result.assembleia,
-    data_ultima_assembleia: result.dataAssembleia,
-    qtde_contemplados_ultima_assembleia: result.qtdeContemplados,
+  const assemblyResult = {
+    maiorPct: result.maiorPct,
+    menorPct: result.menorPct,
+    medianaPct: result.medianaPct,
+    assembleia: result.assembleia,
+    dataAssembleia: result.dataAssembleia,
+    qtdeContemplados: result.qtdeContemplados,
+    raw: result.raw,
+    updatedAt: new Date().toISOString(),
   }
 
-  let { data, error } = await supabase.from('sim_bb_groups').update(payload).eq('grupo', padded).select('id,grupo')
-  if (error) throw error
-  if (!data?.length) {
-    const fallback = await supabase.from('sim_bb_groups').update(payload).eq('grupo', grupo).select('id,grupo')
+  let { data: rows, error: findError } = await supabase
+    .from('sim_bb_groups')
+    .select('id,grupo,config')
+    .eq('grupo', padded)
+
+  if (findError) throw findError
+
+  if (!rows?.length) {
+    const fallback = await supabase
+      .from('sim_bb_groups')
+      .select('id,grupo,config')
+      .eq('grupo', grupo)
+
     if (fallback.error) throw fallback.error
-    data = fallback.data || []
+    rows = fallback.data || []
   }
 
-  return { updated: data?.length || 0 }
+  let updated = 0
+
+  for (const row of rows || []) {
+    const config =
+      row.config && typeof row.config === 'object' && !Array.isArray(row.config)
+        ? row.config
+        : {}
+
+    const { error } = await supabase
+      .from('sim_bb_groups')
+      .update({
+        config: {
+          ...config,
+          assemblyResult,
+        },
+      })
+      .eq('id', row.id)
+
+    if (error) throw error
+    updated += 1
+  }
+
+  return { updated }
 }
 
 export async function syncBBAssemblyResultRpa(env, supabase, options = {}) {
   const grupo = options.grupo || options.group || ''
-  if (!grupo) throw new Error('Informe o número do grupo para buscar resultado de assembleia.')
+
+  if (!grupo) {
+    throw new Error('Informe o número do grupo para buscar resultado de assembleia.')
+  }
 
   const browser = await createBrowser()
   const { context, page } = await newRobotPage(browser)
@@ -234,6 +325,7 @@ export async function syncBBAssemblyResultRpa(env, supabase, options = {}) {
     await login(page, env)
     await openAssemblyResult(page)
     await searchGroup(page, grupo)
+
     const result = await readLatestAssembly(page, grupo)
     const saved = await updateGroupAssembly(supabase, result)
 
@@ -251,3 +343,4 @@ export async function syncBBAssemblyResultRpa(env, supabase, options = {}) {
     await browser.close().catch(() => null)
   }
 }
+```

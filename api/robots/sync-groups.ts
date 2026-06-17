@@ -82,19 +82,11 @@ function envFor(administradora: AdminKey) {
 }
 
 async function loadBBRobot() {
-  try {
-    return await import('./bb-groups-rpa.js')
-  } catch {
-    return await import('./bb-groups-rpa')
-  }
+  return await import('./bb-groups-rpa.js')
 }
 
 async function loadBBAssemblyRobot() {
-  try {
-    return await import('./bb-assemblies-rpa.js')
-  } catch {
-    return await import('./bb-assemblies-rpa')
-  }
+  return await import('./bb-assemblies-rpa.js')
 }
 
 async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}): Promise<RobotResult> {
@@ -178,7 +170,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ok: false,
       status: 'error',
       error: err?.message || 'Erro interno ao executar robô.',
-      details: { name: err?.name || null },
     })
   }
 }

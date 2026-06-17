@@ -34,6 +34,21 @@ function browserlessEndpoint() {
   return ''
 }
 
+function normalizeKey(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+}
+
+function segmentsToRun(segmento) {
+  const requested = normalizeKey(segmento || 'auto_fipe')
+  const found = BB_SEGMENTS.filter((segment) => {
+    const crm = normalizeKey(segment.crmSegmento)
+    const label = normalizeKey(segment.portalLabel)
+    return crm === requested || label.includes(requested) || requested.includes(crm)
+  })
+
+  return found.length ? found : BB_SEGMENTS.filter((segment) => segment.crmSegmento === 'auto_fipe')
+}
+
 async function createBrowser() {
   const playwright = await import('playwright-core')
   const remoteEndpoint = browserlessEndpoint()
@@ -256,7 +271,8 @@ async function upsertGroups(supabase, rows) {
   return { created, updated }
 }
 
-export async function syncBBGroupsRpa(env, supabase) {
+export async function syncBBGroupsRpa(env, supabase, options = {}) {
+  const selectedSegments = segmentsToRun(options.segmento)
   const browser = await createBrowser()
   const { context, page } = await newRobotPage(browser)
   const rows = []
@@ -265,7 +281,7 @@ export async function syncBBGroupsRpa(env, supabase) {
   try {
     await login(page, env)
 
-    for (const segment of BB_SEGMENTS) {
+    for (const segment of selectedSegments) {
       try {
         await openHome(page, env)
         await openSimulator(page)
@@ -293,17 +309,18 @@ export async function syncBBGroupsRpa(env, supabase) {
 
     const merged = mergeGroups(rows)
     const { created, updated } = await upsertGroups(supabase, merged)
+    const segmentNames = selectedSegments.map((segment) => segment.crmSegmento).join(', ')
 
     return {
       ok: true,
       status: 'synced',
       administradora: 'bb',
-      message: `Sincronização BB concluída: ${merged.length} grupo(s) processado(s).`,
+      message: `Sincronização BB concluída para ${segmentNames}: ${merged.length} grupo(s) processado(s).`,
       found: merged.length,
       created,
       updated,
       deactivated: 0,
-      details: { raw_rows: rows.length, errors },
+      details: { raw_rows: rows.length, errors, segmentos: selectedSegments.map((segment) => segment.crmSegmento) },
     }
   } finally {
     if (context) await context.close().catch(() => null)

@@ -9,6 +9,14 @@ const BB_SEGMENTS = [
   { portalLabel: 'IM - IMOVEIS GERAL', crmSegmento: 'imoveis', vendaLabels: ['93 - MAIS BBC IMOVEIS 240', '95 - MAIS BBC TODOS SEGMENTOS'] },
 ]
 
+const SELECT_INDEX = {
+  tipoPessoa: 0,
+  filial: 1,
+  grupo: 2,
+  periodicidade: 3,
+  venda: 4,
+}
+
 function parseNumberBR(value) {
   const raw = String(value ?? '').trim()
   if (!raw) return 0
@@ -109,9 +117,9 @@ async function selectByText(page, selectIndex, label) {
       .filter((option) => String(option.text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().includes(target))
   }, label)
 
-  if (!found.length) throw new Error(`Opção não encontrada: ${label}`)
+  if (!found.length) throw new Error(`Opção não encontrada no select ${selectIndex}: ${label}`)
   await select.selectOption(String(found[0].value))
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(900)
 }
 
 async function login(page, env) {
@@ -285,12 +293,12 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
       try {
         await openHome(page, env)
         await openSimulator(page)
-        await selectByText(page, 1, segment.portalLabel)
+        await selectByText(page, SELECT_INDEX.grupo, segment.portalLabel)
 
         if (segment.vendaLabels?.length) {
           for (const vendaLabel of segment.vendaLabels) {
             try {
-              await selectByText(page, 3, vendaLabel)
+              await selectByText(page, SELECT_INDEX.venda, vendaLabel)
               await clickNext(page)
               rows.push(...await readGroupsTable(page, segment.crmSegmento))
               await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => openHome(page, env))
@@ -310,12 +318,13 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
     const merged = mergeGroups(rows)
     const { created, updated } = await upsertGroups(supabase, merged)
     const segmentNames = selectedSegments.map((segment) => segment.crmSegmento).join(', ')
+    const zeroWarning = merged.length === 0 && errors.length ? ` Erros: ${errors.join(' | ')}` : ''
 
     return {
       ok: true,
       status: 'synced',
       administradora: 'bb',
-      message: `Sincronização BB concluída para ${segmentNames}: ${merged.length} grupo(s) processado(s).`,
+      message: `Sincronização BB concluída para ${segmentNames}: ${merged.length} grupo(s) processado(s).${zeroWarning}`,
       found: merged.length,
       created,
       updated,

@@ -148,7 +148,9 @@ String(value || '')
 .trim()
 
 ```
-const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], img'))
+const elements = Array.from(
+  document.querySelectorAll('a, button, input[type="button"], input[type="submit"], img')
+)
 
 const target = elements.find((el) => {
   const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || '')
@@ -172,7 +174,9 @@ return
 }
 
 const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
-throw new Error(`Menu Resultado de Assembleias não encontrado. URL atual: ${page.url()}. Tela: ${normalizeText(bodyText).slice(0, 500)}`)
+throw new Error(
+`Menu Resultado de Assembleias não encontrado. URL atual: ${page.url()}. Tela: ${normalizeText(bodyText).slice(0, 500)}`
+)
 }
 
 async function searchGroup(page, grupo) {
@@ -210,7 +214,9 @@ String(value || '')
 .trim()
 
 ```
-const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
+const elements = Array.from(
+  document.querySelectorAll('a, button, input[type="button"], input[type="submit"]')
+)
 
 const target = elements.find((el) =>
   normalize(el.innerText || el.textContent || el.value || el.title || '').includes('PESQUISAR')
@@ -330,7 +336,7 @@ updated += 1
 return { updated }
 }
 
-export async function syncBBAssemblyResultRpa(env, supabase, options = {}) {
+async function syncBBAssemblyResultRpa(env, supabase, options = {}) {
 const grupo = options.grupo || options.group || ''
 
 if (!grupo) {
@@ -364,4 +370,8 @@ return {
 if (context) await context.close().catch(() => null)
 await browser.close().catch(() => null)
 }
+}
+
+module.exports = {
+syncBBAssemblyResultRpa,
 }

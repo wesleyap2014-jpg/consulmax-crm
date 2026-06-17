@@ -81,6 +81,14 @@ function envFor(administradora: AdminKey) {
   }
 }
 
+async function loadBBRobot() {
+  try {
+    return await import('./bb-groups-rpa.js')
+  } catch {
+    return await import('./bb-groups-rpa')
+  }
+}
+
 async function syncByRpa(administradora: AdminKey): Promise<RobotResult> {
   if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
 
@@ -103,7 +111,7 @@ async function syncByRpa(administradora: AdminKey): Promise<RobotResult> {
 
   if (administradora === 'bb') {
     try {
-      const mod = await import('./bb-groups-rpa')
+      const mod = await loadBBRobot()
       return await mod.syncBBGroupsRpa(env, admin)
     } catch (err: any) {
       return {

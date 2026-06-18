@@ -86,7 +86,8 @@ async function loadBBRobot() {
 }
 
 async function loadBBAssemblyRobot() {
-  return await import('./bb-assemblies-rpa.js')
+  const mod: any = await import('./bb-assemblies-rpa.cjs')
+  return mod.default || mod
 }
 
 async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}): Promise<RobotResult> {

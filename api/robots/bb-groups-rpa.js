@@ -9,14 +9,6 @@ const BB_SEGMENTS = [
   { portalLabel: 'IM - IMOVEIS GERAL', crmSegmento: 'imoveis', vendaLabels: ['93 - MAIS BBC IMOVEIS 240', '95 - MAIS BBC TODOS SEGMENTOS'] },
 ]
 
-const SELECT_INDEX = {
-  tipoPessoa: 0,
-  filial: 1,
-  grupo: 2,
-  periodicidade: 3,
-  venda: 4,
-}
-
 function parseNumberBR(value) {
   const raw = String(value ?? '').trim()
   if (!raw) return 0
@@ -115,49 +107,6 @@ async function dismissPostLoginMessages(page) {
   }
 }
 
-async function selectByText(page, selectIndex, label) {
-  const select = page.locator('select:visible').nth(selectIndex)
-  const visibleCount = await page.locator('select:visible').count()
-  await select.waitFor({ state: 'visible', timeout: 20000 })
-
-  const options = await select.locator('option').evaluateAll((opts) =>
-    opts.map((option) => ({ value: option.value, text: option.textContent || '' }))
-  )
-
-  const normalizedLabel = normalizePortalText(label)
-  const code = normalizedLabel.split('-')[0]?.trim()
-
-  const found = options.find((option) => {
-    const text = normalizePortalText(option.text)
-    const value = normalizePortalText(option.value)
-
-    return (
-      text === normalizedLabel ||
-      text.includes(normalizedLabel) ||
-      normalizedLabel.includes(text) ||
-      (
-        code &&
-        (
-          text === code ||
-          text.startsWith(`${code} `) ||
-          text.startsWith(`${code}-`) ||
-          text.startsWith(`${code} -`) ||
-          value === code ||
-          value.includes(code)
-        )
-      )
-    )
-  })
-
-  if (!found) {
-    const available = options.map((option) => option.text).join(' | ')
-    throw new Error(`Opção não encontrada no select visível ${selectIndex}/${visibleCount}: ${label}. Código: ${code || '—'}. Opções: ${available}`)
-  }
-
-  await select.selectOption(String(found.value))
-  await page.waitForTimeout(1200)
-}
-
 async function login(page, env) {
   await page.goto(env.portalUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
   await page.locator('input[type="text"], input:not([type])').first().fill(env.username)
@@ -215,6 +164,73 @@ async function openSimulator(page) {
   const url = page.url()
   const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
   throw new Error(`Menu Simulador/Contratação não encontrado. URL atual: ${url}. Texto da tela: ${normalizePortalText(bodyText).slice(0, 500)}`)
+}
+
+async function selectOptionByText(page, label, fieldName) {
+  const normalizedLabel = normalizePortalText(label)
+  const code = normalizedLabel.split('-')[0]?.trim()
+
+  const result = await page.evaluate(({ normalizedLabel, code, fieldName }) => {
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const selects = Array.from(document.querySelectorAll('select'))
+
+    for (const select of selects) {
+      const options = Array.from(select.options || [])
+      const found = options.find((option) => {
+        const text = normalize(option.textContent || '')
+        const value = normalize(option.value || '')
+        return (
+          text === normalizedLabel ||
+          text.includes(normalizedLabel) ||
+          normalizedLabel.includes(text) ||
+          (
+            code &&
+            (
+              text === code ||
+              text.startsWith(`${code} `) ||
+              text.startsWith(`${code}-`) ||
+              text.startsWith(`${code} -`) ||
+              value === code ||
+              value.includes(code)
+            )
+          )
+        )
+      })
+
+      if (found) {
+        select.value = found.value
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+        return { ok: true, selectedText: found.textContent || '', selectedValue: found.value || '' }
+      }
+    }
+
+    const available = selects.map((select, index) => {
+      const opts = Array.from(select.options || []).map((option) => option.textContent || '').join(' | ')
+      return `${index}: ${opts}`
+    }).join(' || ')
+
+    return { ok: false, message: `Opção ${fieldName || ''} não encontrada: ${normalizedLabel}. Disponíveis: ${available}` }
+  }, { normalizedLabel, code, fieldName })
+
+  if (!result?.ok) throw new Error(result?.message || `Opção não encontrada: ${label}`)
+
+  await page.waitForLoadState('domcontentloaded').catch(() => null)
+  await page.waitForTimeout(1200)
+  return result
+}
+
+async function selectGroup(page, label) {
+  return await selectOptionByText(page, label, 'Grupo')
+}
+
+async function selectVenda(page, label) {
+  return await selectOptionByText(page, label, 'Venda')
 }
 
 async function clickNext(page) {
@@ -307,11 +323,10 @@ async function clickRightTableArrow(page) {
     const tableBox = dataTable?.box
     if (!tableBox) return false
 
-    const all = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
+    const candidates = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
       .filter(visible)
       .map((el) => {
         const box = el.getBoundingClientRect()
-        const html = normalize(el.outerHTML || '')
         const text = normalize(
           el.innerText ||
           el.textContent ||
@@ -320,73 +335,52 @@ async function clickRightTableArrow(page) {
           el.alt ||
           el.getAttribute('src') ||
           el.getAttribute('onclick') ||
+          el.outerHTML ||
           ''
         )
         return {
           el,
-          box,
-          html,
-          text,
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
           cx: box.x + box.width / 2,
           cy: box.y + box.height / 2,
+          text,
         }
       })
+      .filter((item) => {
+        const small = item.width <= 90 && item.height <= 90
+        const nearBottom = item.cy >= tableBox.bottom - 50 && item.cy <= tableBox.bottom + 50
+        const insideHoriz = item.cx >= tableBox.left - 20 && item.cx <= tableBox.right + 20
+        const likelyArrow =
+          item.text.includes('PROX') ||
+          item.text.includes('NEXT') ||
+          item.text.includes('RIGHT') ||
+          item.text.includes('DIREITA') ||
+          item.text.includes('AVANC') ||
+          item.text.includes('ARROW') ||
+          item.text.includes('SETA') ||
+          item.text.includes('IMG') ||
+          item.text.includes('.GIF') ||
+          item.text.includes('.PNG') ||
+          item.text.includes('.JPG') ||
+          item.text.includes('.JPEG') ||
+          item.text.includes('TYPE=\"IMAGE\"')
 
-    const arrowCandidates = all.filter((item) => {
-      const nearTableBottom =
-        item.cy >= tableBox.bottom - 45 &&
-        item.cy <= tableBox.bottom + 45
+        return small && nearBottom && insideHoriz && likelyArrow
+      })
 
-      const insideOrNearTableHoriz =
-        item.cx >= tableBox.left - 15 &&
-        item.cx <= tableBox.right + 15
-
-      const small =
-        item.box.width <= 90 &&
-        item.box.height <= 90
-
-      const textualNext =
-        item.text.includes('PROX') ||
-        item.text.includes('NEXT') ||
-        item.text.includes('RIGHT') ||
-        item.text.includes('DIREITA') ||
-        item.text.includes('AVANC') ||
-        item.html.includes('PROX') ||
-        item.html.includes('NEXT') ||
-        item.html.includes('RIGHT') ||
-        item.html.includes('DIREITA') ||
-        item.html.includes('AVANC')
-
-      const isImageLike =
-        item.html.includes('<IMG') ||
-        item.html.includes('TYPE=\"IMAGE\"') ||
-        item.html.includes('.GIF') ||
-        item.html.includes('.PNG') ||
-        item.html.includes('.JPG') ||
-        item.html.includes('.JPEG')
-
-      return nearTableBottom && insideOrNearTableHoriz && small && (textualNext || isImageLike)
-    })
-
-    if (!arrowCandidates.length) return false
+    if (!candidates.length) return false
 
     const tableCenterX = tableBox.left + tableBox.width / 2
-    const rightSideCandidates = arrowCandidates
+    const rightCandidates = candidates
       .filter((item) => item.cx > tableCenterX)
       .sort((a, b) => b.cx - a.cx)
 
-    if (!rightSideCandidates.length) return false
+    if (!rightCandidates.length) return false
 
-    const target = rightSideCandidates[0]
-
-    // Se existir somente uma seta e ela estiver mais perto do centro do que da borda direita,
-    // provavelmente é a seta de voltar/esquerda da última página. Nesse caso, não clica.
-    if (rightSideCandidates.length === 1) {
-      const distanceToRight = Math.abs(tableBox.right - target.cx)
-      const distanceToCenter = Math.abs(target.cx - tableCenterX)
-      if (distanceToCenter < distanceToRight) return false
-    }
-
+    const target = rightCandidates[0]
     target.el.click()
     return true
   }).catch(() => false)
@@ -607,12 +601,12 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
     for (const segment of selectedSegments) {
       try {
         await openSimulator(page)
-        await selectByText(page, SELECT_INDEX.grupo, segment.portalLabel)
+        await selectGroup(page, segment.portalLabel)
 
         if (segment.vendaLabels?.length) {
           for (const vendaLabel of segment.vendaLabels) {
             try {
-              await selectByText(page, SELECT_INDEX.venda, vendaLabel)
+              await selectVenda(page, vendaLabel)
               await clickNext(page)
               rows.push(...await readAllGroupsPages(page, segment.crmSegmento))
               await clickPrevious(page)
@@ -652,6 +646,7 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
         pagination_enabled: true,
+        only_group_select_for_non_im: true,
         arrow_detection: 'right-table-arrow',
       },
     }

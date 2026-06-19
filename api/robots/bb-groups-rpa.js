@@ -32,6 +32,11 @@ function pctDecimal(value) {
   return parsed > 1 ? parsed / 100 : parsed
 }
 
+function formatMoneyBR(value) {
+  const n = Number(value || 0)
+  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
 function browserlessEndpoint() {
   const explicit = process.env.BROWSERLESS_WS_ENDPOINT || process.env.BROWSERLESS_WS_URL || ''
   if (explicit) return explicit
@@ -240,6 +245,106 @@ async function clickNext(page) {
   throw new Error('Botão Próximo não encontrado.')
 }
 
+async function clickPrevious(page) {
+  const previous = page.getByText('Anterior', { exact: true }).first()
+  if (await previous.isVisible().catch(() => false)) {
+    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), previous.click()])
+    await page.waitForTimeout(1200)
+    return true
+  }
+
+  const clicked = await page.evaluate(() => {
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
+    const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('ANTERIOR'))
+    if (target) {
+      target.click()
+      return true
+    }
+    return false
+  })
+
+  if (clicked) {
+    await page.waitForLoadState('domcontentloaded').catch(() => null)
+    await page.waitForTimeout(1200)
+    return true
+  }
+
+  return false
+}
+
+async function tableSignature(page) {
+  return await page.locator('table tr').evaluateAll((trs) => {
+    const rows = trs
+      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()).join('|'))
+      .filter((text) => /^\d+/.test(text))
+    return `${rows.length}::${rows[0] || ''}::${rows[rows.length - 1] || ''}`
+  }).catch(() => '')
+}
+
+async function hasTableNextArrow(page) {
+  return await page.evaluate(() => {
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const candidates = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
+    return candidates.some((el) => {
+      const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || '')
+      if (!text) return false
+      const looksNext = text.includes('PROXIMO') || text.includes('NEXT') || text.includes('DIREITA') || text.includes('RIGHT') || text.includes('AVANCAR') || text.includes('AVANÇAR')
+      const looksBack = text.includes('ANTERIOR') || text.includes('PREVIOUS') || text.includes('ESQUERDA') || text.includes('LEFT') || text.includes('VOLTAR')
+      return looksNext && !looksBack
+    })
+  }).catch(() => false)
+}
+
+async function clickTableNextArrow(page) {
+  const clicked = await page.evaluate(() => {
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const candidates = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
+
+    const target = candidates.find((el) => {
+      const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || '')
+      if (!text) return false
+      const looksNext = text.includes('PROXIMO') || text.includes('NEXT') || text.includes('DIREITA') || text.includes('RIGHT') || text.includes('AVANCAR') || text.includes('AVANÇAR')
+      const looksBack = text.includes('ANTERIOR') || text.includes('PREVIOUS') || text.includes('ESQUERDA') || text.includes('LEFT') || text.includes('VOLTAR')
+      return looksNext && !looksBack
+    })
+
+    if (target) {
+      target.click()
+      return true
+    }
+
+    return false
+  }).catch(() => false)
+
+  if (!clicked) return false
+
+  await page.waitForLoadState('domcontentloaded').catch(() => null)
+  await page.waitForTimeout(1200)
+  return true
+}
+
+async function waitForTableChange(page, previousSignature) {
+  for (let i = 0; i < 12; i++) {
+    await page.waitForTimeout(500)
+    const current = await tableSignature(page)
+    if (current && current !== previousSignature) return true
+  }
+  return false
+}
+
 async function readGroupsTable(page, segmento) {
   await page.getByText('Grupos Disponíveis').waitFor({ timeout: 30000 }).catch(() => null)
 
@@ -272,6 +377,31 @@ async function readGroupsTable(page, segmento) {
   }).filter((row) => row.grupo && row.credito > 0)
 }
 
+async function readAllGroupsPages(page, segmento) {
+  const allRows = []
+  const seen = new Set()
+
+  for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+    const signature = await tableSignature(page)
+    if (signature && seen.has(signature)) break
+    if (signature) seen.add(signature)
+
+    const pageRows = await readGroupsTable(page, segmento)
+    allRows.push(...pageRows.map((row) => ({ ...row, pageIndex })))
+
+    const hasNext = await hasTableNextArrow(page)
+    if (!hasNext) break
+
+    const clicked = await clickTableNextArrow(page)
+    if (!clicked) break
+
+    const changed = await waitForTableChange(page, signature)
+    if (!changed) break
+  }
+
+  return allRows
+}
+
 function mergeGroups(rows) {
   const map = new Map()
   for (const row of rows) {
@@ -285,9 +415,56 @@ function mergeGroups(rows) {
     const prazos = list.map((row) => row.prazo).filter(Boolean)
     const minCont = list.map((row) => row.minContemplacaoPct).filter(Boolean)
     const first = list[0] || {}
-    const creditRanges = Array.from(new Set(credits.map((v) => Number(v.toFixed(2)))))
-      .sort((a, b) => a - b)
-      .map((valor, index) => ({ id: `bb_${grupo}_${index}`, label: `Faixa ${index + 1}`, valor }))
+
+    const rangeMap = new Map()
+    for (const row of list) {
+      if (!row.credito) continue
+      const rangeKey = [
+        Number(row.credito || 0).toFixed(2),
+        Number(row.parcela || 0).toFixed(2),
+        Number(row.prazo || 0),
+        String(row.bem || ''),
+      ].join(':')
+
+      if (!rangeMap.has(rangeKey)) {
+        rangeMap.set(rangeKey, row)
+      }
+    }
+
+    const creditRanges = Array.from(rangeMap.values())
+      .sort((a, b) => Number(a.credito || 0) - Number(b.credito || 0))
+      .map((row, index) => ({
+        id: `bb_${grupo}_${index}`,
+        label: `Faixa ${index + 1} - ${formatMoneyBR(row.credito)}`,
+        valor: Number(Number(row.credito || 0).toFixed(2)),
+        parcela: Number(Number(row.parcela || 0).toFixed(2)),
+        prazo: Number(row.prazo || 0),
+        vagas: Number(row.vagas || 0),
+        bem: String(row.bem || ''),
+        taxaAdmPct: Number(row.taxaAdmPct || 0),
+        fundoReservaPct: Number(row.fundoReservaPct || 0),
+        seguroPct: Number(row.seguroPct || 0),
+        minContemplacaoPct: Number(row.minContemplacaoPct || 0),
+        assembleia: String(row.assembleia || ''),
+        vencimento: String(row.vencimento || ''),
+      }))
+
+    const prazoRuleMap = new Map()
+    for (const row of list) {
+      const ruleKey = `${Number(row.prazo || 0)}:${Number(row.taxaAdmPct || 0)}:${Number(row.fundoReservaPct || 0)}`
+      if (!prazoRuleMap.has(ruleKey)) {
+        prazoRuleMap.set(ruleKey, {
+          id: `prazo_${grupo}_${prazoRuleMap.size}`,
+          prazo: Number(row.prazo || 0),
+          taxaAdmPct: Number(row.taxaAdmPct || 0),
+          fundoReservaPct: Number(row.fundoReservaPct || 0),
+        })
+      }
+    }
+
+    const prazoRules = Array.from(prazoRuleMap.values())
+      .filter((rule) => rule.prazo > 0)
+      .sort((a, b) => a.prazo - b.prazo)
 
     return {
       grupo,
@@ -309,7 +486,7 @@ function mergeGroups(rows) {
       is_active: true,
       config: {
         creditRanges,
-        prazoRules: [{ id: `prazo_${grupo}`, prazo: prazos.length ? Math.max(...prazos) : 1, taxaAdmPct: first.taxaAdmPct || 0, fundoReservaPct: first.fundoReservaPct || 0 }],
+        prazoRules,
         lanceOptions: [
           { key: 'livre', enabled: true, nomeComercial: 'Lance Livre', pct: minCont.length ? Math.min(...minCont) : 0 },
           { key: 'primeiro_fixo', enabled: false, nomeComercial: '1º Lance Fixo', pct: 0 },
@@ -318,6 +495,7 @@ function mergeGroups(rows) {
           { key: 'fidelidade', enabled: false, nomeComercial: 'Lance Fidelidade', pct: 0 },
         ],
         maxLanceEmbutidoPct: 0,
+        regraPosContemplacao: 'saldo_devedor_prazo_restante',
         observacoesRegra: minCont.length ? `% mín. contemplação: ${(Math.min(...minCont) * 100).toFixed(4).replace('.', ',')}%` : '',
       },
     }
@@ -331,12 +509,17 @@ async function upsertGroups(supabase, rows) {
   for (const payload of rows) {
     const { data: existing, error: findErr } = await supabase
       .from('sim_bb_groups')
-      .select('id')
+      .select('id, config')
       .eq('grupo', payload.grupo)
       .eq('segmento', payload.segmento)
       .maybeSingle()
 
     if (findErr) throw findErr
+
+    const existingConfig = existing?.config && typeof existing.config === 'object' ? existing.config : {}
+    if (existingConfig?.assemblyResult && payload.config) {
+      payload.config.assemblyResult = existingConfig.assemblyResult
+    }
 
     if (existing?.id) {
       const { error } = await supabase.from('sim_bb_groups').update(payload).eq('id', existing.id)
@@ -372,18 +555,21 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
             try {
               await selectByText(page, SELECT_INDEX.venda, vendaLabel)
               await clickNext(page)
-              rows.push(...await readGroupsTable(page, segment.crmSegmento))
-              await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => null)
+              rows.push(...await readAllGroupsPages(page, segment.crmSegmento))
+              await clickPrevious(page)
             } catch (err) {
               errors.push(`${segment.portalLabel} / ${vendaLabel}: ${err?.message || String(err)}`)
+              await clickPrevious(page).catch(() => null)
             }
           }
         } else {
           await clickNext(page)
-          rows.push(...await readGroupsTable(page, segment.crmSegmento))
+          rows.push(...await readAllGroupsPages(page, segment.crmSegmento))
+          await clickPrevious(page)
         }
       } catch (err) {
         errors.push(`${segment.portalLabel}: ${err?.message || String(err)}`)
+        await clickPrevious(page).catch(() => null)
       }
     }
 
@@ -401,7 +587,13 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
       created,
       updated,
       deactivated: 0,
-      details: { raw_rows: rows.length, errors, segmentos: selectedSegments.map((segment) => segment.crmSegmento) },
+      details: {
+        raw_rows: rows.length,
+        errors,
+        segmentos: selectedSegments.map((segment) => segment.crmSegmento),
+        credit_ranges_enriched: true,
+        pagination_enabled: true,
+      },
     }
   } finally {
     if (context) await context.close().catch(() => null)

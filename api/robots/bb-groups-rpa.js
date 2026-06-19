@@ -147,7 +147,32 @@ async function login(page, env) {
 }
 
 async function openSimulator(page) {
+  async function isSimulatorReady() {
+    try {
+      const selectCount = await page.locator('select:visible').count()
+      const body = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
+      const text = normalizePortalText(body)
+      return selectCount >= 3 && (text.includes('SIMULADOR') || text.includes('GRUPO'))
+    } catch {
+      return false
+    }
+  }
+
+  async function goDirectToSimulator() {
+    const currentUrl = page.url()
+    const marker = '/acesso_restrito/'
+    const base = currentUrl.includes(marker)
+      ? currentUrl.split(marker)[0] + marker
+      : currentUrl.replace(/\/[^/]*$/, '/acesso_restrito/')
+
+    const directUrl = `${base}frmAnaliseCadastro.aspx?Simulador=S&timestamp=${Date.now()}`
+    await page.goto(directUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await page.waitForTimeout(2500)
+  }
+
   await dismissPostLoginMessages(page)
+
+  if (await isSimulatorReady()) return
 
   const candidates = [
     page.getByText('Simulador/Contratação').first(),
@@ -161,8 +186,9 @@ async function openSimulator(page) {
         page.waitForLoadState('domcontentloaded').catch(() => null),
         candidate.click({ timeout: 10000 }),
       ])
-      await page.waitForTimeout(1200)
-      return
+      await page.waitForTimeout(2500)
+      if (await isSimulatorReady()) return
+      break
     }
   }
 
@@ -186,17 +212,25 @@ async function openSimulator(page) {
     }
 
     return false
-  })
+  }).catch(() => false)
 
   if (clicked) {
     await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(1200)
-    return
+    await page.waitForTimeout(2500)
+    if (await isSimulatorReady()) return
   }
+
+  // Fallback principal: o portal já está logado, então acessamos diretamente a tela do simulador
+  // usando a mesma sessão presente na URL.
+  await goDirectToSimulator()
+  await dismissPostLoginMessages(page)
+
+  if (await isSimulatorReady()) return
 
   const url = page.url()
   const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
-  throw new Error(`Menu Simulador/Contratação não encontrado. URL atual: ${url}. Texto da tela: ${normalizePortalText(bodyText).slice(0, 500)}`)
+  const selectCount = await page.locator('select:visible').count().catch(() => 0)
+  throw new Error(`Tela do simulador não abriu. URL atual: ${url}. Selects visíveis: ${selectCount}. Texto da tela: ${normalizePortalText(bodyText).slice(0, 800)}`)
 }
 
 async function selectByTextAtIndex(page, selectIndex, label) {

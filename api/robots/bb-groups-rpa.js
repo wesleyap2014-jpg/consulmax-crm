@@ -86,15 +86,47 @@ async function createBrowser() {
   const playwright = await import('playwright-core')
   const remoteEndpoint = browserlessEndpoint()
   const isServerless = Boolean(process.env.VERCEL || process.env.AWS_REGION)
+  const preferBrowserless = String(process.env.BB_ROBOT_BROWSER || '').toLowerCase() === 'browserless'
+
+  // Caminho preferencial: Chromium local serverless via @sparticuz/chromium.
+  // Isso evita os erros de WebSocket do Browserless:
+  // - RSV1 must be clear
+  // - Cannot find command to respond
+  // - Target page/context/browser has been closed durante connect
+  if (isServerless && !preferBrowserless) {
+    try {
+      const chromiumMod = await import('@sparticuz/chromium')
+      const chromium = chromiumMod.default || chromiumMod
+
+      const executablePath = await chromium.executablePath()
+
+      const browser = await playwright.chromium.launch({
+        args: [
+          ...chromium.args,
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-features=IsolateOrigins,site-per-process',
+        ],
+        executablePath,
+        headless: chromium.headless !== undefined ? chromium.headless : true,
+      })
+
+      browser.__remote = false
+      browser.__serverlessLocal = true
+      return browser
+    } catch (err) {
+      if (!remoteEndpoint) {
+        throw new Error(`Falha ao iniciar Chromium local na Vercel com @sparticuz/chromium: ${err?.message || String(err)}`)
+      }
+
+      // Se houver Browserless configurado, cai para ele como fallback.
+      console.warn('Falha no Chromium local; tentando Browserless como fallback:', err?.message || err)
+    }
+  }
 
   if (remoteEndpoint) {
-    // Browserless tem dois modos:
-    // 1) CDP: wss://production-sfo.browserless.io?token=...
-    //    Usa chromium.connectOverCDP()
-    // 2) Playwright nativo: wss://production-sfo.browserless.io/chromium/playwright?token=...
-    //    Usa chromium.connect()
-    //
-    // Para esse robô, o modo Playwright nativo costuma ser mais estável no Browserless.
     const isNativePlaywright = remoteEndpoint.includes('/playwright')
     const browser = isNativePlaywright
       ? await playwright.chromium.connect(remoteEndpoint)
@@ -106,7 +138,7 @@ async function createBrowser() {
   }
 
   if (isServerless) {
-    throw new Error('Chromium local indisponível no runtime da Vercel: falta libnss3.so. Configure BROWSERLESS_TOKEN ou BROWSERLESS_WS_ENDPOINT nas variáveis da Vercel para executar o robô com navegador remoto.')
+    throw new Error('Chromium local indisponível no runtime da Vercel e Browserless não configurado. Configure @sparticuz/chromium ou BROWSERLESS_WS_ENDPOINT.')
   }
 
   return playwright.chromium.launch({ headless: true })
@@ -120,7 +152,6 @@ async function newRobotPage(browser) {
       return { context, page }
     }
 
-    // CDP remoto: reutiliza o contexto padrão para evitar fechamento do target no Browserless.
     const contexts = browser.contexts()
     const context = contexts[0]
 
@@ -130,12 +161,12 @@ async function newRobotPage(browser) {
 
     const page = await context.newPage()
     await page.setViewportSize({ width: 1366, height: 900 }).catch(() => null)
-
     return { context: null, page }
   }
 
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
-  return { context: null, page }
+  const context = await browser.newContext({ viewport: { width: 1366, height: 900 } })
+  const page = await context.newPage()
+  return { context, page }
 }
 
 async function dismissPostLoginMessages(page) {
@@ -1044,9 +1075,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'v9-native-playwright-compatible',
+        table_reading: 'v16-local-chromium-first',
         only_group_select_for_non_im: true,
-        arrow_detection: 'browserless-native-playwright-compatible',
+        arrow_detection: 'v16-local-chromium-first',
       },
     }
   } finally {

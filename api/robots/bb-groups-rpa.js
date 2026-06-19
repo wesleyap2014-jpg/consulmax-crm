@@ -9,6 +9,11 @@ const BB_SEGMENTS = [
   { portalLabel: 'IM - IMOVEIS GERAL', crmSegmento: 'imoveis', vendaLabels: ['93 - MAIS BBC IMOVEIS 240', '95 - MAIS BBC TODOS SEGMENTOS'] },
 ]
 
+const SELECT_INDEX = {
+  grupo: 2,
+  venda: 4,
+}
+
 function parseNumberBR(value) {
   const raw = String(value ?? '').trim()
   if (!raw) return 0
@@ -103,6 +108,7 @@ async function dismissPostLoginMessages(page) {
         break
       }
     }
+
     if (!clicked) break
   }
 }
@@ -166,78 +172,51 @@ async function openSimulator(page) {
   throw new Error(`Menu Simulador/Contratação não encontrado. URL atual: ${url}. Texto da tela: ${normalizePortalText(bodyText).slice(0, 500)}`)
 }
 
-async function selectOptionByText(page, label, fieldName) {
+async function selectByTextAtIndex(page, selectIndex, label) {
+  const select = page.locator('select:visible').nth(selectIndex)
+  const visibleCount = await page.locator('select:visible').count()
+  await select.waitFor({ state: 'visible', timeout: 20000 })
+
+  const options = await select.locator('option').evaluateAll((opts) =>
+    opts.map((option) => ({ value: option.value, text: option.textContent || '' }))
+  )
+
   const normalizedLabel = normalizePortalText(label)
   const code = normalizedLabel.split('-')[0]?.trim()
 
-  const result = await page.evaluate(({ normalizedLabel, code, fieldName }) => {
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/\s+/g, ' ')
-      .trim()
+  const found = options.find((option) => {
+    const text = normalizePortalText(option.text)
+    const value = normalizePortalText(option.value)
+    return (
+      text === normalizedLabel ||
+      text.includes(normalizedLabel) ||
+      normalizedLabel.includes(text) ||
+      (code && (text === code || text.startsWith(`${code} `) || text.startsWith(`${code}-`) || text.startsWith(`${code} -`) || value === code || value.includes(code)))
+    )
+  })
 
-    const selects = Array.from(document.querySelectorAll('select'))
+  if (!found) {
+    const available = options.map((option) => option.text).join(' | ')
+    throw new Error(`Opção não encontrada no select visível ${selectIndex}/${visibleCount}: ${label}. Código: ${code || '—'}. Opções: ${available}`)
+  }
 
-    for (const select of selects) {
-      const options = Array.from(select.options || [])
-      const found = options.find((option) => {
-        const text = normalize(option.textContent || '')
-        const value = normalize(option.value || '')
-        return (
-          text === normalizedLabel ||
-          text.includes(normalizedLabel) ||
-          normalizedLabel.includes(text) ||
-          (
-            code &&
-            (
-              text === code ||
-              text.startsWith(`${code} `) ||
-              text.startsWith(`${code}-`) ||
-              text.startsWith(`${code} -`) ||
-              value === code ||
-              value.includes(code)
-            )
-          )
-        )
-      })
-
-      if (found) {
-        select.value = found.value
-        select.dispatchEvent(new Event('change', { bubbles: true }))
-        return { ok: true, selectedText: found.textContent || '', selectedValue: found.value || '' }
-      }
-    }
-
-    const available = selects.map((select, index) => {
-      const opts = Array.from(select.options || []).map((option) => option.textContent || '').join(' | ')
-      return `${index}: ${opts}`
-    }).join(' || ')
-
-    return { ok: false, message: `Opção ${fieldName || ''} não encontrada: ${normalizedLabel}. Disponíveis: ${available}` }
-  }, { normalizedLabel, code, fieldName })
-
-  if (!result?.ok) throw new Error(result?.message || `Opção não encontrada: ${label}`)
-
-  await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(1200)
-  return result
+  await select.selectOption(String(found.value))
+  await page.waitForTimeout(2500)
 }
 
 async function selectGroup(page, label) {
-  return await selectOptionByText(page, label, 'Grupo')
+  await selectByTextAtIndex(page, SELECT_INDEX.grupo, label)
 }
 
 async function selectVenda(page, label) {
-  return await selectOptionByText(page, label, 'Venda')
+  await selectByTextAtIndex(page, SELECT_INDEX.venda, label)
 }
 
 async function clickNext(page) {
   const next = page.getByText('Próximo', { exact: true }).or(page.getByText('Proximo', { exact: true })).first()
   if (await next.isVisible().catch(() => false)) {
     await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), next.click()])
-    await page.waitForTimeout(1200)
+    await page.waitForTimeout(2000)
     return
   }
 
@@ -254,7 +233,7 @@ async function clickNext(page) {
 
   if (clicked) {
     await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(1200)
+    await page.waitForTimeout(2000)
     return
   }
 
@@ -265,7 +244,7 @@ async function clickPrevious(page) {
   const previous = page.getByText('Anterior', { exact: true }).first()
   if (await previous.isVisible().catch(() => false)) {
     await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), previous.click()])
-    await page.waitForTimeout(1200)
+    await page.waitForTimeout(1800)
     return true
   }
 
@@ -282,16 +261,47 @@ async function clickPrevious(page) {
 
   if (clicked) {
     await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(1200)
+    await page.waitForTimeout(1800)
     return true
   }
 
   return false
 }
 
+async function countGroupRows(page) {
+  return await page.evaluate(() => {
+    const tables = Array.from(document.querySelectorAll('table'))
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const table = tables
+      .map((t) => ({ table: t, text: normalize(t.innerText || t.textContent || '') }))
+      .find((item) => item.text.includes('GRUPO') && item.text.includes('PRAZO') && item.text.includes('VL') && item.text.includes('PARC'))?.table
+    if (!table) return 0
+    return Array.from(table.querySelectorAll('tr'))
+      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
+      .filter((cells) => cells.length >= 12 && /^\d+/.test(cells[0] || ''))
+      .length
+  }).catch(() => 0)
+}
+
+async function waitForGroupsTable(page) {
+  await page.getByText('Grupos Disponíveis').waitFor({ timeout: 30000 }).catch(() => null)
+  for (let i = 0; i < 20; i++) {
+    const count = await countGroupRows(page)
+    if (count > 0) return true
+    await page.waitForTimeout(500)
+  }
+  return false
+}
+
 async function tableSignature(page) {
-  return await page.locator('table tr').evaluateAll((trs) => {
-    const rows = trs
+  return await page.evaluate(() => {
+    const tables = Array.from(document.querySelectorAll('table'))
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const table = tables
+      .map((t) => ({ table: t, text: normalize(t.innerText || t.textContent || '') }))
+      .find((item) => item.text.includes('GRUPO') && item.text.includes('PRAZO') && item.text.includes('VL') && item.text.includes('PARC'))?.table
+    if (!table) return ''
+    const rows = Array.from(table.querySelectorAll('tr'))
       .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()).join('|'))
       .filter((text) => /^\d+/.test(text))
     return `${rows.length}::${rows[0] || ''}::${rows[rows.length - 1] || ''}`
@@ -305,95 +315,42 @@ async function clickRightTableArrow(page) {
       const style = window.getComputedStyle(el)
       return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
     }
-
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-
-    const bodyText = normalize(document.body.innerText || '')
-    if (!bodyText.includes('GRUPOS DISPONIVEIS')) return false
-
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
     const tables = Array.from(document.querySelectorAll('table')).filter(visible)
     const dataTable = tables
       .map((table) => ({ table, box: table.getBoundingClientRect(), text: normalize(table.innerText || table.textContent || '') }))
-      .filter((item) => item.text.includes('GRUPO') && item.text.includes('VL') && item.text.includes('PARC'))
+      .filter((item) => item.text.includes('GRUPO') && item.text.includes('PRAZO') && item.text.includes('VL') && item.text.includes('PARC'))
       .sort((a, b) => (b.box.width * b.box.height) - (a.box.width * a.box.height))[0]
-
     const tableBox = dataTable?.box
     if (!tableBox) return false
-
-    const candidates = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
       .filter(visible)
       .map((el) => {
         const box = el.getBoundingClientRect()
-        const text = normalize(
-          el.innerText ||
-          el.textContent ||
-          el.value ||
-          el.title ||
-          el.alt ||
-          el.getAttribute('src') ||
-          el.getAttribute('onclick') ||
-          el.outerHTML ||
-          ''
-        )
-        return {
-          el,
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-          cx: box.x + box.width / 2,
-          cy: box.y + box.height / 2,
-          text,
-        }
+        const txt = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || el.outerHTML || '')
+        return { el, box, cx: box.x + box.width / 2, cy: box.y + box.height / 2, text: txt }
       })
-      .filter((item) => {
-        const small = item.width <= 90 && item.height <= 90
-        const nearBottom = item.cy >= tableBox.bottom - 50 && item.cy <= tableBox.bottom + 50
-        const insideHoriz = item.cx >= tableBox.left - 20 && item.cx <= tableBox.right + 20
-        const likelyArrow =
-          item.text.includes('PROX') ||
-          item.text.includes('NEXT') ||
-          item.text.includes('RIGHT') ||
-          item.text.includes('DIREITA') ||
-          item.text.includes('AVANC') ||
-          item.text.includes('ARROW') ||
-          item.text.includes('SETA') ||
-          item.text.includes('IMG') ||
-          item.text.includes('.GIF') ||
-          item.text.includes('.PNG') ||
-          item.text.includes('.JPG') ||
-          item.text.includes('.JPEG') ||
-          item.text.includes('TYPE=\"IMAGE\"')
-
-        return small && nearBottom && insideHoriz && likelyArrow
-      })
-
+    const candidates = elements.filter((item) => {
+      const small = item.box.width <= 90 && item.box.height <= 90
+      const nearBottom = item.cy >= tableBox.bottom - 55 && item.cy <= tableBox.bottom + 55
+      const insideHoriz = item.cx >= tableBox.left - 25 && item.cx <= tableBox.right + 25
+      const rightHalf = item.cx > tableBox.left + tableBox.width * 0.55
+      const likelyArrow = item.text.includes('PROX') || item.text.includes('NEXT') || item.text.includes('RIGHT') || item.text.includes('DIREITA') || item.text.includes('AVANC') || item.text.includes('ARROW') || item.text.includes('SETA') || item.text.includes('IMG') || item.text.includes('.GIF') || item.text.includes('.PNG') || item.text.includes('.JPG') || item.text.includes('.JPEG') || item.text.includes('TYPE="IMAGE"')
+      return small && nearBottom && insideHoriz && rightHalf && likelyArrow
+    })
     if (!candidates.length) return false
-
-    const tableCenterX = tableBox.left + tableBox.width / 2
-    const rightCandidates = candidates
-      .filter((item) => item.cx > tableCenterX)
-      .sort((a, b) => b.cx - a.cx)
-
-    if (!rightCandidates.length) return false
-
-    const target = rightCandidates[0]
+    const target = candidates.sort((a, b) => b.cx - a.cx)[0]
     target.el.click()
     return true
   }).catch(() => false)
-
   if (!clicked) return false
-
   await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(1200)
+  await page.waitForTimeout(1500)
   return true
 }
 
 async function waitForTableChange(page, previousSignature) {
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 14; i++) {
     await page.waitForTimeout(500)
     const current = await tableSignature(page)
     if (current && current !== previousSignature) return true
@@ -402,17 +359,21 @@ async function waitForTableChange(page, previousSignature) {
 }
 
 async function readGroupsTable(page, segmento) {
-  await page.getByText('Grupos Disponíveis').waitFor({ timeout: 30000 }).catch(() => null)
-
-  const rows = await page.locator('table tr').evaluateAll((trs, seg) => {
-    return trs
+  await waitForGroupsTable(page)
+  const rows = await page.evaluate((seg) => {
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+    const tables = Array.from(document.querySelectorAll('table'))
+    const table = tables
+      .map((t) => ({ table: t, text: normalize(t.innerText || t.textContent || '') }))
+      .find((item) => item.text.includes('GRUPO') && item.text.includes('PRAZO') && item.text.includes('VL') && item.text.includes('PARC'))?.table
+    if (!table) return []
+    return Array.from(table.querySelectorAll('tr'))
       .map((tr) => {
         const cells = Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim())
         return { cells, segmento: seg }
       })
       .filter((row) => row.cells.length >= 12 && /^\d+/.test(row.cells[0] || ''))
   }, segmento)
-
   return rows.map((row) => {
     const c = row.cells
     return {
@@ -436,22 +397,17 @@ async function readGroupsTable(page, segmento) {
 async function readAllGroupsPages(page, segmento) {
   const allRows = []
   const seen = new Set()
-
   for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
     const signature = await tableSignature(page)
     if (signature && seen.has(signature)) break
     if (signature) seen.add(signature)
-
     const pageRows = await readGroupsTable(page, segmento)
     allRows.push(...pageRows.map((row) => ({ ...row, pageIndex })))
-
     const clicked = await clickRightTableArrow(page)
     if (!clicked) break
-
     const changed = await waitForTableChange(page, signature)
     if (!changed) break
   }
-
   return allRows
 }
 
@@ -461,29 +417,18 @@ function mergeGroups(rows) {
     const key = `${row.segmento}:${row.grupo}`
     map.set(key, [...(map.get(key) || []), row])
   }
-
   return Array.from(map.entries()).map(([key, list]) => {
     const [segmento, grupo] = key.split(':')
     const credits = list.map((row) => row.credito).filter(Boolean)
     const prazos = list.map((row) => row.prazo).filter(Boolean)
     const minCont = list.map((row) => row.minContemplacaoPct).filter(Boolean)
     const first = list[0] || {}
-
     const rangeMap = new Map()
     for (const row of list) {
       if (!row.credito) continue
-      const rangeKey = [
-        Number(row.credito || 0).toFixed(2),
-        Number(row.parcela || 0).toFixed(2),
-        Number(row.prazo || 0),
-        String(row.bem || ''),
-      ].join(':')
-
-      if (!rangeMap.has(rangeKey)) {
-        rangeMap.set(rangeKey, row)
-      }
+      const rangeKey = [Number(row.credito || 0).toFixed(2), Number(row.parcela || 0).toFixed(2), Number(row.prazo || 0), String(row.bem || '')].join(':')
+      if (!rangeMap.has(rangeKey)) rangeMap.set(rangeKey, row)
     }
-
     const creditRanges = Array.from(rangeMap.values())
       .sort((a, b) => Number(a.credito || 0) - Number(b.credito || 0))
       .map((row, index) => ({
@@ -501,24 +446,14 @@ function mergeGroups(rows) {
         assembleia: String(row.assembleia || ''),
         vencimento: String(row.vencimento || ''),
       }))
-
     const prazoRuleMap = new Map()
     for (const row of list) {
       const ruleKey = `${Number(row.prazo || 0)}:${Number(row.taxaAdmPct || 0)}:${Number(row.fundoReservaPct || 0)}`
       if (!prazoRuleMap.has(ruleKey)) {
-        prazoRuleMap.set(ruleKey, {
-          id: `prazo_${grupo}_${prazoRuleMap.size}`,
-          prazo: Number(row.prazo || 0),
-          taxaAdmPct: Number(row.taxaAdmPct || 0),
-          fundoReservaPct: Number(row.fundoReservaPct || 0),
-        })
+        prazoRuleMap.set(ruleKey, { id: `prazo_${grupo}_${prazoRuleMap.size}`, prazo: Number(row.prazo || 0), taxaAdmPct: Number(row.taxaAdmPct || 0), fundoReservaPct: Number(row.fundoReservaPct || 0) })
       }
     }
-
-    const prazoRules = Array.from(prazoRuleMap.values())
-      .filter((rule) => rule.prazo > 0)
-      .sort((a, b) => a.prazo - b.prazo)
-
+    const prazoRules = Array.from(prazoRuleMap.values()).filter((rule) => rule.prazo > 0).sort((a, b) => a.prazo - b.prazo)
     return {
       grupo,
       segmento,
@@ -558,7 +493,6 @@ function mergeGroups(rows) {
 async function upsertGroups(supabase, rows) {
   let created = 0
   let updated = 0
-
   for (const payload of rows) {
     const { data: existing, error: findErr } = await supabase
       .from('sim_bb_groups')
@@ -566,14 +500,9 @@ async function upsertGroups(supabase, rows) {
       .eq('grupo', payload.grupo)
       .eq('segmento', payload.segmento)
       .maybeSingle()
-
     if (findErr) throw findErr
-
     const existingConfig = existing?.config && typeof existing.config === 'object' ? existing.config : {}
-    if (existingConfig?.assemblyResult && payload.config) {
-      payload.config.assemblyResult = existingConfig.assemblyResult
-    }
-
+    if (existingConfig?.assemblyResult && payload.config) payload.config.assemblyResult = existingConfig.assemblyResult
     if (existing?.id) {
       const { error } = await supabase.from('sim_bb_groups').update(payload).eq('id', existing.id)
       if (error) throw error
@@ -584,7 +513,6 @@ async function upsertGroups(supabase, rows) {
       created += 1
     }
   }
-
   return { created, updated }
 }
 
@@ -594,21 +522,21 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
   const { context, page } = await newRobotPage(browser)
   const rows = []
   const errors = []
-
+  const readDetails = []
   try {
     await login(page, env)
-
     for (const segment of selectedSegments) {
       try {
         await openSimulator(page)
         await selectGroup(page, segment.portalLabel)
-
         if (segment.vendaLabels?.length) {
           for (const vendaLabel of segment.vendaLabels) {
             try {
               await selectVenda(page, vendaLabel)
               await clickNext(page)
-              rows.push(...await readAllGroupsPages(page, segment.crmSegmento))
+              const segmentRows = await readAllGroupsPages(page, segment.crmSegmento)
+              rows.push(...segmentRows)
+              readDetails.push({ segmento: segment.crmSegmento, venda: vendaLabel, linhas: segmentRows.length, grupos: new Set(segmentRows.map((row) => row.grupo)).size, paginas: new Set(segmentRows.map((row) => row.pageIndex)).size })
               await clickPrevious(page)
             } catch (err) {
               errors.push(`${segment.portalLabel} / ${vendaLabel}: ${err?.message || String(err)}`)
@@ -617,7 +545,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
           }
         } else {
           await clickNext(page)
-          rows.push(...await readAllGroupsPages(page, segment.crmSegmento))
+          const segmentRows = await readAllGroupsPages(page, segment.crmSegmento)
+          rows.push(...segmentRows)
+          readDetails.push({ segmento: segment.crmSegmento, venda: null, linhas: segmentRows.length, grupos: new Set(segmentRows.map((row) => row.grupo)).size, paginas: new Set(segmentRows.map((row) => row.pageIndex)).size })
           await clickPrevious(page)
         }
       } catch (err) {
@@ -625,12 +555,10 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         await clickPrevious(page).catch(() => null)
       }
     }
-
     const merged = mergeGroups(rows)
     const { created, updated } = await upsertGroups(supabase, merged)
     const segmentNames = selectedSegments.map((segment) => segment.crmSegmento).join(', ')
     const zeroWarning = merged.length === 0 && errors.length ? ` Erros: ${errors.join(' | ')}` : ''
-
     return {
       ok: true,
       status: 'synced',
@@ -640,15 +568,7 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
       created,
       updated,
       deactivated: 0,
-      details: {
-        raw_rows: rows.length,
-        errors,
-        segmentos: selectedSegments.map((segment) => segment.crmSegmento),
-        credit_ranges_enriched: true,
-        pagination_enabled: true,
-        only_group_select_for_non_im: true,
-        arrow_detection: 'right-table-arrow',
-      },
+      details: { raw_rows: rows.length, readDetails, errors, segmentos: selectedSegments.map((segment) => segment.crmSegmento), credit_ranges_enriched: true, table_reading: 'anchored-by-header', select_mode: 'fixed-index-group-only', arrow_detection: 'right-table-arrow' },
     }
   } finally {
     if (context) await context.close().catch(() => null)

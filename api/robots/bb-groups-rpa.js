@@ -88,8 +88,20 @@ async function createBrowser() {
   const isServerless = Boolean(process.env.VERCEL || process.env.AWS_REGION)
 
   if (remoteEndpoint) {
-    const browser = await playwright.chromium.connectOverCDP(remoteEndpoint)
+    // Browserless tem dois modos:
+    // 1) CDP: wss://production-sfo.browserless.io?token=...
+    //    Usa chromium.connectOverCDP()
+    // 2) Playwright nativo: wss://production-sfo.browserless.io/chromium/playwright?token=...
+    //    Usa chromium.connect()
+    //
+    // Para esse robô, o modo Playwright nativo costuma ser mais estável no Browserless.
+    const isNativePlaywright = remoteEndpoint.includes('/playwright')
+    const browser = isNativePlaywright
+      ? await playwright.chromium.connect(remoteEndpoint)
+      : await playwright.chromium.connectOverCDP(remoteEndpoint)
+
     browser.__remote = true
+    browser.__nativePlaywright = isNativePlaywright
     return browser
   }
 
@@ -102,9 +114,13 @@ async function createBrowser() {
 
 async function newRobotPage(browser) {
   if (browser.__remote) {
-    // Browserless via CDP normalmente já entrega um contexto padrão.
-    // Criar browser.newContext() em sessão remota pode fechar o target no Browserless.
-    // Por isso reutilizamos o contexto padrão e abrimos apenas uma nova página nele.
+    if (browser.__nativePlaywright) {
+      const context = await browser.newContext({ viewport: { width: 1366, height: 900 } })
+      const page = await context.newPage()
+      return { context, page }
+    }
+
+    // CDP remoto: reutiliza o contexto padrão para evitar fechamento do target no Browserless.
     const contexts = browser.contexts()
     const context = contexts[0]
 
@@ -115,7 +131,6 @@ async function newRobotPage(browser) {
     const page = await context.newPage()
     await page.setViewportSize({ width: 1366, height: 900 }).catch(() => null)
 
-    // Não fechamos o contexto padrão manualmente; browser.close() no finally encerra a sessão.
     return { context: null, page }
   }
 
@@ -1029,9 +1044,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'diagnostic-table-detection',
+        table_reading: 'v9-native-playwright-compatible',
         only_group_select_for_non_im: true,
-        arrow_detection: 'right-table-arrow',
+        arrow_detection: 'browserless-native-playwright-compatible',
       },
     }
   } finally {

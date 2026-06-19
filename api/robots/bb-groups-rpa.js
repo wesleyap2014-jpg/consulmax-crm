@@ -590,11 +590,11 @@ async function tableSignature(page) {
 }
 
 async function clickRightTableArrow(page) {
-  const box = await page.evaluate(() => {
+  const point = await page.evaluate(() => {
     const visible = (el) => {
-      const b = el.getBoundingClientRect()
+      const box = el.getBoundingClientRect()
       const style = window.getComputedStyle(el)
-      return b.width > 0 && b.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+      return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
     }
 
     const normalize = (value) => String(value || '')
@@ -604,75 +604,45 @@ async function clickRightTableArrow(page) {
 
     const tables = Array.from(document.querySelectorAll('table')).filter(visible)
     const dataTable = tables.map((table) => {
-      const b = table.getBoundingClientRect()
+      const box = table.getBoundingClientRect()
       const text = normalize(table.innerText || table.textContent || '')
       const rows = Array.from(table.querySelectorAll('tr'))
         .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
         .filter((cells) => cells.length >= 8 && /^\d+/.test(cells[0] || ''))
-      return { b, text, rows: rows.length }
+
+      return { table, box, text, rows: rows.length }
     }).filter((item) => (item.text.includes('GRUPO') && item.text.includes('PRAZO')) || item.rows > 0)
       .sort((a, b) => b.rows - a.rows)[0]
 
-    if (!dataTable) return null
+    const box = dataTable?.box
+    if (!box) return null
+
+    // Clique humano no canto inferior direito da tabela, onde fica a seta de próxima página.
+    // Nas páginas intermediárias, esse ponto aciona a seta para a direita.
+    // Na última página, normalmente só existe seta para a esquerda; se clicar nela e voltar,
+    // a assinatura da tabela já estará no histórico e o robô para sem duplicar.
     return {
-      left: dataTable.b.left,
-      right: dataTable.b.right,
-      top: dataTable.b.top,
-      bottom: dataTable.b.bottom,
-      width: dataTable.b.width,
-      height: dataTable.b.height,
+      x: Math.max(1, Math.round(box.right - 18)),
+      y: Math.max(1, Math.round(box.bottom - 18)),
+      tableRight: Math.round(box.right),
+      tableBottom: Math.round(box.bottom),
     }
   }).catch(() => null)
 
-  if (!box) return false
+  if (!point) return false
 
-  // Primeiro tenta elemento do canto inferior direito.
-  const clickedElement = await page.evaluate((tableBox) => {
-    const visible = (el) => {
-      const b = el.getBoundingClientRect()
-      const style = window.getComputedStyle(el)
-      return b.width > 0 && b.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
-    }
-
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-
-    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
-      .filter(visible)
-      .map((el) => {
-        const b = el.getBoundingClientRect()
-        const txt = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || el.outerHTML || '')
-        return { el, b, cx: b.x + b.width / 2, cy: b.y + b.height / 2, text: txt }
-      })
-
-    const candidates = elements.filter((item) => {
-      const small = item.b.width <= 100 && item.b.height <= 100
-      const nearBottom = item.cy >= tableBox.bottom - 70 && item.cy <= tableBox.bottom + 70
-      const insideHoriz = item.cx >= tableBox.left - 35 && item.cx <= tableBox.right + 35
-      const rightHalf = item.cx > tableBox.left + tableBox.width * 0.55
-      return small && nearBottom && insideHoriz && rightHalf
-    })
-
-    if (!candidates.length) return false
-    const target = candidates.sort((a, b) => b.cx - a.cx)[0]
-    target.el.click()
-    return true
-  }, box).catch(() => false)
-
-  if (!clickedElement) {
-    // Fallback real de mouse, mais confiável para imagem/link antigo.
-    await page.mouse.click(box.right - 18, box.bottom - 18).catch(() => null)
-  }
+  await page.mouse.move(point.x, point.y)
+  await page.mouse.down()
+  await page.waitForTimeout(80)
+  await page.mouse.up()
 
   await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(1600)
+  await page.waitForTimeout(1800)
   return true
 }
 
 async function waitForTableChange(page, previousSignature) {
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 24; i++) {
     await page.waitForTimeout(500)
     const current = await tableSignature(page)
     if (current && current !== previousSignature) return true
@@ -1016,9 +986,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'diagnostic-table-detection',
+        table_reading: 'diagnostic-table-detection-v10',
         only_group_select_for_non_im: true,
-        arrow_detection: 'right-table-arrow',
+        arrow_detection: 'playwright-mouse-bottom-right',
       },
     }
   } finally {

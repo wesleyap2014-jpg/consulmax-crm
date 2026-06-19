@@ -78,6 +78,28 @@ function normalizePortalText(value) {
     .trim()
 }
 
+async function safeDelay(page, ms) {
+  if (page.isClosed()) throw new Error('Página do robô foi fechada antes de concluir a espera.')
+  await page.waitForTimeout(ms)
+}
+
+async function waitForTextOrUrl(page, expectedText, expectedUrlPart, timeout = 30000) {
+  const started = Date.now()
+  while (Date.now() - started < timeout) {
+    if (page.isClosed()) throw new Error(`Página do robô foi fechada aguardando ${expectedText || expectedUrlPart || 'tela'}.`)
+
+    const url = page.url()
+    if (expectedUrlPart && url.includes(expectedUrlPart)) return true
+
+    const body = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')
+    if (expectedText && normalizePortalText(body).includes(normalizePortalText(expectedText))) return true
+
+    await page.waitForTimeout(500)
+  }
+
+  return false
+}
+
 function segmentsToRun(segmento) {
   const requested = normalizeKey(segmento || 'auto_fipe')
   const found = BB_SEGMENTS.filter((segment) => {
@@ -293,8 +315,7 @@ async function selectGroup(page, segmentOrLabel) {
   await page.locator(selector).waitFor({ state: 'visible', timeout: 20000 })
 
   await page.selectOption(selector, String(value))
-  await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(3500)
+  await safeDelay(page, 3500)
 
   const selected = await page.locator(selector).evaluate((el) => ({
     value: el.value,
@@ -324,30 +345,26 @@ async function selectVenda(page, vendaOrLabel) {
   }
 
   const isDisabled = await page.locator(selector).evaluate((el) => Boolean(el.disabled)).catch(() => false)
-
-  if (isDisabled) {
-    await page.locator(selector).evaluate((el) => { el.disabled = false }).catch(() => null)
-  }
+  if (isDisabled) await page.locator(selector).evaluate((el) => { el.disabled = false }).catch(() => null)
 
   await page.selectOption(selector, String(found.value))
-  await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(3000)
+  await safeDelay(page, 3200)
 }
 
 async function clickNext(page) {
   const selector = BB_SELECTORS.proximo
 
   if (await page.locator(selector).isVisible().catch(() => false)) {
-    await Promise.all([
-      page.waitForLoadState('domcontentloaded').catch(() => null),
-      page.locator(selector).click({ timeout: 15000 }),
-    ])
-    await page.waitForTimeout(3000)
+    await page.locator(selector).click({ timeout: 15000, noWaitAfter: true })
+    const ok = await waitForTextOrUrl(page, 'Grupos Disponíveis', 'frmSelecaoGrupo', 45000)
+    if (!ok) {
+      const debug = await screenDebug(page).catch(() => null)
+      throw new Error(`Clique em Próximo executado, mas a tela de grupos não abriu. ${debug ? `URL: ${debug.url}. Tela: ${debug.text}.` : ''}`)
+    }
+    await safeDelay(page, 1800)
     return
   }
 
-  // Fallback por postback, mas sem depender de retorno do evaluate,
-  // porque o ASP.NET pode destruir o contexto imediatamente ao navegar.
   const fallbackStarted = await page.evaluate(() => {
     setTimeout(() => {
       try {
@@ -355,10 +372,7 @@ async function clickNext(page) {
           WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions('ctl00$Conteudo$lnkProximo', '', true, '', '', false, true))
           return
         }
-
-        if (typeof __doPostBack === 'function') {
-          __doPostBack('ctl00$Conteudo$lnkProximo', '')
-        }
+        if (typeof __doPostBack === 'function') __doPostBack('ctl00$Conteudo$lnkProximo', '')
       } catch {}
     }, 0)
 
@@ -366,8 +380,12 @@ async function clickNext(page) {
   }).catch(() => false)
 
   if (fallbackStarted) {
-    await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(3500)
+    const ok = await waitForTextOrUrl(page, 'Grupos Disponíveis', 'frmSelecaoGrupo', 45000)
+    if (!ok) {
+      const debug = await screenDebug(page).catch(() => null)
+      throw new Error(`Postback do Próximo executado, mas a tela de grupos não abriu. ${debug ? `URL: ${debug.url}. Tela: ${debug.text}.` : ''}`)
+    }
+    await safeDelay(page, 1800)
     return
   }
 
@@ -378,8 +396,9 @@ async function clickNext(page) {
 async function clickPrevious(page) {
   const previous = page.getByText('Anterior', { exact: true }).first()
   if (await previous.isVisible().catch(() => false)) {
-    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), previous.click()])
-    await page.waitForTimeout(1800)
+    await previous.click({ timeout: 15000, noWaitAfter: true })
+    await waitForTextOrUrl(page, 'Simulador', 'frmAnaliseCadastro', 30000).catch(() => null)
+    await safeDelay(page, 1600).catch(() => null)
     return true
   }
 
@@ -395,16 +414,16 @@ async function clickPrevious(page) {
     const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('ANTERIOR'))
 
     if (target) {
-      target.click()
+      setTimeout(() => target.click(), 0)
       return true
     }
 
     return false
-  })
+  }).catch(() => false)
 
   if (clicked) {
-    await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(1800)
+    await waitForTextOrUrl(page, 'Simulador', 'frmAnaliseCadastro', 30000).catch(() => null)
+    await safeDelay(page, 1600).catch(() => null)
     return true
   }
 
@@ -649,12 +668,8 @@ async function clickRightTableArrow(page) {
 
   if (!hasNext) return false
 
-  await Promise.all([
-    page.waitForLoadState('domcontentloaded').catch(() => null),
-    page.locator(selector).first().click({ timeout: 15000 }),
-  ])
-
-  await page.waitForTimeout(2600)
+  await page.locator(selector).first().click({ timeout: 15000, noWaitAfter: true })
+  await safeDelay(page, 1800)
   return true
 }
 
@@ -1003,9 +1018,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'diagnostic-table-detection-v12',
+        table_reading: 'diagnostic-table-detection-v13',
         only_group_select_for_non_im: true,
-        arrow_detection: 'exact-selectors-no-extra-change-v12',
+        arrow_detection: 'exact-selectors-no-wait-after-v13',
       },
     }
   } finally {

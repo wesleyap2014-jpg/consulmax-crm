@@ -20,5 +20,5 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },
-  "packageManager": "npm@10"
+  "packageManager": "npm@10.9.2"
 }

@@ -282,26 +282,37 @@ async function tableSignature(page) {
   }).catch(() => '')
 }
 
-async function clickTableArrow(page) {
+async function clickRightTableArrow(page) {
   const clicked = await page.evaluate(() => {
-    const isVisible = (el) => {
+    const visible = (el) => {
       const box = el.getBoundingClientRect()
       const style = window.getComputedStyle(el)
-      return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+      return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
     }
 
-    const pageText = String(document.body.innerText || '')
+    const normalize = (value) => String(value || '')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase()
 
-    if (!pageText.includes('GRUPOS DISPONIVEIS')) return false
+    const bodyText = normalize(document.body.innerText || '')
+    if (!bodyText.includes('GRUPOS DISPONIVEIS')) return false
 
-    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
-      .filter(isVisible)
+    const tables = Array.from(document.querySelectorAll('table')).filter(visible)
+    const dataTable = tables
+      .map((table) => ({ table, box: table.getBoundingClientRect(), text: normalize(table.innerText || table.textContent || '') }))
+      .filter((item) => item.text.includes('GRUPO') && item.text.includes('VL') && item.text.includes('PARC'))
+      .sort((a, b) => (b.box.width * b.box.height) - (a.box.width * a.box.height))[0]
+
+    const tableBox = dataTable?.box
+    if (!tableBox) return false
+
+    const all = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
+      .filter(visible)
       .map((el) => {
         const box = el.getBoundingClientRect()
-        const text = String(
+        const html = normalize(el.outerHTML || '')
+        const text = normalize(
           el.innerText ||
           el.textContent ||
           el.value ||
@@ -310,51 +321,73 @@ async function clickTableArrow(page) {
           el.getAttribute('src') ||
           el.getAttribute('onclick') ||
           ''
-        ).toUpperCase()
-
+        )
         return {
           el,
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-          right: box.right,
-          bottom: box.bottom,
+          box,
+          html,
           text,
+          cx: box.x + box.width / 2,
+          cy: box.y + box.height / 2,
         }
       })
 
-    const viewportW = window.innerWidth || document.documentElement.clientWidth || 0
-    const viewportH = window.innerHeight || document.documentElement.clientHeight || 0
+    const arrowCandidates = all.filter((item) => {
+      const nearTableBottom =
+        item.cy >= tableBox.bottom - 45 &&
+        item.cy <= tableBox.bottom + 45
 
-    const candidates = elements.filter((item) => {
-      const smallIcon = item.width <= 80 && item.height <= 80
-      const nearRight = item.right > viewportW * 0.45
-      const lowerHalf = item.y > viewportH * 0.25
-      const maybeArrowByText =
+      const insideOrNearTableHoriz =
+        item.cx >= tableBox.left - 15 &&
+        item.cx <= tableBox.right + 15
+
+      const small =
+        item.box.width <= 90 &&
+        item.box.height <= 90
+
+      const textualNext =
         item.text.includes('PROX') ||
         item.text.includes('NEXT') ||
         item.text.includes('RIGHT') ||
         item.text.includes('DIREITA') ||
-        item.text.includes('AVAN') ||
-        item.text.includes('SETA') ||
-        item.text.includes('ARROW') ||
-        item.text.includes('IMG') ||
-        item.text.includes('.GIF') ||
-        item.text.includes('.PNG') ||
-        item.text.includes('.JPG') ||
-        item.text.includes('.JPEG')
-      return smallIcon && nearRight && lowerHalf && maybeArrowByText
+        item.text.includes('AVANC') ||
+        item.html.includes('PROX') ||
+        item.html.includes('NEXT') ||
+        item.html.includes('RIGHT') ||
+        item.html.includes('DIREITA') ||
+        item.html.includes('AVANC')
+
+      const isImageLike =
+        item.html.includes('<IMG') ||
+        item.html.includes('TYPE=\"IMAGE\"') ||
+        item.html.includes('.GIF') ||
+        item.html.includes('.PNG') ||
+        item.html.includes('.JPG') ||
+        item.html.includes('.JPEG')
+
+      return nearTableBottom && insideOrNearTableHoriz && small && (textualNext || isImageLike)
     })
 
-    const ordered = candidates.sort((a, b) => {
-      if (Math.abs(a.y - b.y) > 10) return b.y - a.y
-      return b.x - a.x
-    })
+    if (!arrowCandidates.length) return false
 
-    const target = ordered[0]?.el
-    if (!target) return false
-    target.click()
+    const tableCenterX = tableBox.left + tableBox.width / 2
+    const rightSideCandidates = arrowCandidates
+      .filter((item) => item.cx > tableCenterX)
+      .sort((a, b) => b.cx - a.cx)
+
+    if (!rightSideCandidates.length) return false
+
+    const target = rightSideCandidates[0]
+
+    // Se existir somente uma seta e ela estiver mais perto do centro do que da borda direita,
+    // provavelmente é a seta de voltar/esquerda da última página. Nesse caso, não clica.
+    if (rightSideCandidates.length === 1) {
+      const distanceToRight = Math.abs(tableBox.right - target.cx)
+      const distanceToCenter = Math.abs(target.cx - tableCenterX)
+      if (distanceToCenter < distanceToRight) return false
+    }
+
+    target.el.click()
     return true
   }).catch(() => false)
 
@@ -418,7 +451,7 @@ async function readAllGroupsPages(page, segmento) {
     const pageRows = await readGroupsTable(page, segmento)
     allRows.push(...pageRows.map((row) => ({ ...row, pageIndex })))
 
-    const clicked = await clickTableArrow(page)
+    const clicked = await clickRightTableArrow(page)
     if (!clicked) break
 
     const changed = await waitForTableChange(page, signature)
@@ -619,7 +652,7 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
         pagination_enabled: true,
-        arrow_detection: 'visual-table-arrow',
+        arrow_detection: 'right-table-arrow',
       },
     }
   } finally {

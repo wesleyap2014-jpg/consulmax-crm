@@ -366,12 +366,18 @@ async function findGroupsTableInfo(page) {
       .replace(/\s+/g, ' ')
       .trim()
 
+    const allRows = Array.from(document.querySelectorAll('tr'))
+      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
+      .filter((cells) => cells.length >= 12 && /^\d+/.test(cells[0] || ''))
+
+    const uniqueRows = Array.from(new Set(allRows.map((cells) => cells.slice(0, 12).join('|'))))
+
     const tables = Array.from(document.querySelectorAll('table'))
     const candidates = tables.map((table, index) => {
       const text = normalize(table.innerText || table.textContent || '')
       const rows = Array.from(table.querySelectorAll('tr'))
       const rowCells = rows.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-      const dataRows = rowCells.filter((cells) => cells.length >= 8 && /^\d+/.test(cells[0] || ''))
+      const dataRows = rowCells.filter((cells) => cells.length >= 12 && /^\d+/.test(cells[0] || ''))
       const hasHeader =
         text.includes('GRUPO') &&
         text.includes('PRAZO') &&
@@ -403,18 +409,36 @@ async function findGroupsTableInfo(page) {
         return b.maxCells - a.maxCells
       })[0]
 
-    return candidate || null
+    return candidate
+      ? { ...candidate, rows: Math.max(candidate.rows, uniqueRows.length), allRows: uniqueRows.length }
+      : { index: -1, hasHeader: false, rows: uniqueRows.length, allRows: uniqueRows.length, maxCells: 0, text: '' }
   }).catch(() => null)
 }
 
 async function waitForGroupsTable(page, contextLabel = '') {
   await page.getByText('Grupos Disponíveis').waitFor({ timeout: 30000 }).catch(() => null)
 
-  for (let i = 0; i < 24; i++) {
+  let lastCount = -1
+  let stableCount = 0
+  let bestInfo = null
+
+  for (let i = 0; i < 30; i++) {
     const info = await findGroupsTableInfo(page)
-    if (info?.rows > 0) return info
+    const count = Number(info?.rows || 0)
+    if (info) bestInfo = info
+
+    if (count > 0 && count === lastCount) {
+      stableCount += 1
+      if (stableCount >= 3) return info
+    } else {
+      stableCount = 0
+      lastCount = count
+    }
+
     await page.waitForTimeout(500)
   }
+
+  if (lastCount > 0) return bestInfo
 
   const debug = await screenDebug(page)
   throw new Error(`Tabela de grupos vazia ou não encontrada${contextLabel ? ` em ${contextLabel}` : ''}. URL: ${debug.url}. Tela: ${debug.text}. Selects: ${JSON.stringify(debug.selects).slice(0, 800)}. Tabelas: ${JSON.stringify(debug.tables).slice(0, 1200)}`)
@@ -422,28 +446,13 @@ async function waitForGroupsTable(page, contextLabel = '') {
 
 async function tableSignature(page) {
   return await page.evaluate(() => {
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/\s+/g, ' ')
-      .trim()
+    const rows = Array.from(document.querySelectorAll('tr'))
+      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
+      .filter((cells) => cells.length >= 12 && /^\d+/.test(cells[0] || ''))
+      .map((cells) => cells.slice(0, 12).join('|'))
 
-    const tables = Array.from(document.querySelectorAll('table'))
-    const candidate = tables.map((table) => {
-      const text = normalize(table.innerText || table.textContent || '')
-      const rows = Array.from(table.querySelectorAll('tr'))
-      const rowTexts = rows.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()).join('|'))
-      const dataRows = rowTexts.filter((text) => /^\d+/.test(text))
-      const hasHeader = text.includes('GRUPO') && text.includes('PRAZO') && (text.includes('VL') || text.includes('VALORES') || text.includes('BEM'))
-
-      return { hasHeader, dataRows }
-    }).filter((item) => item.hasHeader || item.dataRows.length > 0)
-      .sort((a, b) => b.dataRows.length - a.dataRows.length)[0]
-
-    if (!candidate) return ''
-    const rows = candidate.dataRows
-    return `${rows.length}::${rows[0] || ''}::${rows[rows.length - 1] || ''}`
+    const uniqueRows = Array.from(new Set(rows))
+    return `${uniqueRows.length}::${uniqueRows[0] || ''}::${uniqueRows[uniqueRows.length - 1] || ''}`
   }).catch(() => '')
 }
 
@@ -466,7 +475,7 @@ async function clickRightTableArrow(page) {
       const text = normalize(table.innerText || table.textContent || '')
       const rows = Array.from(table.querySelectorAll('tr'))
         .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-        .filter((cells) => cells.length >= 8 && /^\d+/.test(cells[0] || ''))
+        .filter((cells) => cells.length >= 12 && /^\d+/.test(cells[0] || ''))
 
       return { table, box, text, rows: rows.length }
     }).filter((item) => (item.text.includes('GRUPO') && item.text.includes('PRAZO')) || item.rows > 0)
@@ -475,6 +484,7 @@ async function clickRightTableArrow(page) {
     const tableBox = dataTable?.box
     if (!tableBox) return false
 
+    // Primeiro tenta achar imagem/link de próxima página pelo lado direito da tabela.
     const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
       .filter(visible)
       .map((el) => {
@@ -523,11 +533,26 @@ async function clickRightTableArrow(page) {
       return small && nearBottom && insideHoriz && rightHalf && likelyArrow
     })
 
-    if (!candidates.length) return false
+    if (candidates.length) {
+      const target = candidates.sort((a, b) => b.cx - a.cx)[0]
+      target.el.click()
+      return true
+    }
 
-    const target = candidates.sort((a, b) => b.cx - a.cx)[0]
-    target.el.click()
-    return true
+    // Fallback bruto: clica no canto inferior direito da tabela.
+    // Este portal antigo usa uma seta sem texto confiável.
+    const x = tableBox.right - 18
+    const y = tableBox.bottom - 18
+    const target = document.elementFromPoint(x, y)
+    if (target) {
+      target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }))
+      target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }))
+      target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }))
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }))
+      return true
+    }
+
+    return false
   }).catch(() => false)
 
   if (!clicked) return false
@@ -551,32 +576,13 @@ async function readGroupsTable(page, segmento, contextLabel = '') {
   await waitForGroupsTable(page, contextLabel)
 
   const rows = await page.evaluate((seg) => {
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/\s+/g, ' ')
-      .trim()
+    const rowCells = Array.from(document.querySelectorAll('tr'))
+      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
+      .filter((cells) => cells.length >= 12 && /^\d+/.test(cells[0] || ''))
 
-    const tables = Array.from(document.querySelectorAll('table'))
-    const table = tables.map((t) => {
-      const text = normalize(t.innerText || t.textContent || '')
-      const rows = Array.from(t.querySelectorAll('tr'))
-      const rowCells = rows.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-      const dataRows = rowCells.filter((cells) => cells.length >= 8 && /^\d+/.test(cells[0] || ''))
-      const hasHeader = text.includes('GRUPO') && text.includes('PRAZO') && (text.includes('VL') || text.includes('VALORES') || text.includes('BEM'))
-      return { table: t, hasHeader, dataRows }
-    }).filter((item) => item.hasHeader || item.dataRows.length > 0)
-      .sort((a, b) => b.dataRows.length - a.dataRows.length)[0]?.table
+    const unique = Array.from(new Map(rowCells.map((cells) => [cells.slice(0, 12).join('|'), cells])).values())
 
-    if (!table) return []
-
-    return Array.from(table.querySelectorAll('tr'))
-      .map((tr) => {
-        const cells = Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim())
-        return { cells, segmento: seg }
-      })
-      .filter((row) => row.cells.length >= 8 && /^\d+/.test(row.cells[0] || ''))
+    return unique.map((cells) => ({ cells, segmento: seg }))
   }, segmento)
 
   const mapped = rows.map((row) => {

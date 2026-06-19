@@ -1,12 +1,12 @@
 // api/robots/bb-groups-rpa.js
 
 const BB_SEGMENTS = [
-  { portalLabel: 'AI - AUTO IPCA', crmSegmento: 'auto_ipca' },
-  { portalLabel: 'AU - AUTO DEMAIS', crmSegmento: 'auto_fipe' },
-  { portalLabel: 'EE - OUTROS BENS MOVEIS', crmSegmento: 'outros_bens' },
-  { portalLabel: 'TC - TRATOR E CAMINHÃO GERAL', crmSegmento: 'pesados' },
-  { portalLabel: 'MO - MOTO DEMAIS', crmSegmento: 'motocicleta' },
-  { portalLabel: 'IM - IMOVEIS GERAL', crmSegmento: 'imoveis', vendaLabels: ['93 - MAIS BBC IMOVEIS 240', '95 - MAIS BBC TODOS SEGMENTOS'] },
+  { portalValue: 'AI', portalLabel: 'AI - AUTO IPCA', crmSegmento: 'auto_ipca' },
+  { portalValue: 'AU', portalLabel: 'AU - AUTO DEMAIS', crmSegmento: 'auto_fipe' },
+  { portalValue: 'EE', portalLabel: 'EE - OUTROS BENS MOVEIS', crmSegmento: 'outros_bens' },
+  { portalValue: 'TC', portalLabel: 'TC - TRATOR E CAMINHÃO GERAL', crmSegmento: 'pesados' },
+  { portalValue: 'MO', portalLabel: 'MO - MOTO DEMAIS', crmSegmento: 'motocicleta' },
+  { portalValue: 'IM', portalLabel: 'IM - IMOVEIS GERAL', crmSegmento: 'imoveis', vendaValues: ['93', '95'], vendaLabels: ['93 - MAIS BBC IMOVEIS 240', '95 - MAIS BBC TODOS SEGMENTOS'] },
 ]
 
 const SELECT_INDEX = {
@@ -16,6 +16,13 @@ const SELECT_INDEX = {
   periodicidade: 3,
   venda: 4,
 }
+
+const BB_SELECTORS = {
+  grupo: '#ctl00_Conteudo_cbxTipoGrupo',
+  venda: '#ctl00_Conteudo_cbxTipoVenda',
+  proximo: '#ctl00_Conteudo_lnkProximo',
+}
+
 
 function parseNumberBR(value) {
   const raw = String(value ?? '').trim()
@@ -274,51 +281,101 @@ async function selectByTextAtIndex(page, selectIndex, label) {
 
   await select.selectOption(String(found.value))
   await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(2800)
+  await page.waitForTimeout(2500)
 }
 
-async function selectGroup(page, label) {
-  await selectByTextAtIndex(page, SELECT_INDEX.grupo, label)
+async function selectGroup(page, segmentOrLabel) {
+  const value = typeof segmentOrLabel === 'object'
+    ? segmentOrLabel.portalValue
+    : String(segmentOrLabel || '').split('-')[0]?.trim()
+
+  const selector = BB_SELECTORS.grupo
+  await page.locator(selector).waitFor({ state: 'visible', timeout: 20000 })
+
+  await page.selectOption(selector, String(value))
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel)
+    if (el) {
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  }, selector)
+
+  await page.waitForLoadState('domcontentloaded').catch(() => null)
+  await page.waitForTimeout(3200)
+
+  const selected = await page.$eval(selector, (el) => ({
+    value: el.value,
+    text: el.options?.[el.selectedIndex]?.textContent || '',
+  }))
+
+  if (String(selected.value || '').toUpperCase() !== String(value || '').toUpperCase()) {
+    throw new Error(`Grupo não selecionado corretamente. Esperado ${value}; selecionado ${selected.value} - ${selected.text}`)
+  }
 }
 
-async function selectVenda(page, label) {
-  await selectByTextAtIndex(page, SELECT_INDEX.venda, label)
+async function selectVenda(page, vendaOrLabel) {
+  const value = String(vendaOrLabel || '').split('-')[0]?.trim()
+  const selector = BB_SELECTORS.venda
+
+  await page.locator(selector).waitFor({ state: 'visible', timeout: 20000 })
+
+  const options = await page.locator(`${selector} option`).evaluateAll((opts) =>
+    opts.map((option) => ({ value: option.value, text: option.textContent || '' }))
+  )
+
+  const found = options.find((option) => String(option.value) === value || String(option.text).trim().startsWith(`${value} `) || String(option.text).trim().startsWith(`${value} -`))
+
+  if (!found) {
+    const available = options.map((option) => `${option.value}:${option.text}`).join(' | ')
+    throw new Error(`Venda ${value} não encontrada. Opções: ${available}`)
+  }
+
+  await page.evaluate(({ selector, value }) => {
+    const el = document.querySelector(selector)
+    if (!el) return
+    el.disabled = false
+    el.value = value
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }, { selector, value: found.value })
+
+  await page.waitForLoadState('domcontentloaded').catch(() => null)
+  await page.waitForTimeout(2500)
 }
 
 async function clickNext(page) {
-  const next = page.getByText('Próximo', { exact: true }).or(page.getByText('Proximo', { exact: true })).first()
-  if (await next.isVisible().catch(() => false)) {
-    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), next.click()])
+  const selector = BB_SELECTORS.proximo
+
+  if (await page.locator(selector).isVisible().catch(() => false)) {
+    await Promise.all([
+      page.waitForLoadState('domcontentloaded').catch(() => null),
+      page.locator(selector).click({ timeout: 15000 }),
+    ])
     await page.waitForTimeout(2500)
     return
   }
 
-  const clicked = await page.evaluate(() => {
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/\s+/g, ' ')
-      .trim()
+  const posted = await page.evaluate(() => {
+    if (typeof WebForm_DoPostBackWithOptions === 'function' && typeof WebForm_PostBackOptions === 'function') {
+      WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions('ctl00$Conteudo$lnkProximo', '', true, '', '', false, true))
+      return true
+    }
 
-    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
-    const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('PROXIMO'))
-
-    if (target) {
-      target.click()
+    if (typeof __doPostBack === 'function') {
+      __doPostBack('ctl00$Conteudo$lnkProximo', '')
       return true
     }
 
     return false
-  })
+  }).catch(() => false)
 
-  if (clicked) {
+  if (posted) {
     await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(2500)
+    await page.waitForTimeout(3000)
     return
   }
 
-  throw new Error('Botão Próximo não encontrado.')
+  const debug = await screenDebug(page).catch(() => null)
+  throw new Error(`Botão Próximo não encontrado. ${debug ? `URL: ${debug.url}. Tela: ${debug.text}.` : ''}`)
 }
 
 async function clickPrevious(page) {
@@ -590,59 +647,21 @@ async function tableSignature(page) {
 }
 
 async function clickRightTableArrow(page) {
-  const point = await page.evaluate(() => {
-    const visible = (el) => {
-      const box = el.getBoundingClientRect()
-      const style = window.getComputedStyle(el)
-      return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
-    }
+  const hasNext = await page.locator('input[alt="Próximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]').isVisible().catch(() => false)
 
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
+  if (!hasNext) return false
 
-    const tables = Array.from(document.querySelectorAll('table')).filter(visible)
-    const dataTable = tables.map((table) => {
-      const box = table.getBoundingClientRect()
-      const text = normalize(table.innerText || table.textContent || '')
-      const rows = Array.from(table.querySelectorAll('tr'))
-        .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-        .filter((cells) => cells.length >= 8 && /^\d+/.test(cells[0] || ''))
+  await Promise.all([
+    page.waitForLoadState('domcontentloaded').catch(() => null),
+    page.locator('input[alt="Próximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]').first().click({ timeout: 15000 }),
+  ])
 
-      return { table, box, text, rows: rows.length }
-    }).filter((item) => (item.text.includes('GRUPO') && item.text.includes('PRAZO')) || item.rows > 0)
-      .sort((a, b) => b.rows - a.rows)[0]
-
-    const box = dataTable?.box
-    if (!box) return null
-
-    // Clique humano no canto inferior direito da tabela, onde fica a seta de próxima página.
-    // Nas páginas intermediárias, esse ponto aciona a seta para a direita.
-    // Na última página, normalmente só existe seta para a esquerda; se clicar nela e voltar,
-    // a assinatura da tabela já estará no histórico e o robô para sem duplicar.
-    return {
-      x: Math.max(1, Math.round(box.right - 18)),
-      y: Math.max(1, Math.round(box.bottom - 18)),
-      tableRight: Math.round(box.right),
-      tableBottom: Math.round(box.bottom),
-    }
-  }).catch(() => null)
-
-  if (!point) return false
-
-  await page.mouse.move(point.x, point.y)
-  await page.mouse.down()
-  await page.waitForTimeout(80)
-  await page.mouse.up()
-
-  await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(1800)
+  await page.waitForTimeout(2200)
   return true
 }
 
 async function waitForTableChange(page, previousSignature) {
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 14; i++) {
     await page.waitForTimeout(500)
     const current = await tableSignature(page)
     if (current && current !== previousSignature) return true
@@ -921,7 +940,7 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
     for (const segment of selectedSegments) {
       try {
         await openSimulator(page)
-        await selectGroup(page, segment.portalLabel)
+        await selectGroup(page, segment)
 
         if (segment.vendaLabels?.length) {
           for (const vendaLabel of segment.vendaLabels) {
@@ -986,9 +1005,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'diagnostic-table-detection-v10',
+        table_reading: 'diagnostic-table-detection-v11',
         only_group_select_for_non_im: true,
-        arrow_detection: 'playwright-mouse-bottom-right',
+        arrow_detection: 'exact-aspnet-next-postback',
       },
     }
   } finally {

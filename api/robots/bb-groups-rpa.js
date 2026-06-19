@@ -1,12 +1,12 @@
 // api/robots/bb-groups-rpa.js
 
 const BB_SEGMENTS = [
-  { portalValue: 'AI', portalLabel: 'AI - AUTO IPCA', crmSegmento: 'auto_ipca' },
-  { portalValue: 'AU', portalLabel: 'AU - AUTO DEMAIS', crmSegmento: 'auto_fipe' },
-  { portalValue: 'EE', portalLabel: 'EE - OUTROS BENS MOVEIS', crmSegmento: 'outros_bens' },
-  { portalValue: 'TC', portalLabel: 'TC - TRATOR E CAMINHÃO GERAL', crmSegmento: 'pesados' },
-  { portalValue: 'MO', portalLabel: 'MO - MOTO DEMAIS', crmSegmento: 'motocicleta' },
-  { portalValue: 'IM', portalLabel: 'IM - IMOVEIS GERAL', crmSegmento: 'imoveis', vendaValues: ['93', '95'], vendaLabels: ['93 - MAIS BBC IMOVEIS 240', '95 - MAIS BBC TODOS SEGMENTOS'] },
+  { portalLabel: 'AI - AUTO IPCA', crmSegmento: 'auto_ipca' },
+  { portalLabel: 'AU - AUTO DEMAIS', crmSegmento: 'auto_fipe' },
+  { portalLabel: 'EE - OUTROS BENS MOVEIS', crmSegmento: 'outros_bens' },
+  { portalLabel: 'TC - TRATOR E CAMINHÃO GERAL', crmSegmento: 'pesados' },
+  { portalLabel: 'MO - MOTO DEMAIS', crmSegmento: 'motocicleta' },
+  { portalLabel: 'IM - IMOVEIS GERAL', crmSegmento: 'imoveis', vendaLabels: ['93 - MAIS BBC IMOVEIS 240', '95 - MAIS BBC TODOS SEGMENTOS'] },
 ]
 
 const SELECT_INDEX = {
@@ -15,17 +15,6 @@ const SELECT_INDEX = {
   grupo: 2,
   periodicidade: 3,
   venda: 4,
-}
-
-const BB_SELECTORS = {
-  pessoa: '#ctl00_Conteudo_cbxPessoa',
-  filial: '#ctl00_Conteudo_cbxFilial',
-  grupo: '#ctl00_Conteudo_cbxTipoGrupo',
-  periodicidade: '#ctl00_Conteudo_cbxPeriodicidade',
-  venda: '#ctl00_Conteudo_cbxTipoVenda',
-  proximo: '#ctl00_Conteudo_lnkProximo',
-  grid: '#ctl00_Conteudo_grdGruposDisponiveis',
-  nextPage: 'input[alt="Próximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]',
 }
 
 function parseNumberBR(value) {
@@ -80,38 +69,6 @@ function normalizePortalText(value) {
     .toUpperCase()
     .replace(/\s+/g, ' ')
     .trim()
-}
-
-async function softWait(page, ms) {
-  if (page.isClosed()) throw new Error('Página do robô foi fechada.')
-  await page.waitForTimeout(ms)
-}
-
-async function waitUntilScreen(page, predicate, timeout = 45000) {
-  const started = Date.now()
-  while (Date.now() - started < timeout) {
-    if (page.isClosed()) throw new Error('Página do robô foi fechada enquanto aguardava a tela.')
-    const ok = await predicate().catch(() => false)
-    if (ok) return true
-    await page.waitForTimeout(500)
-  }
-  return false
-}
-
-async function waitForSimulatorReady(page, timeout = 45000) {
-  return await waitUntilScreen(page, async () => {
-    const hasGroupSelect = await page.locator(BB_SELECTORS.grupo).isVisible().catch(() => false)
-    const hasNext = await page.locator(BB_SELECTORS.proximo).isVisible().catch(() => false)
-    return hasGroupSelect && hasNext
-  }, timeout)
-}
-
-async function waitForGroupsScreen(page, timeout = 45000) {
-  return await waitUntilScreen(page, async () => {
-    const text = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')
-    const normalized = normalizePortalText(text)
-    return normalized.includes('GRUPOS DISPONIVEIS') || page.url().includes('frmSelecaoGrupo')
-  }, timeout)
 }
 
 function segmentsToRun(segmento) {
@@ -190,6 +147,17 @@ async function login(page, env) {
 }
 
 async function openSimulator(page) {
+  async function isSimulatorReady() {
+    try {
+      const selectCount = await page.locator('select:visible').count()
+      const body = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
+      const text = normalizePortalText(body)
+      return selectCount >= 3 && (text.includes('SIMULADOR') || text.includes('GRUPO'))
+    } catch {
+      return false
+    }
+  }
+
   async function goDirectToSimulator() {
     const currentUrl = page.url()
     const marker = '/acesso_restrito/'
@@ -199,12 +167,12 @@ async function openSimulator(page) {
 
     const directUrl = `${base}frmAnaliseCadastro.aspx?Simulador=S&timestamp=${Date.now()}`
     await page.goto(directUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await softWait(page, 2500)
+    await page.waitForTimeout(2500)
   }
 
   await dismissPostLoginMessages(page)
 
-  if (await waitForSimulatorReady(page, 5000).catch(() => false)) return
+  if (await isSimulatorReady()) return
 
   const candidates = [
     page.getByText('Simulador/Contratação').first(),
@@ -214,18 +182,50 @@ async function openSimulator(page) {
 
   for (const candidate of candidates) {
     if (await candidate.isVisible().catch(() => false)) {
-      await candidate.click({ timeout: 10000, noWaitAfter: true })
-      await waitForSimulatorReady(page, 12000).catch(() => false)
-      if (await waitForSimulatorReady(page, 2000).catch(() => false)) return
+      await Promise.all([
+        page.waitForLoadState('domcontentloaded').catch(() => null),
+        candidate.click({ timeout: 10000 }),
+      ])
+      await page.waitForTimeout(2500)
+      if (await isSimulatorReady()) return
       break
     }
   }
 
-  // Fallback principal: acesso direto à tela do simulador usando a sessão da URL atual.
+  const clicked = await page.evaluate(() => {
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], img'))
+    const target = elements.find((el) => {
+      const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || '')
+      return text.includes('SIMULADOR/CONTRATACAO') || text.includes('SIMULADOR')
+    })
+
+    if (target) {
+      target.click()
+      return true
+    }
+
+    return false
+  }).catch(() => false)
+
+  if (clicked) {
+    await page.waitForLoadState('domcontentloaded').catch(() => null)
+    await page.waitForTimeout(2500)
+    if (await isSimulatorReady()) return
+  }
+
+  // Fallback principal: o portal já está logado, então acessamos diretamente a tela do simulador
+  // usando a mesma sessão presente na URL.
   await goDirectToSimulator()
   await dismissPostLoginMessages(page)
 
-  if (await waitForSimulatorReady(page, 20000).catch(() => false)) return
+  if (await isSimulatorReady()) return
 
   const url = page.url()
   const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
@@ -277,76 +277,55 @@ async function selectByTextAtIndex(page, selectIndex, label) {
   await page.waitForTimeout(2800)
 }
 
-async function selectGroup(page, segmentOrLabel) {
-  const value = typeof segmentOrLabel === 'object'
-    ? segmentOrLabel.portalValue
-    : String(segmentOrLabel || '').split('-')[0]?.trim()
-
-  await page.locator(BB_SELECTORS.grupo).waitFor({ state: 'visible', timeout: 20000 })
-  await page.selectOption(BB_SELECTORS.grupo, String(value))
-  await softWait(page, 3200)
-
-  const selected = await page.locator(BB_SELECTORS.grupo).evaluate((el) => ({
-    value: el.value,
-    text: el.options?.[el.selectedIndex]?.textContent || '',
-  })).catch(() => ({ value: '', text: '' }))
-
-  if (String(selected.value || '').toUpperCase() !== String(value || '').toUpperCase()) {
-    throw new Error(`Grupo não selecionado corretamente. Esperado ${value}; selecionado ${selected.value} - ${selected.text}`)
-  }
+async function selectGroup(page, label) {
+  await selectByTextAtIndex(page, SELECT_INDEX.grupo, label)
 }
 
-async function selectVenda(page, vendaOrLabel) {
-  const value = String(vendaOrLabel || '').split('-')[0]?.trim()
-
-  await page.locator(BB_SELECTORS.venda).waitFor({ state: 'visible', timeout: 20000 })
-
-  const options = await page.locator(`${BB_SELECTORS.venda} option`).evaluateAll((opts) =>
-    opts.map((option) => ({ value: option.value, text: option.textContent || '' }))
-  )
-
-  const found = options.find((option) =>
-    String(option.value) === value ||
-    String(option.text).trim().startsWith(`${value} `) ||
-    String(option.text).trim().startsWith(`${value} -`)
-  )
-
-  if (!found) {
-    const available = options.map((option) => `${option.value}:${option.text}`).join(' | ')
-    throw new Error(`Venda ${value} não encontrada. Opções: ${available}`)
-  }
-
-  const wasDisabled = await page.locator(BB_SELECTORS.venda).evaluate((el) => Boolean(el.disabled)).catch(() => false)
-  if (wasDisabled) {
-    await page.locator(BB_SELECTORS.venda).evaluate((el) => { el.disabled = false }).catch(() => null)
-  }
-
-  await page.selectOption(BB_SELECTORS.venda, String(found.value))
-  await softWait(page, 2800)
+async function selectVenda(page, label) {
+  await selectByTextAtIndex(page, SELECT_INDEX.venda, label)
 }
 
 async function clickNext(page) {
-  if (await page.locator(BB_SELECTORS.proximo).isVisible().catch(() => false)) {
-    await page.locator(BB_SELECTORS.proximo).click({ timeout: 15000, noWaitAfter: true })
-    const ok = await waitForGroupsScreen(page, 45000)
-    if (!ok) {
-      const debug = await screenDebug(page).catch(() => null)
-      throw new Error(`Clique em Próximo executado, mas a tela de grupos não abriu. ${debug ? `URL: ${debug.url}. Tela: ${debug.text}.` : ''}`)
-    }
-    await softWait(page, 1600)
+  const next = page.getByText('Próximo', { exact: true }).or(page.getByText('Proximo', { exact: true })).first()
+  if (await next.isVisible().catch(() => false)) {
+    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), next.click()])
+    await page.waitForTimeout(2500)
     return
   }
 
-  const debug = await screenDebug(page).catch(() => null)
-  throw new Error(`Botão Próximo não encontrado. ${debug ? `URL: ${debug.url}. Tela: ${debug.text}.` : ''}`)
+  const clicked = await page.evaluate(() => {
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
+    const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('PROXIMO'))
+
+    if (target) {
+      target.click()
+      return true
+    }
+
+    return false
+  })
+
+  if (clicked) {
+    await page.waitForLoadState('domcontentloaded').catch(() => null)
+    await page.waitForTimeout(2500)
+    return
+  }
+
+  throw new Error('Botão Próximo não encontrado.')
 }
 
 async function clickPrevious(page) {
   const previous = page.getByText('Anterior', { exact: true }).first()
   if (await previous.isVisible().catch(() => false)) {
-    await previous.click({ timeout: 15000, noWaitAfter: true })
-    await waitForSimulatorReady(page, 30000).catch(() => null)
-    await softWait(page, 1600).catch(() => null)
+    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), previous.click()])
+    await page.waitForTimeout(1800)
     return true
   }
 
@@ -362,16 +341,16 @@ async function clickPrevious(page) {
     const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('ANTERIOR'))
 
     if (target) {
-      setTimeout(() => target.click(), 0)
+      target.click()
       return true
     }
 
     return false
-  }).catch(() => false)
+  })
 
   if (clicked) {
-    await waitForSimulatorReady(page, 30000).catch(() => null)
-    await softWait(page, 1600).catch(() => null)
+    await page.waitForLoadState('domcontentloaded').catch(() => null)
+    await page.waitForTimeout(1800)
     return true
   }
 
@@ -414,6 +393,69 @@ async function screenDebug(page) {
 
 async function findGroupsTableInfo(page) {
   return await page.evaluate(() => {
+
+    const parseRows = () => {
+      const uniq = new Map()
+
+      const add = (cells) => {
+        if (!cells || cells.length < 12) return
+        const sliced = cells.slice(0, 12).map((v) => String(v || '').trim())
+        if (!/^\d{5,6}$/.test(sliced[0] || '')) return
+        if (!/^\d{2,3}$/.test(sliced[1] || '')) return
+        if (!/^\d+$/.test(sliced[2] || '')) return
+        if (!/^\d+$/.test(sliced[3] || '')) return
+        if (!/\d/.test(sliced[7] || '')) return
+        if (!/\d/.test(sliced[8] || '')) return
+        uniq.set(sliced.join('|'), sliced)
+      }
+
+      // 1) Captura por estrutura de tabela.
+      Array.from(document.querySelectorAll('tr')).forEach((tr) => {
+        const cells = Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim())
+        add(cells)
+      })
+
+      // 2) Captura por linhas de texto.
+      const lines = String(document.body.innerText || '')
+        .split(/\n+/)
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+
+      const rowRegex = /^(\d{5,6})\s+(\d{2,3})\s+(\d+)\s+(\d+)\s+([0-9.,]+)\s+([0-9.,]+)\s+([0-9.,]+)\s+([0-9.]+,\d{2})\s+([0-9.]+,\d{2})\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([0-9.,]+)/
+      for (const line of lines) {
+        const match = line.match(rowRegex)
+        if (match) add(match.slice(1, 13))
+      }
+
+      // 3) Captura por scanner de tokens, caso o portal quebre cada célula em uma linha.
+      const tokens = String(document.body.innerText || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+      const isMoney = (v) => /^[0-9.]+,\d{2}$/.test(v)
+      const isDate = (v) => /^\d{2}\/\d{2}\/\d{4}$/.test(v)
+      for (let i = 0; i <= tokens.length - 12; i++) {
+        const chunk = tokens.slice(i, i + 12)
+        if (
+          /^\d{5,6}$/.test(chunk[0]) &&
+          /^\d{2,3}$/.test(chunk[1]) &&
+          /^\d+$/.test(chunk[2]) &&
+          /^\d+$/.test(chunk[3]) &&
+          /^[0-9.,]+$/.test(chunk[4]) &&
+          /^[0-9.,]+$/.test(chunk[5]) &&
+          /^[0-9.,]+$/.test(chunk[6]) &&
+          isMoney(chunk[7]) &&
+          isMoney(chunk[8]) &&
+          isDate(chunk[9]) &&
+          isDate(chunk[10]) &&
+          /^[0-9.,]+$/.test(chunk[11])
+        ) {
+          add(chunk)
+        }
+      }
+
+      return Array.from(uniq.values())
+    }
+
+    const rows = parseRows()
+
     const normalize = (value) => String(value || '')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -421,17 +463,11 @@ async function findGroupsTableInfo(page) {
       .replace(/\s+/g, ' ')
       .trim()
 
-    const rows = Array.from(document.querySelectorAll('tr'))
-      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-      .filter((cells) => cells.length >= 12 && /^\d{5,6}$/.test(cells[0] || ''))
-
-    const uniqueRows = Array.from(new Set(rows.map((cells) => cells.slice(0, 12).join('|'))))
-
     const tables = Array.from(document.querySelectorAll('table'))
     const candidates = tables.map((table, index) => {
       const text = normalize(table.innerText || table.textContent || '')
       const rowCells = Array.from(table.querySelectorAll('tr')).map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-      const dataRows = rowCells.filter((cells) => cells.length >= 12 && /^\d{5,6}$/.test(cells[0] || ''))
+      const dataRows = rowCells.filter((cells) => cells.length >= 8 && /^\d+/.test(cells[0] || ''))
       const hasHeader = text.includes('GRUPO') && text.includes('PRAZO') && (text.includes('VL') || text.includes('VALORES') || text.includes('BEM'))
       return {
         index,
@@ -451,8 +487,8 @@ async function findGroupsTableInfo(page) {
       })[0]
 
     return candidate
-      ? { ...candidate, rows: Math.max(candidate.rows, uniqueRows.length), allRows: uniqueRows.length }
-      : { index: -1, hasHeader: false, rows: uniqueRows.length, allRows: uniqueRows.length, maxCells: 0, text: '' }
+      ? { ...candidate, parsedRows: rows.length, rows: Math.max(candidate.rows, rows.length) }
+      : { index: -1, hasHeader: false, rows: rows.length, parsedRows: rows.length, maxCells: 0, text: '' }
   }).catch(() => null)
 }
 
@@ -465,7 +501,7 @@ async function waitForGroupsTable(page, contextLabel = '') {
 
   for (let i = 0; i < 32; i++) {
     const info = await findGroupsTableInfo(page)
-    const count = Number(info?.allRows || info?.rows || 0)
+    const count = Number(info?.parsedRows || info?.rows || 0)
     if (info) bestInfo = info
 
     if (count > 0 && count === lastCount) {
@@ -487,22 +523,151 @@ async function waitForGroupsTable(page, contextLabel = '') {
 
 async function tableSignature(page) {
   return await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('tr'))
-      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-      .filter((cells) => cells.length >= 12 && /^\d{5,6}$/.test(cells[0] || ''))
-      .map((cells) => cells.slice(0, 12).join('|'))
 
-    const uniqueRows = Array.from(new Set(rows))
-    return `${uniqueRows.length}::${uniqueRows[0] || ''}::${uniqueRows[uniqueRows.length - 1] || ''}`
+    const parseRows = () => {
+      const uniq = new Map()
+
+      const add = (cells) => {
+        if (!cells || cells.length < 12) return
+        const sliced = cells.slice(0, 12).map((v) => String(v || '').trim())
+        if (!/^\d{5,6}$/.test(sliced[0] || '')) return
+        if (!/^\d{2,3}$/.test(sliced[1] || '')) return
+        if (!/^\d+$/.test(sliced[2] || '')) return
+        if (!/^\d+$/.test(sliced[3] || '')) return
+        if (!/\d/.test(sliced[7] || '')) return
+        if (!/\d/.test(sliced[8] || '')) return
+        uniq.set(sliced.join('|'), sliced)
+      }
+
+      // 1) Captura por estrutura de tabela.
+      Array.from(document.querySelectorAll('tr')).forEach((tr) => {
+        const cells = Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim())
+        add(cells)
+      })
+
+      // 2) Captura por linhas de texto.
+      const lines = String(document.body.innerText || '')
+        .split(/\n+/)
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+
+      const rowRegex = /^(\d{5,6})\s+(\d{2,3})\s+(\d+)\s+(\d+)\s+([0-9.,]+)\s+([0-9.,]+)\s+([0-9.,]+)\s+([0-9.]+,\d{2})\s+([0-9.]+,\d{2})\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([0-9.,]+)/
+      for (const line of lines) {
+        const match = line.match(rowRegex)
+        if (match) add(match.slice(1, 13))
+      }
+
+      // 3) Captura por scanner de tokens, caso o portal quebre cada célula em uma linha.
+      const tokens = String(document.body.innerText || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+      const isMoney = (v) => /^[0-9.]+,\d{2}$/.test(v)
+      const isDate = (v) => /^\d{2}\/\d{2}\/\d{4}$/.test(v)
+      for (let i = 0; i <= tokens.length - 12; i++) {
+        const chunk = tokens.slice(i, i + 12)
+        if (
+          /^\d{5,6}$/.test(chunk[0]) &&
+          /^\d{2,3}$/.test(chunk[1]) &&
+          /^\d+$/.test(chunk[2]) &&
+          /^\d+$/.test(chunk[3]) &&
+          /^[0-9.,]+$/.test(chunk[4]) &&
+          /^[0-9.,]+$/.test(chunk[5]) &&
+          /^[0-9.,]+$/.test(chunk[6]) &&
+          isMoney(chunk[7]) &&
+          isMoney(chunk[8]) &&
+          isDate(chunk[9]) &&
+          isDate(chunk[10]) &&
+          /^[0-9.,]+$/.test(chunk[11])
+        ) {
+          add(chunk)
+        }
+      }
+
+      return Array.from(uniq.values())
+    }
+
+    const rows = parseRows().map((cells) => cells.join('|'))
+    return `${rows.length}::${rows[0] || ''}::${rows[rows.length - 1] || ''}`
   }).catch(() => '')
 }
 
 async function clickRightTableArrow(page) {
-  const next = page.locator(BB_SELECTORS.nextPage).first()
-  if (!(await next.isVisible().catch(() => false))) return false
+  const box = await page.evaluate(() => {
+    const visible = (el) => {
+      const b = el.getBoundingClientRect()
+      const style = window.getComputedStyle(el)
+      return b.width > 0 && b.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+    }
 
-  await next.click({ timeout: 15000, noWaitAfter: true })
-  await softWait(page, 2200)
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+
+    const tables = Array.from(document.querySelectorAll('table')).filter(visible)
+    const dataTable = tables.map((table) => {
+      const b = table.getBoundingClientRect()
+      const text = normalize(table.innerText || table.textContent || '')
+      const rows = Array.from(table.querySelectorAll('tr'))
+        .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
+        .filter((cells) => cells.length >= 8 && /^\d+/.test(cells[0] || ''))
+      return { b, text, rows: rows.length }
+    }).filter((item) => (item.text.includes('GRUPO') && item.text.includes('PRAZO')) || item.rows > 0)
+      .sort((a, b) => b.rows - a.rows)[0]
+
+    if (!dataTable) return null
+    return {
+      left: dataTable.b.left,
+      right: dataTable.b.right,
+      top: dataTable.b.top,
+      bottom: dataTable.b.bottom,
+      width: dataTable.b.width,
+      height: dataTable.b.height,
+    }
+  }).catch(() => null)
+
+  if (!box) return false
+
+  // Primeiro tenta elemento do canto inferior direito.
+  const clickedElement = await page.evaluate((tableBox) => {
+    const visible = (el) => {
+      const b = el.getBoundingClientRect()
+      const style = window.getComputedStyle(el)
+      return b.width > 0 && b.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+    }
+
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
+      .filter(visible)
+      .map((el) => {
+        const b = el.getBoundingClientRect()
+        const txt = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || el.outerHTML || '')
+        return { el, b, cx: b.x + b.width / 2, cy: b.y + b.height / 2, text: txt }
+      })
+
+    const candidates = elements.filter((item) => {
+      const small = item.b.width <= 100 && item.b.height <= 100
+      const nearBottom = item.cy >= tableBox.bottom - 70 && item.cy <= tableBox.bottom + 70
+      const insideHoriz = item.cx >= tableBox.left - 35 && item.cx <= tableBox.right + 35
+      const rightHalf = item.cx > tableBox.left + tableBox.width * 0.55
+      return small && nearBottom && insideHoriz && rightHalf
+    })
+
+    if (!candidates.length) return false
+    const target = candidates.sort((a, b) => b.cx - a.cx)[0]
+    target.el.click()
+    return true
+  }, box).catch(() => false)
+
+  if (!clickedElement) {
+    // Fallback real de mouse, mais confiável para imagem/link antigo.
+    await page.mouse.click(box.right - 18, box.bottom - 18).catch(() => null)
+  }
+
+  await page.waitForLoadState('domcontentloaded').catch(() => null)
+  await page.waitForTimeout(1600)
   return true
 }
 
@@ -520,13 +685,68 @@ async function readGroupsTable(page, segmento, contextLabel = '') {
   await waitForGroupsTable(page, contextLabel)
 
   const rows = await page.evaluate((seg) => {
-    const rowCells = Array.from(document.querySelectorAll('tr'))
-      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim()))
-      .filter((cells) => cells.length >= 12 && /^\d{5,6}$/.test(cells[0] || ''))
 
-    const unique = Array.from(new Map(rowCells.map((cells) => [cells.slice(0, 12).join('|'), cells])).values())
+    const parseRows = () => {
+      const uniq = new Map()
 
-    return unique.map((cells) => ({ cells, segmento: seg }))
+      const add = (cells) => {
+        if (!cells || cells.length < 12) return
+        const sliced = cells.slice(0, 12).map((v) => String(v || '').trim())
+        if (!/^\d{5,6}$/.test(sliced[0] || '')) return
+        if (!/^\d{2,3}$/.test(sliced[1] || '')) return
+        if (!/^\d+$/.test(sliced[2] || '')) return
+        if (!/^\d+$/.test(sliced[3] || '')) return
+        if (!/\d/.test(sliced[7] || '')) return
+        if (!/\d/.test(sliced[8] || '')) return
+        uniq.set(sliced.join('|'), sliced)
+      }
+
+      // 1) Captura por estrutura de tabela.
+      Array.from(document.querySelectorAll('tr')).forEach((tr) => {
+        const cells = Array.from(tr.querySelectorAll('td')).map((td) => String(td.innerText || td.textContent || '').trim())
+        add(cells)
+      })
+
+      // 2) Captura por linhas de texto.
+      const lines = String(document.body.innerText || '')
+        .split(/\n+/)
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+
+      const rowRegex = /^(\d{5,6})\s+(\d{2,3})\s+(\d+)\s+(\d+)\s+([0-9.,]+)\s+([0-9.,]+)\s+([0-9.,]+)\s+([0-9.]+,\d{2})\s+([0-9.]+,\d{2})\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([0-9.,]+)/
+      for (const line of lines) {
+        const match = line.match(rowRegex)
+        if (match) add(match.slice(1, 13))
+      }
+
+      // 3) Captura por scanner de tokens, caso o portal quebre cada célula em uma linha.
+      const tokens = String(document.body.innerText || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+      const isMoney = (v) => /^[0-9.]+,\d{2}$/.test(v)
+      const isDate = (v) => /^\d{2}\/\d{2}\/\d{4}$/.test(v)
+      for (let i = 0; i <= tokens.length - 12; i++) {
+        const chunk = tokens.slice(i, i + 12)
+        if (
+          /^\d{5,6}$/.test(chunk[0]) &&
+          /^\d{2,3}$/.test(chunk[1]) &&
+          /^\d+$/.test(chunk[2]) &&
+          /^\d+$/.test(chunk[3]) &&
+          /^[0-9.,]+$/.test(chunk[4]) &&
+          /^[0-9.,]+$/.test(chunk[5]) &&
+          /^[0-9.,]+$/.test(chunk[6]) &&
+          isMoney(chunk[7]) &&
+          isMoney(chunk[8]) &&
+          isDate(chunk[9]) &&
+          isDate(chunk[10]) &&
+          /^[0-9.,]+$/.test(chunk[11])
+        ) {
+          add(chunk)
+        }
+      }
+
+      return Array.from(uniq.values())
+    }
+
+    return parseRows().map((cells) => ({ cells, segmento: seg }))
   }, segmento)
 
   const mapped = rows.map((row) => {
@@ -731,7 +951,7 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
     for (const segment of selectedSegments) {
       try {
         await openSimulator(page)
-        await selectGroup(page, segment)
+        await selectGroup(page, segment.portalLabel)
 
         if (segment.vendaLabels?.length) {
           for (const vendaLabel of segment.vendaLabels) {
@@ -796,9 +1016,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'console-exact-selectors',
+        table_reading: 'diagnostic-table-detection',
         only_group_select_for_non_im: true,
-        arrow_detection: 'console-exact-selectors',
+        arrow_detection: 'right-table-arrow',
       },
     }
   } finally {

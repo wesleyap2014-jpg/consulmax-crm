@@ -71,6 +71,20 @@ function normalizePortalText(value) {
     .trim()
 }
 
+function nodeDelay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isBrowserProtocolNoise(error) {
+  const text = String(error?.message || error || '')
+  return (
+    text.includes('Cannot find command to respond') ||
+    text.includes('Execution context was destroyed') ||
+    text.includes('Target page, context or browser has been closed') ||
+    text.includes('WebSocket')
+  )
+}
+
 function isTransientClickError(error) {
   const text = String(error?.message || error || '')
   return (
@@ -82,21 +96,34 @@ function isTransientClickError(error) {
 }
 
 async function safeWait(page, ms) {
-  if (page.isClosed()) throw new Error('Página do robô foi fechada.')
-  await page.waitForTimeout(ms)
+  // Não usa page.waitForTimeout.
+  // Em Browserless/Playwright remoto, até um "waitForTimeout" envia comando pelo WebSocket,
+  // e esse portal ASP.NET pode quebrar a resposta do comando durante postback.
+  // setTimeout do Node não conversa com o navegador e evita:
+  // "Cannot find command to respond".
+  await nodeDelay(ms)
+
+  if (page?.isClosed?.()) {
+    throw new Error('Página do robô foi fechada.')
+  }
 }
 
 async function safeClick(locator, page, description = 'clique') {
   try {
     await locator.click({ timeout: 15000, noWaitAfter: true })
   } catch (error) {
-    if (isTransientClickError(error)) {
-      await page.waitForTimeout(1500).catch(() => null)
-      if (page.isClosed()) {
+    const transient =
+      isBrowserProtocolNoise(error) ||
+      (typeof isTransientClickError === 'function' && isTransientClickError(error))
+
+    if (transient) {
+      await nodeDelay(1500)
+      if (page?.isClosed?.()) {
         throw new Error(`${description}: página fechada durante o clique. Erro original: ${error?.message || String(error)}`)
       }
       return
     }
+
     throw error
   }
 }
@@ -104,19 +131,33 @@ async function safeClick(locator, page, description = 'clique') {
 async function waitForBodyText(page, patterns, timeout = 45000) {
   const started = Date.now()
   const list = Array.isArray(patterns) ? patterns : [patterns]
+  let lastProtocolNoise = ''
 
   while (Date.now() - started < timeout) {
     if (page.isClosed()) throw new Error(`Página fechada aguardando: ${list.join(' / ')}`)
 
-    const url = page.url()
-    const body = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')
-    const normalized = normalizePortalText(`${url} ${body}`)
+    try {
+      const url = page.url()
+      const body = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')
+      const normalized = normalizePortalText(`${url} ${body}`)
 
-    if (list.some((pattern) => normalized.includes(normalizePortalText(pattern)))) {
-      return true
+      if (list.some((pattern) => normalized.includes(normalizePortalText(pattern)))) {
+        return true
+      }
+    } catch (error) {
+      if (isBrowserProtocolNoise(error)) {
+        lastProtocolNoise = error?.message || String(error)
+        await nodeDelay(1000)
+        continue
+      }
+      throw error
     }
 
-    await page.waitForTimeout(500)
+    await nodeDelay(500)
+  }
+
+  if (lastProtocolNoise) {
+    console.warn(`Aguardando tela terminou com ruído de protocolo: ${lastProtocolNoise}`)
   }
 
   return false
@@ -201,7 +242,7 @@ async function dismissPostLoginMessages(page) {
     for (const locator of candidates) {
       if (await locator.isVisible().catch(() => false)) {
         await locator.click().catch(() => null)
-        await page.waitForTimeout(500)
+        await nodeDelay(500)
         clicked = true
         break
       }
@@ -354,7 +395,7 @@ async function selectByTextAtIndex(page, selectIndex, label) {
 
   await select.selectOption(String(found.value))
   await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(2800)
+  await safeWait(page, 2800)
 }
 
 async function selectGroup(page, label) {
@@ -415,7 +456,7 @@ async function clickPrevious(page) {
   if (await previous.isVisible().catch(() => false)) {
     await safeClick(previous, page, 'Clique no botão Anterior')
     await waitForBodyText(page, ['SIMULADOR', 'FRMANALISECADASTRO'], 30000).catch(() => null)
-    await safeWait(page, 1800).catch(() => null)
+    await nodeDelay(1800).catch(() => null)
     return true
   }
 
@@ -440,7 +481,7 @@ async function clickPrevious(page) {
 
   if (clicked) {
     await waitForBodyText(page, ['SIMULADOR', 'FRMANALISECADASTRO'], 30000).catch(() => null)
-    await safeWait(page, 1800).catch(() => null)
+    await nodeDelay(1800).catch(() => null)
     return true
   }
 
@@ -602,7 +643,7 @@ async function waitForGroupsTable(page, contextLabel = '') {
       lastCount = count
     }
 
-    await page.waitForTimeout(500)
+    await nodeDelay(500)
   }
 
   if (lastCount > 0) return bestInfo
@@ -732,7 +773,7 @@ async function clickRightTableArrow(page) {
 
 async function waitForTableChange(page, previousSignature) {
   for (let i = 0; i < 14; i++) {
-    await page.waitForTimeout(500)
+    await nodeDelay(500)
     const current = await tableSignature(page)
     if (current && current !== previousSignature) return true
   }
@@ -1075,9 +1116,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'v17-safe-navigation-clicks',
+        table_reading: 'v18-node-delay-no-browser-wait',
         only_group_select_for_non_im: true,
-        arrow_detection: 'v17-safe-navigation-clicks',
+        arrow_detection: 'v18-node-delay-no-browser-wait',
       },
     }
   } finally {

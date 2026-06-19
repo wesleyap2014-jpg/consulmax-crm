@@ -71,6 +71,57 @@ function normalizePortalText(value) {
     .trim()
 }
 
+function isTransientClickError(error) {
+  const text = String(error?.message || error || '')
+  return (
+    text.includes('Cannot find command to respond') ||
+    text.includes('Execution context was destroyed') ||
+    text.includes('Target page, context or browser has been closed') ||
+    text.includes('WebSocket')
+  )
+}
+
+async function safeWait(page, ms) {
+  if (page.isClosed()) throw new Error('Página do robô foi fechada.')
+  await page.waitForTimeout(ms)
+}
+
+async function safeClick(locator, page, description = 'clique') {
+  try {
+    await locator.click({ timeout: 15000, noWaitAfter: true })
+  } catch (error) {
+    if (isTransientClickError(error)) {
+      await page.waitForTimeout(1500).catch(() => null)
+      if (page.isClosed()) {
+        throw new Error(`${description}: página fechada durante o clique. Erro original: ${error?.message || String(error)}`)
+      }
+      return
+    }
+    throw error
+  }
+}
+
+async function waitForBodyText(page, patterns, timeout = 45000) {
+  const started = Date.now()
+  const list = Array.isArray(patterns) ? patterns : [patterns]
+
+  while (Date.now() - started < timeout) {
+    if (page.isClosed()) throw new Error(`Página fechada aguardando: ${list.join(' / ')}`)
+
+    const url = page.url()
+    const body = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')
+    const normalized = normalizePortalText(`${url} ${body}`)
+
+    if (list.some((pattern) => normalized.includes(normalizePortalText(pattern)))) {
+      return true
+    }
+
+    await page.waitForTimeout(500)
+  }
+
+  return false
+}
+
 function segmentsToRun(segmento) {
   const requested = normalizeKey(segmento || 'auto_fipe')
   const found = BB_SEGMENTS.filter((segment) => {
@@ -86,47 +137,15 @@ async function createBrowser() {
   const playwright = await import('playwright-core')
   const remoteEndpoint = browserlessEndpoint()
   const isServerless = Boolean(process.env.VERCEL || process.env.AWS_REGION)
-  const preferBrowserless = String(process.env.BB_ROBOT_BROWSER || '').toLowerCase() === 'browserless'
-
-  // Caminho preferencial: Chromium local serverless via @sparticuz/chromium.
-  // Isso evita os erros de WebSocket do Browserless:
-  // - RSV1 must be clear
-  // - Cannot find command to respond
-  // - Target page/context/browser has been closed durante connect
-  if (isServerless && !preferBrowserless) {
-    try {
-      const chromiumMod = await import('@sparticuz/chromium')
-      const chromium = chromiumMod.default || chromiumMod
-
-      const executablePath = await chromium.executablePath()
-
-      const browser = await playwright.chromium.launch({
-        args: [
-          ...chromium.args,
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-features=IsolateOrigins,site-per-process',
-        ],
-        executablePath,
-        headless: chromium.headless !== undefined ? chromium.headless : true,
-      })
-
-      browser.__remote = false
-      browser.__serverlessLocal = true
-      return browser
-    } catch (err) {
-      if (!remoteEndpoint) {
-        throw new Error(`Falha ao iniciar Chromium local na Vercel com @sparticuz/chromium: ${err?.message || String(err)}`)
-      }
-
-      // Se houver Browserless configurado, cai para ele como fallback.
-      console.warn('Falha no Chromium local; tentando Browserless como fallback:', err?.message || err)
-    }
-  }
 
   if (remoteEndpoint) {
+    // Browserless tem dois modos:
+    // 1) CDP: wss://production-sfo.browserless.io?token=...
+    //    Usa chromium.connectOverCDP()
+    // 2) Playwright nativo: wss://production-sfo.browserless.io/chromium/playwright?token=...
+    //    Usa chromium.connect()
+    //
+    // Para esse robô, o modo Playwright nativo costuma ser mais estável no Browserless.
     const isNativePlaywright = remoteEndpoint.includes('/playwright')
     const browser = isNativePlaywright
       ? await playwright.chromium.connect(remoteEndpoint)
@@ -138,7 +157,7 @@ async function createBrowser() {
   }
 
   if (isServerless) {
-    throw new Error('Chromium local indisponível no runtime da Vercel e Browserless não configurado. Configure @sparticuz/chromium ou BROWSERLESS_WS_ENDPOINT.')
+    throw new Error('Chromium local indisponível no runtime da Vercel: falta libnss3.so. Configure BROWSERLESS_TOKEN ou BROWSERLESS_WS_ENDPOINT nas variáveis da Vercel para executar o robô com navegador remoto.')
   }
 
   return playwright.chromium.launch({ headless: true })
@@ -152,6 +171,7 @@ async function newRobotPage(browser) {
       return { context, page }
     }
 
+    // CDP remoto: reutiliza o contexto padrão para evitar fechamento do target no Browserless.
     const contexts = browser.contexts()
     const context = contexts[0]
 
@@ -161,12 +181,12 @@ async function newRobotPage(browser) {
 
     const page = await context.newPage()
     await page.setViewportSize({ width: 1366, height: 900 }).catch(() => null)
+
     return { context: null, page }
   }
 
-  const context = await browser.newContext({ viewport: { width: 1366, height: 900 } })
-  const page = await context.newPage()
-  return { context, page }
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
+  return { context: null, page }
 }
 
 async function dismissPostLoginMessages(page) {
@@ -193,15 +213,18 @@ async function dismissPostLoginMessages(page) {
 
 async function login(page, env) {
   await page.goto(env.portalUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+
+  await page.locator('input[type="text"], input:not([type])').first().waitFor({ state: 'visible', timeout: 30000 })
   await page.locator('input[type="text"], input:not([type])').first().fill(env.username)
   await page.locator('input[type="password"]').first().fill(env.password)
 
-  await Promise.all([
-    page.waitForLoadState('domcontentloaded').catch(() => null),
-    page.getByText('Entrar', { exact: true }).click(),
-  ])
+  const entrar = page.getByText('Entrar', { exact: true }).first()
+  await safeClick(entrar, page, 'Clique no botão Entrar')
 
-  await page.waitForTimeout(2200)
+  // Portal ASP.NET antigo pode destruir o contexto do clique durante o postback.
+  // Em vez de esperar navegação padrão, esperamos algum texto conhecido da área logada.
+  await waitForBodyText(page, ['OPCOES DISPONIVEIS', 'OPÇÕES DISPONÍVEIS', 'SIMULADOR/CONTRATACAO', 'SIMULADOR/CONTRATAÇÃO', 'CONTRATACAO'], 60000).catch(() => null)
+  await safeWait(page, 2200)
   await dismissPostLoginMessages(page)
 }
 
@@ -226,7 +249,7 @@ async function openSimulator(page) {
 
     const directUrl = `${base}frmAnaliseCadastro.aspx?Simulador=S&timestamp=${Date.now()}`
     await page.goto(directUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await page.waitForTimeout(2500)
+    await safeWait(page, 2500)
   }
 
   await dismissPostLoginMessages(page)
@@ -241,11 +264,9 @@ async function openSimulator(page) {
 
   for (const candidate of candidates) {
     if (await candidate.isVisible().catch(() => false)) {
-      await Promise.all([
-        page.waitForLoadState('domcontentloaded').catch(() => null),
-        candidate.click({ timeout: 10000 }),
-      ])
-      await page.waitForTimeout(2500)
+      await safeClick(candidate, page, 'Clique no menu Simulador/Contratação')
+      await waitForBodyText(page, ['SIMULADOR'], 12000).catch(() => null)
+      await safeWait(page, 2500)
       if (await isSimulatorReady()) return
       break
     }
@@ -266,7 +287,7 @@ async function openSimulator(page) {
     })
 
     if (target) {
-      target.click()
+      setTimeout(() => target.click(), 0)
       return true
     }
 
@@ -274,8 +295,8 @@ async function openSimulator(page) {
   }).catch(() => false)
 
   if (clicked) {
-    await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(2500)
+    await waitForBodyText(page, ['SIMULADOR'], 12000).catch(() => null)
+    await safeWait(page, 2500)
     if (await isSimulatorReady()) return
   }
 
@@ -347,8 +368,13 @@ async function selectVenda(page, label) {
 async function clickNext(page) {
   const next = page.getByText('Próximo', { exact: true }).or(page.getByText('Proximo', { exact: true })).first()
   if (await next.isVisible().catch(() => false)) {
-    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), next.click()])
-    await page.waitForTimeout(2500)
+    await safeClick(next, page, 'Clique no botão Próximo')
+    const ok = await waitForBodyText(page, ['GRUPOS DISPONIVEIS', 'GRUPOS DISPONÍVEIS', 'FRMSELECAOGRUPO'], 45000)
+    if (!ok) {
+      const debug = await screenDebug(page).catch(() => null)
+      throw new Error(`Clique em Próximo executado, mas a tela de grupos não abriu. ${debug ? `URL: ${debug.url}. Tela: ${debug.text}.` : ''}`)
+    }
+    await safeWait(page, 1800)
     return
   }
 
@@ -364,16 +390,20 @@ async function clickNext(page) {
     const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('PROXIMO'))
 
     if (target) {
-      target.click()
+      setTimeout(() => target.click(), 0)
       return true
     }
 
     return false
-  })
+  }).catch(() => false)
 
   if (clicked) {
-    await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(2500)
+    const ok = await waitForBodyText(page, ['GRUPOS DISPONIVEIS', 'GRUPOS DISPONÍVEIS', 'FRMSELECAOGRUPO'], 45000)
+    if (!ok) {
+      const debug = await screenDebug(page).catch(() => null)
+      throw new Error(`Postback do Próximo executado, mas a tela de grupos não abriu. ${debug ? `URL: ${debug.url}. Tela: ${debug.text}.` : ''}`)
+    }
+    await safeWait(page, 1800)
     return
   }
 
@@ -383,8 +413,9 @@ async function clickNext(page) {
 async function clickPrevious(page) {
   const previous = page.getByText('Anterior', { exact: true }).first()
   if (await previous.isVisible().catch(() => false)) {
-    await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => null), previous.click()])
-    await page.waitForTimeout(1800)
+    await safeClick(previous, page, 'Clique no botão Anterior')
+    await waitForBodyText(page, ['SIMULADOR', 'FRMANALISECADASTRO'], 30000).catch(() => null)
+    await safeWait(page, 1800).catch(() => null)
     return true
   }
 
@@ -400,16 +431,16 @@ async function clickPrevious(page) {
     const target = elements.find((el) => normalize(el.innerText || el.textContent || el.value || el.title || '').includes('ANTERIOR'))
 
     if (target) {
-      target.click()
+      setTimeout(() => target.click(), 0)
       return true
     }
 
     return false
-  })
+  }).catch(() => false)
 
   if (clicked) {
-    await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(1800)
+    await waitForBodyText(page, ['SIMULADOR', 'FRMANALISECADASTRO'], 30000).catch(() => null)
+    await safeWait(page, 1800).catch(() => null)
     return true
   }
 
@@ -649,6 +680,14 @@ async function tableSignature(page) {
 }
 
 async function clickRightTableArrow(page) {
+  const exactNext = page.locator('input[alt="Próximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]').first()
+
+  if (await exactNext.isVisible().catch(() => false)) {
+    await safeClick(exactNext, page, 'Clique na seta Próximo da tabela')
+    await safeWait(page, 1800)
+    return true
+  }
+
   const box = await page.evaluate(() => {
     const visible = (el) => {
       const b = el.getBoundingClientRect()
@@ -685,48 +724,9 @@ async function clickRightTableArrow(page) {
 
   if (!box) return false
 
-  // Primeiro tenta elemento do canto inferior direito.
-  const clickedElement = await page.evaluate((tableBox) => {
-    const visible = (el) => {
-      const b = el.getBoundingClientRect()
-      const style = window.getComputedStyle(el)
-      return b.width > 0 && b.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
-    }
-
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-
-    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
-      .filter(visible)
-      .map((el) => {
-        const b = el.getBoundingClientRect()
-        const txt = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || el.outerHTML || '')
-        return { el, b, cx: b.x + b.width / 2, cy: b.y + b.height / 2, text: txt }
-      })
-
-    const candidates = elements.filter((item) => {
-      const small = item.b.width <= 100 && item.b.height <= 100
-      const nearBottom = item.cy >= tableBox.bottom - 70 && item.cy <= tableBox.bottom + 70
-      const insideHoriz = item.cx >= tableBox.left - 35 && item.cx <= tableBox.right + 35
-      const rightHalf = item.cx > tableBox.left + tableBox.width * 0.55
-      return small && nearBottom && insideHoriz && rightHalf
-    })
-
-    if (!candidates.length) return false
-    const target = candidates.sort((a, b) => b.cx - a.cx)[0]
-    target.el.click()
-    return true
-  }, box).catch(() => false)
-
-  if (!clickedElement) {
-    // Fallback real de mouse, mais confiável para imagem/link antigo.
-    await page.mouse.click(box.right - 18, box.bottom - 18).catch(() => null)
-  }
-
+  await page.mouse.click(box.right - 18, box.bottom - 18).catch(() => null)
   await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(1600)
+  await safeWait(page, 1800)
   return true
 }
 
@@ -1075,9 +1075,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'v16-local-chromium-first',
+        table_reading: 'v17-safe-navigation-clicks',
         only_group_select_for_non_im: true,
-        arrow_detection: 'v16-local-chromium-first',
+        arrow_detection: 'v17-safe-navigation-clicks',
       },
     }
   } finally {

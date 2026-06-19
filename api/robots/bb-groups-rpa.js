@@ -49,7 +49,7 @@ function browserlessEndpoint() {
   if (explicit) return explicit
 
   const token = process.env.BROWSERLESS_TOKEN || ''
-  if (token) return `wss://production-sfo.browserless.io?token=${encodeURIComponent(token)}`
+  if (token) return `wss://production-sfo.browserless.io?token=${encodeURIComponent(token)}&timeout=600`
 
   return ''
 }
@@ -102,8 +102,21 @@ async function createBrowser() {
 
 async function newRobotPage(browser) {
   if (browser.__remote) {
-    const context = await browser.newContext({ viewport: { width: 1366, height: 900 } })
-    return { context, page: await context.newPage() }
+    // Browserless via CDP normalmente já entrega um contexto padrão.
+    // Criar browser.newContext() em sessão remota pode fechar o target no Browserless.
+    // Por isso reutilizamos o contexto padrão e abrimos apenas uma nova página nele.
+    const contexts = browser.contexts()
+    const context = contexts[0]
+
+    if (!context) {
+      throw new Error('Browserless conectado, mas nenhum contexto padrão foi disponibilizado. Revise o endpoint BROWSERLESS_WS_ENDPOINT.')
+    }
+
+    const page = await context.newPage()
+    await page.setViewportSize({ width: 1366, height: 900 }).catch(() => null)
+
+    // Não fechamos o contexto padrão manualmente; browser.close() no finally encerra a sessão.
+    return { context: null, page }
   }
 
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })

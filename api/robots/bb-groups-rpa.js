@@ -282,51 +282,80 @@ async function tableSignature(page) {
   }).catch(() => '')
 }
 
-async function hasTableNextArrow(page) {
-  return await page.evaluate(() => {
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    const candidates = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
-    return candidates.some((el) => {
-      const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || '')
-      if (!text) return false
-      const looksNext = text.includes('PROXIMO') || text.includes('NEXT') || text.includes('DIREITA') || text.includes('RIGHT') || text.includes('AVANCAR') || text.includes('AVANÇAR')
-      const looksBack = text.includes('ANTERIOR') || text.includes('PREVIOUS') || text.includes('ESQUERDA') || text.includes('LEFT') || text.includes('VOLTAR')
-      return looksNext && !looksBack
-    })
-  }).catch(() => false)
-}
-
-async function clickTableNextArrow(page) {
+async function clickTableArrow(page) {
   const clicked = await page.evaluate(() => {
-    const normalize = (value) => String(value || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    const candidates = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
-
-    const target = candidates.find((el) => {
-      const text = normalize(el.innerText || el.textContent || el.value || el.title || el.alt || el.getAttribute('src') || el.getAttribute('onclick') || '')
-      if (!text) return false
-      const looksNext = text.includes('PROXIMO') || text.includes('NEXT') || text.includes('DIREITA') || text.includes('RIGHT') || text.includes('AVANCAR') || text.includes('AVANÇAR')
-      const looksBack = text.includes('ANTERIOR') || text.includes('PREVIOUS') || text.includes('ESQUERDA') || text.includes('LEFT') || text.includes('VOLTAR')
-      return looksNext && !looksBack
-    })
-
-    if (target) {
-      target.click()
-      return true
+    const isVisible = (el) => {
+      const box = el.getBoundingClientRect()
+      const style = window.getComputedStyle(el)
+      return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
     }
 
-    return false
+    const pageText = String(document.body.innerText || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+
+    if (!pageText.includes('GRUPOS DISPONIVEIS')) return false
+
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], input[type="image"], img'))
+      .filter(isVisible)
+      .map((el) => {
+        const box = el.getBoundingClientRect()
+        const text = String(
+          el.innerText ||
+          el.textContent ||
+          el.value ||
+          el.title ||
+          el.alt ||
+          el.getAttribute('src') ||
+          el.getAttribute('onclick') ||
+          ''
+        ).toUpperCase()
+
+        return {
+          el,
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          right: box.right,
+          bottom: box.bottom,
+          text,
+        }
+      })
+
+    const viewportW = window.innerWidth || document.documentElement.clientWidth || 0
+    const viewportH = window.innerHeight || document.documentElement.clientHeight || 0
+
+    const candidates = elements.filter((item) => {
+      const smallIcon = item.width <= 80 && item.height <= 80
+      const nearRight = item.right > viewportW * 0.45
+      const lowerHalf = item.y > viewportH * 0.25
+      const maybeArrowByText =
+        item.text.includes('PROX') ||
+        item.text.includes('NEXT') ||
+        item.text.includes('RIGHT') ||
+        item.text.includes('DIREITA') ||
+        item.text.includes('AVAN') ||
+        item.text.includes('SETA') ||
+        item.text.includes('ARROW') ||
+        item.text.includes('IMG') ||
+        item.text.includes('.GIF') ||
+        item.text.includes('.PNG') ||
+        item.text.includes('.JPG') ||
+        item.text.includes('.JPEG')
+      return smallIcon && nearRight && lowerHalf && maybeArrowByText
+    })
+
+    const ordered = candidates.sort((a, b) => {
+      if (Math.abs(a.y - b.y) > 10) return b.y - a.y
+      return b.x - a.x
+    })
+
+    const target = ordered[0]?.el
+    if (!target) return false
+    target.click()
+    return true
   }).catch(() => false)
 
   if (!clicked) return false
@@ -389,10 +418,7 @@ async function readAllGroupsPages(page, segmento) {
     const pageRows = await readGroupsTable(page, segmento)
     allRows.push(...pageRows.map((row) => ({ ...row, pageIndex })))
 
-    const hasNext = await hasTableNextArrow(page)
-    if (!hasNext) break
-
-    const clicked = await clickTableNextArrow(page)
+    const clicked = await clickTableArrow(page)
     if (!clicked) break
 
     const changed = await waitForTableChange(page, signature)
@@ -593,6 +619,7 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
         pagination_enabled: true,
+        arrow_detection: 'visual-table-arrow',
       },
     }
   } finally {

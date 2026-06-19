@@ -293,20 +293,13 @@ async function selectGroup(page, segmentOrLabel) {
   await page.locator(selector).waitFor({ state: 'visible', timeout: 20000 })
 
   await page.selectOption(selector, String(value))
-  await page.evaluate((sel) => {
-    const el = document.querySelector(sel)
-    if (el) {
-      el.dispatchEvent(new Event('change', { bubbles: true }))
-    }
-  }, selector)
-
   await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(3200)
+  await page.waitForTimeout(3500)
 
-  const selected = await page.$eval(selector, (el) => ({
+  const selected = await page.locator(selector).evaluate((el) => ({
     value: el.value,
     text: el.options?.[el.selectedIndex]?.textContent || '',
-  }))
+  })).catch(() => ({ value: '', text: '' }))
 
   if (String(selected.value || '').toUpperCase() !== String(value || '').toUpperCase()) {
     throw new Error(`Grupo não selecionado corretamente. Esperado ${value}; selecionado ${selected.value} - ${selected.text}`)
@@ -330,16 +323,15 @@ async function selectVenda(page, vendaOrLabel) {
     throw new Error(`Venda ${value} não encontrada. Opções: ${available}`)
   }
 
-  await page.evaluate(({ selector, value }) => {
-    const el = document.querySelector(selector)
-    if (!el) return
-    el.disabled = false
-    el.value = value
-    el.dispatchEvent(new Event('change', { bubbles: true }))
-  }, { selector, value: found.value })
+  const isDisabled = await page.locator(selector).evaluate((el) => Boolean(el.disabled)).catch(() => false)
 
+  if (isDisabled) {
+    await page.locator(selector).evaluate((el) => { el.disabled = false }).catch(() => null)
+  }
+
+  await page.selectOption(selector, String(found.value))
   await page.waitForLoadState('domcontentloaded').catch(() => null)
-  await page.waitForTimeout(2500)
+  await page.waitForTimeout(3000)
 }
 
 async function clickNext(page) {
@@ -350,27 +342,32 @@ async function clickNext(page) {
       page.waitForLoadState('domcontentloaded').catch(() => null),
       page.locator(selector).click({ timeout: 15000 }),
     ])
-    await page.waitForTimeout(2500)
+    await page.waitForTimeout(3000)
     return
   }
 
-  const posted = await page.evaluate(() => {
-    if (typeof WebForm_DoPostBackWithOptions === 'function' && typeof WebForm_PostBackOptions === 'function') {
-      WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions('ctl00$Conteudo$lnkProximo', '', true, '', '', false, true))
-      return true
-    }
+  // Fallback por postback, mas sem depender de retorno do evaluate,
+  // porque o ASP.NET pode destruir o contexto imediatamente ao navegar.
+  const fallbackStarted = await page.evaluate(() => {
+    setTimeout(() => {
+      try {
+        if (typeof WebForm_DoPostBackWithOptions === 'function' && typeof WebForm_PostBackOptions === 'function') {
+          WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions('ctl00$Conteudo$lnkProximo', '', true, '', '', false, true))
+          return
+        }
 
-    if (typeof __doPostBack === 'function') {
-      __doPostBack('ctl00$Conteudo$lnkProximo', '')
-      return true
-    }
+        if (typeof __doPostBack === 'function') {
+          __doPostBack('ctl00$Conteudo$lnkProximo', '')
+        }
+      } catch {}
+    }, 0)
 
-    return false
+    return true
   }).catch(() => false)
 
-  if (posted) {
+  if (fallbackStarted) {
     await page.waitForLoadState('domcontentloaded').catch(() => null)
-    await page.waitForTimeout(3000)
+    await page.waitForTimeout(3500)
     return
   }
 
@@ -647,16 +644,17 @@ async function tableSignature(page) {
 }
 
 async function clickRightTableArrow(page) {
-  const hasNext = await page.locator('input[alt="Próximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]').isVisible().catch(() => false)
+  const selector = 'input[alt="Próximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]'
+  const hasNext = await page.locator(selector).isVisible().catch(() => false)
 
   if (!hasNext) return false
 
   await Promise.all([
     page.waitForLoadState('domcontentloaded').catch(() => null),
-    page.locator('input[alt="Próximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]').first().click({ timeout: 15000 }),
+    page.locator(selector).first().click({ timeout: 15000 }),
   ])
 
-  await page.waitForTimeout(2200)
+  await page.waitForTimeout(2600)
   return true
 }
 
@@ -1005,9 +1003,9 @@ export async function syncBBGroupsRpa(env, supabase, options = {}) {
         errors,
         segmentos: selectedSegments.map((segment) => segment.crmSegmento),
         credit_ranges_enriched: true,
-        table_reading: 'diagnostic-table-detection-v11',
+        table_reading: 'diagnostic-table-detection-v12',
         only_group_select_for_non_im: true,
-        arrow_detection: 'exact-aspnet-next-postback',
+        arrow_detection: 'exact-selectors-no-extra-change-v12',
       },
     }
   } finally {

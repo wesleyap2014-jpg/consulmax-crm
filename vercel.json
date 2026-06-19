@@ -2,6 +2,11 @@
   "framework": "vite",
   "buildCommand": "npm install && node scripts/patch-maggi-lead-select.mjs && npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/robots/sync-groups.ts": {
+      "maxDuration": 800
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api/.*)(?!.*\\.).*)",

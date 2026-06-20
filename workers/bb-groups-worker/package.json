@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "node scripts/patch-portal-popups.mjs && tsc -p tsconfig.json",
+    "build": "node scripts/patch-portal-popups.mjs && node scripts/patch-stable-table-read.mjs && tsc -p tsconfig.json",
     "start": "node dist/index.js"
   },
   "dependencies": {

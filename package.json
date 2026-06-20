@@ -75,5 +75,5 @@
 "not IE 11",
 "maintained node versions"
 ],
-"packageManager": "npm@10"
+"packageManager": "npm@10.9.2"
 }

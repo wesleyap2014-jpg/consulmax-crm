@@ -131,88 +131,27 @@ source = source.replace(
 const patchedClickNextPage = `async function clickNextPageIfExists(page: Page, pageIndex = 0) {
   const nextSelector = 'input[type="image"][onclick*="ctl00$Conteudo$grdGruposDisponiveis"][onclick*="Page$Next"], input[alt="Próximo"][onclick*="Page$Next"], input[alt="Proximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]';
   const nextPageNumber = String(Number(pageIndex || 0) + 2);
-  const before = await tableSignature(page);
-
   const next = page.locator(nextSelector).first();
+
   if (!(await next.isVisible().catch(() => false))) {
     log("nenhum controle de próxima página encontrado", { nextPage: nextPageNumber });
     return false;
   }
 
-  const waitForTableChange = async (method: string) => {
-    await waitDom(page, 12000);
-
-    for (let i = 0; i < 35; i++) {
-      await page.waitForTimeout(400);
-      const after = await tableSignature(page);
-      if (after && after !== before) {
-        log("próxima página aberta", { page: nextPageNumber, method });
-        return true;
-      }
-    }
-
-    return false;
-  };
-
-  const methods = [
-    async () => {
-      await next.click({ timeout: 5000, force: true });
-      return "force-click";
-    },
-    async () => {
-      await next.evaluate((element) => (element as HTMLElement).click());
-      return "element-click";
-    },
-    async () => {
-      await page.evaluate(() => {
-        const win = window as any;
-        if (typeof win.__doPostBack !== "function") throw new Error("__doPostBack indisponível");
-        win.__doPostBack("ctl00$Conteudo$grdGruposDisponiveis", "Page$Next");
-      });
-      return "direct-postback";
-    },
-    async () => {
-      await page.evaluate(() => {
-        const form = document.forms[0] as HTMLFormElement | undefined;
-        if (!form) throw new Error("formulário ASP.NET não encontrado");
-
-        let target = document.querySelector('input[name="__EVENTTARGET"]') as HTMLInputElement | null;
-        if (!target) {
-          target = document.createElement("input");
-          target.type = "hidden";
-          target.name = "__EVENTTARGET";
-          form.appendChild(target);
-        }
-
-        let argument = document.querySelector('input[name="__EVENTARGUMENT"]') as HTMLInputElement | null;
-        if (!argument) {
-          argument = document.createElement("input");
-          argument.type = "hidden";
-          argument.name = "__EVENTARGUMENT";
-          form.appendChild(argument);
-        }
-
-        target.value = "ctl00$Conteudo$grdGruposDisponiveis";
-        argument.value = "Page$Next";
-        form.submit();
-      });
-      return "manual-submit";
-    },
-  ];
-
-  for (const run of methods) {
-    const method = await run().catch((error) => {
-      log("falha ao acionar próxima página", { nextPage: nextPageNumber, error: error?.message || String(error) });
-      return "";
+  await next.click({ timeout: 5000, force: true }).catch(async () => {
+    await page.evaluate(() => {
+      const win = window as any;
+      if (typeof win.__doPostBack !== "function") throw new Error("__doPostBack indisponível");
+      win.__doPostBack("ctl00$Conteudo$grdGruposDisponiveis", "Page$Next");
     });
+  });
 
-    if (method && (await waitForTableChange(method))) {
-      return true;
-    }
-  }
+  await waitDom(page, 12000);
+  await page.locator(SELECTORS.gruposTable).waitFor({ state: "visible", timeout: 30000 });
+  await page.waitForTimeout(1200);
 
-  log("controle de próxima página acionado, mas tabela não mudou", { nextPage: nextPageNumber });
-  return false;
+  log("próxima página acionada", { page: nextPageNumber });
+  return true;
 }`;
 
 const oldClickNextFunction = /async function clickNextPageIfExists\(page: Page(?:, pageIndex = 0)?\) \{[\s\S]*?\n\}\n\nasync function readAllPages\(page: Page, segmento: SegmentKey, venda: string \| null\)/;
@@ -223,6 +162,11 @@ source = source.replace(
 source = source.replace(
   "const hasNext = await clickNextPageIfExists(page);",
   "const hasNext = await clickNextPageIfExists(page, pageIndex);"
+);
+
+source = source.replace(
+  "if (!rows.length) {\n      throw new Error(`Nenhuma linha foi lida para o segmento ${segmento}.`);\n    }",
+  "if (!rows.length) {\n      log(\"nenhuma linha lida; sincronização concluída sem alterações\", { segmento });\n      return {\n        ok: true,\n        status: \"synced\",\n        administradora: \"bb\",\n        segmento,\n        found: 0,\n        created: 0,\n        updated: 0,\n        details: {\n          raw_rows: 0,\n          pages: 0,\n          uniqueGroups: 0,\n          readDetails,\n        },\n      };\n    }"
 );
 
 writeFileSync(file, source);

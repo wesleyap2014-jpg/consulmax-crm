@@ -131,6 +131,7 @@ source = source.replace(
 const patchedClickNextPage = `async function clickNextPageIfExists(page: Page, pageIndex = 0) {
   const nextSelector = 'input[type="image"][onclick*="ctl00$Conteudo$grdGruposDisponiveis"][onclick*="Page$Next"], input[alt="Próximo"][onclick*="Page$Next"], input[alt="Proximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]';
   const nextPageNumber = String(Number(pageIndex || 0) + 2);
+  const before = await tableSignature(page);
   const next = page.locator(nextSelector).first();
 
   if (!(await next.isVisible().catch(() => false))) {
@@ -138,20 +139,47 @@ const patchedClickNextPage = `async function clickNextPageIfExists(page: Page, p
     return false;
   }
 
+  const waitForChangedTable = async (method: string) => {
+    await waitDom(page, 12000);
+    await page.locator(SELECTORS.gruposTable).waitFor({ state: "visible", timeout: 30000 });
+
+    for (let i = 0; i < 40; i++) {
+      await page.waitForTimeout(350);
+      const after = await tableSignature(page);
+      if (after && after !== before) {
+        log("próxima página aberta", { page: nextPageNumber, method });
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const nav = page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null);
+  const didPostback = await page.evaluate(() => {
+    const win = window as any;
+    if (typeof win.__doPostBack !== "function") return false;
+    win.__doPostBack("ctl00$Conteudo$grdGruposDisponiveis", "Page$Next");
+    return true;
+  }).catch(() => false);
+  await nav;
+
+  if (didPostback && (await waitForChangedTable("direct-postback"))) {
+    return true;
+  }
+
+  const navClick = page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null);
   await next.click({ timeout: 5000, force: true }).catch(async () => {
-    await page.evaluate(() => {
-      const win = window as any;
-      if (typeof win.__doPostBack !== "function") throw new Error("__doPostBack indisponível");
-      win.__doPostBack("ctl00$Conteudo$grdGruposDisponiveis", "Page$Next");
-    });
+    await next.evaluate((element) => (element as HTMLElement).click());
   });
+  await navClick;
 
-  await waitDom(page, 12000);
-  await page.locator(SELECTORS.gruposTable).waitFor({ state: "visible", timeout: 30000 });
-  await page.waitForTimeout(1200);
+  if (await waitForChangedTable("fallback-click")) {
+    return true;
+  }
 
-  log("próxima página acionada", { page: nextPageNumber });
-  return true;
+  log("controle de próxima página acionado, mas tabela não mudou", { nextPage: nextPageNumber });
+  return false;
 }`;
 
 const oldClickNextFunction = /async function clickNextPageIfExists\(page: Page(?:, pageIndex = 0)?\) \{[\s\S]*?\n\}\n\nasync function readAllPages\(page: Page, segmento: SegmentKey, venda: string \| null\)/;

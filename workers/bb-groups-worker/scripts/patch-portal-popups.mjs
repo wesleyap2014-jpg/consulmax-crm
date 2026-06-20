@@ -106,7 +106,7 @@ const patchedSelectVenda = `async function selectVenda(page: Page, vendaValue: s
   if (!found) {
     log("venda não disponível; seguindo sem seleção específica", {
       venda: vendaValue,
-      disponiveis: vendas.map((v) => `${v.value} - ${v.text}`).join(" | "),
+      disponiveis: vendas.map((v) => v.value + " - " + v.text).join(" | "),
     });
     return false;
   }

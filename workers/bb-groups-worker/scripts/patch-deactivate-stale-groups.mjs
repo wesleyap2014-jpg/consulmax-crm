@@ -17,10 +17,17 @@ function replaceOnce(needle, replacement, marker = replacement) {
   }
 }
 
+function replaceRegex(regex, replacement, marker) {
+  if (!src.includes(marker) && regex.test(src)) {
+    src = src.replace(regex, replacement);
+    changed = true;
+  }
+}
+
 replaceOnce(
   "  created: number;\n  updated: number;",
-  "  created: number;\n  updated: number;\n  deactivated: number;",
-  "deactivated: number;"
+  "  created: number;\n  updated: number;\n  deactivated?: number;",
+  "deactivated?: number;"
 );
 
 const newUpsertFunction = `async function deactivateMissingGroups(segmento: SegmentKey, activeGroupCodes: string[]) {
@@ -145,16 +152,16 @@ replaceOnce(
   "const { created, updated, deactivated } = await upsertGroups(payloads);"
 );
 
-replaceOnce(
-  "      created,\n      updated,\n    });",
-  "      created,\n      updated,\n      deactivated,\n    });",
-  "deactivated,\n    });"
+replaceRegex(
+  /(log\("sincronização concluída", \{[\s\S]*?created,\n\s*updated,\n)(\s*\}\);)/,
+  "$1      deactivated,\n$2",
+  "sincronização concluída", {__never__: true}
 );
 
-replaceOnce(
-  "      updated,\n      details: {",
-  "      updated,\n      deactivated,\n      details: {",
-  "deactivated,\n      details:"
+replaceRegex(
+  /(found: payloads\.length,\n\s*created,\n\s*updated,\n)(\s*details: \{)/,
+  "$1      deactivated,\n$2",
+  "found: payloads.length,\n      created,\n      updated,\n      deactivated,"
 );
 
 if (changed) {

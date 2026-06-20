@@ -132,66 +132,24 @@ const patchedClickNextPage = `async function clickNextPageIfExists(page: Page, p
   const before = await tableSignature(page);
   const nextPageNumber = String(Number(pageIndex || 0) + 2);
 
-  const clicked = await page.evaluate(
-    ({ tableSelector, nextPageNumber }) => {
-      const table = document.querySelector(tableSelector);
-      if (!table) return false;
+  const canGoNext = await page.locator('input[type="image"][onclick*="ctl00$Conteudo$grdGruposDisponiveis"][onclick*="Page$Next"], input[alt="Próximo"][onclick*="Page$Next"], input[alt="Proximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]').first().isVisible().catch(() => false);
 
-      function norm(value: unknown) {
-        return String(value || "")
-          .normalize("NFD")
-          .replace(/[\\u0300-\\u036f]/g, "")
-          .replace(/\\s+/g, " ")
-          .trim()
-          .toUpperCase();
-      }
-
-      function visible(element: Element) {
-        const el = element as HTMLElement;
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-      }
-
-      const elements = Array.from(table.querySelectorAll("a, input, button, img"));
-      const candidates = elements.filter((element) => {
-        const el = element as HTMLInputElement;
-        if (!visible(element) || el.disabled) return false;
-
-        const label = norm(
-          element.textContent ||
-            element.getAttribute("value") ||
-            element.getAttribute("alt") ||
-            element.getAttribute("title") ||
-            ""
-        );
-        const href = norm(element.getAttribute("href") || "");
-        const onclick = norm(element.getAttribute("onclick") || "");
-        const src = norm(element.getAttribute("src") || "");
-
-        return (
-          label === nextPageNumber ||
-          label === "PROXIMO" ||
-          label === "NEXT" ||
-          label === ">" ||
-          label === ">>" ||
-          href.includes("PAGE$NEXT") ||
-          onclick.includes("PAGE$NEXT") ||
-          src.includes("NEXT")
-        );
-      });
-
-      const target = candidates[0] as HTMLElement | undefined;
-      if (!target) return false;
-      target.click();
-      return true;
-    },
-    { tableSelector: SELECTORS.gruposTable, nextPageNumber }
-  );
-
-  if (!clicked) {
+  if (!canGoNext) {
     log("nenhum controle de próxima página encontrado", { nextPage: nextPageNumber });
     return false;
+  }
+
+  const didPostback = await page.evaluate(() => {
+    const win = window as any;
+    if (typeof win.__doPostBack === "function") {
+      win.__doPostBack("ctl00$Conteudo$grdGruposDisponiveis", "Page$Next");
+      return true;
+    }
+    return false;
+  }).catch(() => false);
+
+  if (!didPostback) {
+    await page.locator('input[type="image"][onclick*="ctl00$Conteudo$grdGruposDisponiveis"][onclick*="Page$Next"], input[alt="Próximo"][onclick*="Page$Next"], input[alt="Proximo"][onclick*="Page$Next"], input[src*="next.png"][onclick*="Page$Next"]').first().click({ timeout: 5000 });
   }
 
   await waitDom(page, 10000);
@@ -205,11 +163,11 @@ const patchedClickNextPage = `async function clickNextPageIfExists(page: Page, p
     }
   }
 
-  log("controle de próxima página clicado, mas tabela não mudou", { nextPage: nextPageNumber });
+  log("controle de próxima página acionado, mas tabela não mudou", { nextPage: nextPageNumber });
   return false;
 }`;
 
-const oldClickNextFunction = /async function clickNextPageIfExists\(page: Page\) \{[\s\S]*?\n\}\n\nasync function readAllPages\(page: Page, segmento: SegmentKey, venda: string \| null\)/;
+const oldClickNextFunction = /async function clickNextPageIfExists\(page: Page(?:, pageIndex = 0)?\) \{[\s\S]*?\n\}\n\nasync function readAllPages\(page: Page, segmento: SegmentKey, venda: string \| null\)/;
 source = source.replace(
   oldClickNextFunction,
   `${patchedClickNextPage}\n\nasync function readAllPages(page: Page, segmento: SegmentKey, venda: string | null)`

@@ -81,8 +81,94 @@ function envFor(administradora: AdminKey) {
   }
 }
 
-async function loadBBRobot() {
-  return await import('./bb-groups-rpa.js')
+function isBBAssemblyRequest(options: Record<string, any>) {
+  const tipo = String(options.tipo || options.mode || '').toLowerCase()
+  return tipo === 'assembleia' || tipo === 'assembly' || tipo === 'resultado_assembleia'
+}
+
+function normalizeWorkerUrl(url: string) {
+  return url.replace(/\/+$/, '')
+}
+
+async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<RobotResult> {
+  const workerUrl = process.env.BB_GROUPS_WORKER_URL || ''
+  const secret = process.env.ROBOT_API_SECRET || ''
+  const missing = [
+    ['BB_GROUPS_WORKER_URL', workerUrl],
+    ['ROBOT_API_SECRET', secret],
+  ]
+    .filter(([, value]) => !value)
+    .map(([key]) => key)
+
+  if (missing.length) {
+    return {
+      ok: false,
+      status: 'not_configured',
+      administradora: 'bb',
+      message: `Worker externo BB criado, mas ainda faltam variáveis seguras na Vercel: ${missing.join(', ')}.`,
+      details: {
+        required_envs: ['BB_GROUPS_WORKER_URL', 'ROBOT_API_SECRET'],
+      },
+    }
+  }
+
+  const segmento = options.segmento || options.bbSegmento || 'auto_fipe'
+  const endpoint = `${normalizeWorkerUrl(workerUrl)}/sync/bb/groups`
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({ segmento }),
+    })
+
+    const text = await response.text()
+    let data: any = null
+
+    try {
+      data = text ? JSON.parse(text) : null
+    } catch {
+      data = { raw: text }
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: 'error',
+        administradora: 'bb',
+        message: data?.error || data?.message || `Worker BB retornou erro HTTP ${response.status}.`,
+        details: {
+          worker_status: response.status,
+          worker_response: data,
+        },
+      }
+    }
+
+    return {
+      ok: Boolean(data?.ok ?? true),
+      status: data?.status || 'synced',
+      administradora: 'bb',
+      message: data?.message || `Sincronização BB concluída pelo worker externo para o segmento ${segmento}.`,
+      found: data?.found,
+      created: data?.created,
+      updated: data?.updated,
+      deactivated: data?.deactivated,
+      details: data?.details || {},
+    }
+  } catch (err: any) {
+    return {
+      ok: false,
+      status: 'error',
+      administradora: 'bb',
+      message: `Falha ao chamar worker externo BB: ${err?.message || String(err)}`,
+      details: {
+        endpoint,
+      },
+    }
+  }
 }
 
 async function loadBBAssemblyRobot() {
@@ -92,6 +178,10 @@ async function loadBBAssemblyRobot() {
 
 async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}): Promise<RobotResult> {
   if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
+
+  if (administradora === 'bb' && !isBBAssemblyRequest(options)) {
+    return await callBBGroupsWorker(options)
+  }
 
   const env = envFor(administradora)
   const missing = Object.entries(env).filter(([, value]) => !value).map(([key]) => key)
@@ -112,18 +202,10 @@ async function syncByRpa(administradora: AdminKey, options: Record<string, any> 
 
   if (administradora === 'bb') {
     try {
-      const tipo = String(options.tipo || options.mode || '').toLowerCase()
-
-      if (tipo === 'assembleia' || tipo === 'assembly' || tipo === 'resultado_assembleia') {
-        const grupo = options.grupo || options.group
-        if (!grupo) throw new Error('Informe o número do grupo para buscar resultado de assembleia.')
-        const mod = await loadBBAssemblyRobot()
-        return await mod.syncBBAssemblyResultRpa(env, admin, { grupo })
-      }
-
-      const mod = await loadBBRobot()
-      const segmento = options.segmento || options.bbSegmento || 'auto_fipe'
-      return await mod.syncBBGroupsRpa(env, admin, { segmento })
+      const grupo = options.grupo || options.group
+      if (!grupo) throw new Error('Informe o número do grupo para buscar resultado de assembleia.')
+      const mod = await loadBBAssemblyRobot()
+      return await mod.syncBBAssemblyResultRpa(env, admin, { grupo })
     } catch (err: any) {
       return {
         ok: false,

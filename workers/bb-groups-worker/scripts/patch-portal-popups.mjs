@@ -65,4 +65,67 @@ const newClick = `      await dismissPostLoginMessages(page);
       await waitDom(page, 8000);`;
 source = source.replace(oldClick, newClick);
 
+const patchedAvailableVendaValues = `async function availableVendaValues(page: Page) {
+  const venda = page.locator(SELECTORS.venda);
+
+  if (!(await venda.isVisible().catch(() => false))) {
+    return [];
+  }
+
+  if (!(await venda.isEnabled().catch(() => false))) {
+    log("tipo de venda desabilitado; seguindo sem seleção específica");
+    return [];
+  }
+
+  const options = await getSelectOptions(page, SELECTORS.venda);
+
+  return options
+    .filter((option) => !option.disabled && option.value)
+    .map((option) => ({
+      value: String(option.value),
+      text: String(option.text || ""),
+    }));
+}`;
+
+const patchedSelectVenda = `async function selectVenda(page: Page, vendaValue: string) {
+  const venda = page.locator(SELECTORS.venda);
+
+  if (!(await venda.isVisible().catch(() => false))) {
+    log("tipo de venda não encontrado; seguindo sem seleção específica", { venda: vendaValue });
+    return false;
+  }
+
+  if (!(await venda.isEnabled().catch(() => false))) {
+    log("tipo de venda desabilitado; seguindo sem seleção específica", { venda: vendaValue });
+    return false;
+  }
+
+  const vendas = await availableVendaValues(page);
+  const found = vendas.find((v) => v.value === vendaValue);
+
+  if (!found) {
+    log("venda não disponível; seguindo sem seleção específica", {
+      venda: vendaValue,
+      disponiveis: vendas.map((v) => `${v.value} - ${v.text}`).join(" | "),
+    });
+    return false;
+  }
+
+  log("venda selecionada", {
+    venda: found.value,
+    text: found.text,
+  });
+
+  await venda.selectOption(vendaValue, { timeout: 5000 });
+  await waitDom(page, 5000);
+  await page.waitForTimeout(700);
+  return true;
+}`;
+
+const oldVendaFunctions = /async function availableVendaValues\(page: Page\) \{[\s\S]*?\n\}\n\nasync function selectVenda\(page: Page, vendaValue: string\) \{[\s\S]*?\n\}\n\nasync function clickMainNext\(page: Page\)/;
+source = source.replace(
+  oldVendaFunctions,
+  `${patchedAvailableVendaValues}\n\n${patchedSelectVenda}\n\nasync function clickMainNext(page: Page)`
+);
+
 writeFileSync(file, source);

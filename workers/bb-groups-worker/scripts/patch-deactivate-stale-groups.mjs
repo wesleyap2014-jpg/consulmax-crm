@@ -153,12 +153,6 @@ replaceOnce(
 );
 
 replaceRegex(
-  /(log\("sincronização concluída", \{[\s\S]*?created,\n\s*updated,\n)(\s*\}\);)/,
-  "$1      deactivated,\n$2",
-  "sincronização concluída", {__never__: true}
-);
-
-replaceRegex(
   /(found: payloads\.length,\n\s*created,\n\s*updated,\n)(\s*details: \{)/,
   "$1      deactivated,\n$2",
   "found: payloads.length,\n      created,\n      updated,\n      deactivated,"

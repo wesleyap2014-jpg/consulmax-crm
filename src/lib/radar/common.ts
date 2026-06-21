@@ -1,4 +1,4 @@
-import type { AnyRow, RadarSegment } from "./types";
+import type { AnyRow, RadarCalculation, RadarInput, RadarScoreBreakdown, RadarSegment } from "./types";
 
 export function onlyNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -130,10 +130,10 @@ export function safeId(...parts: Array<string | number | undefined | null>) {
 }
 
 export function scoreLabel(score: number) {
-  if (score >= 86) return "Excelente oportunidade";
-  if (score >= 72) return "Boa aderência";
-  if (score >= 58) return "Ajustável";
-  return "Fora do ideal";
+  if (score >= 88) return "Aderência excelente";
+  if (score >= 76) return "Boa aderência";
+  if (score >= 62) return "Aderência parcial";
+  return "Baixa aderência";
 }
 
 export function findAdminKey(nameOrSlug: string) {
@@ -149,4 +149,94 @@ export function adminRouteFromKey(adminKey: string) {
   if (adminKey === "embracon") return "/simuladores/embracon";
   if (adminKey === "bb") return "/simuladores/bb-consorcios";
   return "/simuladores";
+}
+
+export function purchasingPower(calc: Pick<RadarCalculation, "creditoLiquido" | "lanceProprio">, input: RadarInput) {
+  const ownBidAvailable = onlyNumber(input.lanceProprio);
+  return calc.creditoLiquido + Math.max(0, ownBidAvailable - calc.lanceProprio);
+}
+
+function closenessScore(actual: number, target: number, tolerancePct: number) {
+  if (!target) return 85;
+  const diffPct = Math.abs(actual - target) / target;
+  return clamp(100 - (diffPct / tolerancePct) * 100, 0, 100);
+}
+
+function minTargetScore(actual: number, target: number) {
+  if (!target) return 85;
+  if (actual >= target) {
+    const excess = (actual - target) / target;
+    return clamp(100 - Math.max(0, excess - 0.15) * 80, 70, 100);
+  }
+  return clamp((actual / target) * 100, 0, 100);
+}
+
+function maxBudgetScore(actual: number, target: number) {
+  if (!target) return 85;
+  if (actual <= target) return clamp(100 - Math.max(0, target - actual) / target * 8, 92, 100);
+  return clamp(100 - ((actual - target) / target) * 120, 0, 100);
+}
+
+export function aggregateCalculation(calc: RadarCalculation, quantidadeCotas: number): RadarCalculation {
+  if (quantidadeCotas <= 1) return calc;
+  const q = quantidadeCotas;
+  const creditoContratado = calc.creditoContratado * q;
+  const creditoLiquido = calc.creditoLiquido * q;
+  const lanceProprio = calc.lanceProprio * q;
+  const lanceEmbutido = calc.lanceEmbutido * q;
+  const lanceTotal = calc.lanceTotal * q;
+
+  return {
+    ...calc,
+    creditoContratado,
+    creditoLiquido,
+    parcelaInicial: calc.parcelaInicial * q,
+    parcelaAposContemplacao: calc.parcelaAposContemplacao * q,
+    parcelaEstimada: calc.parcelaEstimada * q,
+    lanceProprio,
+    lanceProprioPct: creditoContratado > 0 ? (lanceProprio / creditoContratado) * 100 : 0,
+    lanceEmbutido,
+    lanceEmbutidoPct: creditoContratado > 0 ? (lanceEmbutido / creditoContratado) * 100 : 0,
+    lanceTotal,
+    lanceTotalPct: creditoContratado > 0 ? (lanceTotal / creditoContratado) * 100 : 0,
+    valorCategoria: calc.valorCategoria * q,
+    saldoDevedor: calc.saldoDevedor * q,
+  };
+}
+
+export function scoreOffer(calc: RadarCalculation, input: RadarInput, quantidadeCotas = 1): RadarScoreBreakdown {
+  const desiredPower = onlyNumber(input.creditoLiquido);
+  const desiredInstallment = onlyNumber(input.parcelaDesejada);
+  const ownBidAvailable = onlyNumber(input.lanceProprio);
+  const desiredMonths = Math.max(1, onlyNumber(input.prazoContemplacao));
+  const power = purchasingPower(calc, input);
+
+  const creditoScore = input.modo === "credito" ? minTargetScore(power, desiredPower) : minTargetScore(calc.creditoLiquido, desiredPower);
+  const parcelaScore = desiredInstallment > 0 ? maxBudgetScore(calc.parcelaEstimada, desiredInstallment) : 85;
+  const lanceScore = ownBidAvailable > 0 ? maxBudgetScore(calc.lanceProprio, ownBidAvailable) : calc.lanceProprio <= 0 ? 100 : 0;
+  const prazoScore = closenessScore(desiredMonths, Math.max(1, desiredMonths), 0.35);
+  const sobraRatio = ownBidAvailable > 0 ? Math.max(0, ownBidAvailable - calc.lanceProprio) / ownBidAvailable : 0;
+  const cotasPenalty = Math.max(0, quantidadeCotas - 1) * 6;
+  const eficienciaScore = clamp(92 + sobraRatio * 8 - cotasPenalty, 45, 100);
+
+  const weights =
+    input.modo === "parcela"
+      ? { credito: 0.22, parcela: 0.35, lance: 0.2, prazo: 0.1, eficiencia: 0.13 }
+      : { credito: 0.35, parcela: 0.22, lance: 0.2, prazo: 0.1, eficiencia: 0.13 };
+
+  const total =
+    creditoScore * weights.credito +
+    parcelaScore * weights.parcela +
+    lanceScore * weights.lance +
+    prazoScore * weights.prazo +
+    eficienciaScore * weights.eficiencia;
+
+  return {
+    credito: Math.round(creditoScore),
+    parcela: Math.round(parcelaScore),
+    lance: Math.round(lanceScore),
+    prazo: Math.round(prazoScore),
+    eficiencia: Math.round(eficienciaScore),
+    total: Math.round(clamp(total, 0, 100)),
+  };
 }

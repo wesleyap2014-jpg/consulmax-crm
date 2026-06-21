@@ -1,4 +1,15 @@
-import { adminRouteFromKey, clamp, onlyNumber, rowConfig, rowMatchesSegment, safeId, scoreLabel } from "../common";
+import {
+  adminRouteFromKey,
+  aggregateCalculation,
+  clamp,
+  onlyNumber,
+  purchasingPower,
+  rowConfig,
+  rowMatchesSegment,
+  safeId,
+  scoreLabel,
+  scoreOffer,
+} from "../common";
 import { estimateProbability, groupBidStats } from "../probability";
 import type { AnyRow, EngineContext, EngineResult, RadarCalculation, RadarOffer } from "../types";
 
@@ -68,24 +79,35 @@ function calcBb(params: { group: AnyRow; range: AnyRow; credit: number; ownBid: 
   } satisfies RadarCalculation;
 }
 
-function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: RadarCalculation) {
+function bidCandidates(group: AnyRow, credit: number, ownBidAvailable: number, quantidadeCotas: number) {
+  const maxPerQuota = quantidadeCotas > 0 ? ownBidAvailable / quantidadeCotas : ownBidAvailable;
+  const stats = groupBidStats(group);
+  const pcts = [0, stats.min, stats.median, stats.max, credit > 0 ? (maxPerQuota / credit) * 100 : 0]
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+  const values = pcts.map((pct) => Math.min(maxPerQuota, credit * (pct / 100))).filter((value) => value >= 0);
+  return [...new Set(values.map((value) => Math.round(value)))];
+}
+
+function maxQuotaCount(ctx: EngineContext, credit: number) {
+  const desiredPower = onlyNumber(ctx.input.creditoLiquido);
+  if (!desiredPower || !credit) return 1;
+  return clamp(Math.ceil((desiredPower * 1.15) / credit), 1, 12);
+}
+
+function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: RadarCalculation, quantidadeCotas: number) {
   const desiredNet = onlyNumber(ctx.input.creditoLiquido);
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
   const probabilidade = estimateProbability({ ownBidPct: calc.lanceProprioPct, group });
   const stats = groupBidStats(group);
-  let score = 50;
+  const power = purchasingPower(calc, ctx.input);
+  const scoreBreakdown = scoreOffer(calc, ctx.input, quantidadeCotas);
   const motivos: string[] = [];
   const alertas: string[] = [];
 
   if (ctx.input.modo === "credito") {
-    if (calc.creditoLiquido >= desiredNet) score += 18;
-    else {
-      score -= 18;
-      alertas.push("poder de compra abaixo do desejado");
-    }
-  } else if (calc.parcelaEstimada <= desiredInstallment) score += 22;
-  else {
-    score -= 18;
+    if (power >= desiredNet) motivos.push("poder de compra atende o objetivo informado");
+    else alertas.push("poder de compra abaixo do desejado");
+  } else if (desiredInstallment > 0 && calc.parcelaEstimada > desiredInstallment) {
     alertas.push("parcela estimada acima do orçamento");
   }
 
@@ -93,22 +115,26 @@ function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: Rada
   if (stats.median !== null) motivos.push(`mediana/média do grupo: ${stats.median.toFixed(2)}%`);
   if (stats.max !== null) motivos.push(`maior lance contemplado: ${stats.max.toFixed(2)}%`);
   motivos.push("faixa importada do portal BB Consórcios");
-
-  const finalScore = clamp(Math.round(score + (probabilidade >= onlyNumber(ctx.input.probabilidadeMinima) ? 12 : 0)), 0, 100);
+  if (quantidadeCotas > 1) motivos.push(`combina ${quantidadeCotas} cotas no mesmo grupo/faixa`);
 
   return {
     ...calc,
-    id: safeId("bb", group.id, range.id, Math.round(calc.creditoContratado), Math.round(calc.lanceTotal)),
+    id: safeId("bb", group.id, range.id, quantidadeCotas, Math.round(calc.creditoContratado), Math.round(calc.lanceTotal)),
     admin: ctx.admin,
     adminKey: "bb",
     table: { ...range, nome_tabela: `Grupo ${group.grupo || group.codigo || ""} • ${range.label || "Faixa"}` },
     group,
-    score: finalScore,
-    scoreLabel: scoreLabel(finalScore),
+    score: scoreBreakdown.total,
+    scoreBreakdown,
+    scoreLabel: scoreLabel(scoreBreakdown.total),
+    poderCompra: power,
+    lanceProprioDisponivel: onlyNumber(ctx.input.lanceProprio),
+    lanceProprioSobra: Math.max(0, onlyNumber(ctx.input.lanceProprio) - calc.lanceProprio),
+    quantidadeCotas,
     probabilidadeContemplacao: probabilidade,
     prazoContemplacaoDesejado: onlyNumber(ctx.input.prazoContemplacao),
     segmento: String(group.segmento || ctx.input.segmento),
-    nomeTabela: `Grupo ${group.grupo || group.codigo || ""} • ${range.label || "Faixa"}`,
+    nomeTabela: `${quantidadeCotas > 1 ? `${quantidadeCotas} cotas • ` : ""}Grupo ${group.grupo || group.codigo || ""} • ${range.label || "Faixa"}`,
     grupoCodigo: String(group.grupo || group.codigo || ""),
     estrategia: calc.lanceEmbutido > 0 ? "Lance próprio + embutido BB" : "Lance próprio sem embutido",
     motivos: motivos.slice(0, 5),
@@ -119,6 +145,7 @@ function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: Rada
       groupId: String(group.id || ""),
       grupo: String(group.grupo || group.codigo || ""),
       credito: String(Math.round(calc.creditoContratado)),
+      quantidadeCotas: String(quantidadeCotas),
       lanceProprioPct: String(calc.lanceProprioPct.toFixed(4)),
       lanceEmbutidoPct: String(calc.lanceEmbutidoPct.toFixed(4)),
     },
@@ -137,20 +164,26 @@ export function runBbEngine(ctx: EngineContext, groups: AnyRow[]): EngineResult 
     for (const range of creditRanges(group)) {
       const credit = onlyNumber(range.valor || range.valor_credito || range.credito || range.credit_value);
       if (!credit) continue;
-      if (ctx.input.modo === "credito" && credit < desiredNet) continue;
-      if (ctx.input.modo === "parcela" && calcBb({ group, range, credit, ownBid, embPct: 0 }).parcelaEstimada > desiredInstallment * 1.25) continue;
 
       const embOptions =
         ctx.input.usarEmbutido === "ia"
           ? [0, maxEmbeddedPct(group)]
           : [ctx.input.usarEmbutido === "sim" ? maxEmbeddedPct(group) : 0];
       for (const embPct of [...new Set(embOptions)]) {
-        const calc = calcBb({ group, range, credit, ownBid, embPct });
-        offers.push(buildOffer(ctx, group, range, calc));
+        const maxQty = maxQuotaCount(ctx, credit);
+        for (let quantidadeCotas = 1; quantidadeCotas <= maxQty; quantidadeCotas++) {
+          for (const ownBidPerQuota of bidCandidates(group, credit, ownBid, quantidadeCotas)) {
+            const baseCalc = calcBb({ group, range, credit, ownBid: ownBidPerQuota, embPct });
+            const calc = aggregateCalculation(baseCalc, quantidadeCotas);
+            if (calc.lanceProprio > ownBid + 1) continue;
+            if (ctx.input.modo === "credito" && purchasingPower(calc, ctx.input) < desiredNet * 0.72) continue;
+            if (ctx.input.modo === "parcela" && calc.parcelaEstimada > desiredInstallment * 1.35) continue;
+            offers.push(buildOffer(ctx, group, range, calc, quantidadeCotas));
+          }
+        }
       }
     }
   }
 
   return offers;
 }
-

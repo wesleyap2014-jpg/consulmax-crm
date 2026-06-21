@@ -1,4 +1,15 @@
-import { adminRouteFromKey, clamp, onlyNumber, rowConfig, rowMatchesSegment, safeId, scoreLabel } from "../common";
+import {
+  adminRouteFromKey,
+  aggregateCalculation,
+  clamp,
+  onlyNumber,
+  purchasingPower,
+  rowConfig,
+  rowMatchesSegment,
+  safeId,
+  scoreLabel,
+  scoreOffer,
+} from "../common";
 import { estimateProbability, groupBidStats } from "../probability";
 import type { AnyRow, EngineContext, EngineResult, RadarCalculation, RadarOffer } from "../types";
 
@@ -124,45 +135,69 @@ function calcMaggi(params: {
   } satisfies RadarCalculation;
 }
 
-function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, prazoRule: AnyRow, lanceOption: AnyRow, calc: RadarCalculation) {
+function bidCandidates(group: AnyRow, credit: number, ownBidAvailable: number, quantidadeCotas: number) {
+  const maxPerQuota = quantidadeCotas > 0 ? ownBidAvailable / quantidadeCotas : ownBidAvailable;
+  const stats = groupBidStats(group);
+  const pcts = [0, stats.min, stats.median, stats.max, credit > 0 ? (maxPerQuota / credit) * 100 : 0]
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+  const values = pcts.map((pct) => Math.min(maxPerQuota, credit * (pct / 100))).filter((value) => value >= 0);
+  return [...new Set(values.map((value) => Math.round(value)))];
+}
+
+function maxQuotaCount(ctx: EngineContext, credit: number) {
+  const desiredPower = onlyNumber(ctx.input.creditoLiquido);
+  if (!desiredPower || !credit) return 1;
+  return clamp(Math.ceil((desiredPower * 1.15) / credit), 1, 12);
+}
+
+function buildOffer(
+  ctx: EngineContext,
+  group: AnyRow,
+  range: AnyRow,
+  prazoRule: AnyRow,
+  lanceOption: AnyRow,
+  calc: RadarCalculation,
+  quantidadeCotas: number
+) {
   const desiredNet = onlyNumber(ctx.input.creditoLiquido);
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
   const probabilidade = estimateProbability({ ownBidPct: calc.lanceProprioPct, group });
   const stats = groupBidStats(group);
-  let score = 50;
+  const power = purchasingPower(calc, ctx.input);
+  const scoreBreakdown = scoreOffer(calc, ctx.input, quantidadeCotas);
   const motivos: string[] = [];
   const alertas: string[] = [];
 
   if (ctx.input.modo === "credito") {
-    if (calc.creditoLiquido >= desiredNet) score += 18;
-    else {
-      score -= 18;
-      alertas.push("poder de compra abaixo do desejado");
-    }
-  } else if (calc.parcelaEstimada <= desiredInstallment) score += 22;
-  else {
-    score -= 18;
+    if (power >= desiredNet) motivos.push("poder de compra atende o objetivo informado");
+    else alertas.push("poder de compra abaixo do desejado");
+  } else if (desiredInstallment > 0 && calc.parcelaEstimada > desiredInstallment) {
     alertas.push("parcela estimada acima do orçamento");
   }
 
   if (stats.median !== null) motivos.push(`lance próprio comparado à mediana do grupo (${stats.median.toFixed(2)}%)`);
   motivos.push(`regra pós-contemplação: ${group.regra_pos_contemplacao || "saldo devedor / prazo restante"}`);
   if (rowConfig(group).firstParcelRule?.enabled) motivos.push("considera primeira parcela diferenciada");
+  if (quantidadeCotas > 1) motivos.push(`combina ${quantidadeCotas} cotas no mesmo grupo/faixa`);
 
-  const finalScore = clamp(Math.round(score + (probabilidade >= onlyNumber(ctx.input.probabilidadeMinima) ? 12 : 0)), 0, 100);
   return {
     ...calc,
-    id: safeId("maggi", group.id, range.id, prazoRule.id, lanceOption.key, Math.round(calc.creditoContratado), Math.round(calc.lanceTotal)),
+    id: safeId("maggi", group.id, range.id, prazoRule.id, lanceOption.key, quantidadeCotas, Math.round(calc.creditoContratado), Math.round(calc.lanceTotal)),
     admin: ctx.admin,
     adminKey: "maggi",
     table: { ...range, ...prazoRule, nome_tabela: `Grupo ${group.grupo} • ${range.label || "Faixa"}` },
     group,
-    score: finalScore,
-    scoreLabel: scoreLabel(finalScore),
+    score: scoreBreakdown.total,
+    scoreBreakdown,
+    scoreLabel: scoreLabel(scoreBreakdown.total),
+    poderCompra: power,
+    lanceProprioDisponivel: onlyNumber(ctx.input.lanceProprio),
+    lanceProprioSobra: Math.max(0, onlyNumber(ctx.input.lanceProprio) - calc.lanceProprio),
+    quantidadeCotas,
     probabilidadeContemplacao: probabilidade,
     prazoContemplacaoDesejado: onlyNumber(ctx.input.prazoContemplacao),
     segmento: String(group.segmento || ctx.input.segmento),
-    nomeTabela: `Grupo ${group.grupo} • ${range.label || "Faixa"}`,
+    nomeTabela: `${quantidadeCotas > 1 ? `${quantidadeCotas} cotas • ` : ""}Grupo ${group.grupo} • ${range.label || "Faixa"}`,
     grupoCodigo: String(group.grupo || ""),
     estrategia: `${lanceOption.nomeComercial || "Lance"} • ${rowConfig(group).seguroMomento === "contratacao" ? "seguro na contratação" : "seguro na contemplação"}`,
     motivos: motivos.slice(0, 5),
@@ -173,6 +208,7 @@ function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, prazoRule:
       groupId: String(group.id || ""),
       grupo: String(group.grupo || ""),
       credito: String(Math.round(calc.creditoContratado)),
+      quantidadeCotas: String(quantidadeCotas),
       prazoRuleId: String(prazoRule.id || ""),
       lanceKey: String(lanceOption.key || ""),
       lanceProprioPct: String(calc.lanceProprioPct.toFixed(4)),
@@ -195,7 +231,6 @@ export function runMaggiEngine(ctx: EngineContext, groups: AnyRow[]): EngineResu
     for (const range of cfg.creditRanges) {
       const credit = onlyNumber(range.valor);
       if (!credit) continue;
-      if (ctx.input.modo === "credito" && credit < desiredNet) continue;
       for (const prazoRule of cfg.prazoRules) {
         for (const lanceOption of cfg.lanceOptions) {
           const embOptions =
@@ -203,10 +238,18 @@ export function runMaggiEngine(ctx: EngineContext, groups: AnyRow[]): EngineResu
               ? [0, cfg.maxLanceEmbutidoPct]
               : [ctx.input.usarEmbutido === "sim" ? cfg.maxLanceEmbutidoPct : 0];
           for (const embPct of [...new Set(embOptions)]) {
-            const calc = calcMaggi({ group, credit, prazoRule, lanceOption, ownBid, embPct, parcelaContemplacao });
-            if (calc.lanceProprio > ownBid + 1) continue;
-            if (ctx.input.modo === "parcela" && calc.parcelaEstimada > desiredInstallment * 1.25) continue;
-            offers.push(buildOffer(ctx, group, range, prazoRule, lanceOption, calc));
+            const maxQty = maxQuotaCount(ctx, credit);
+            for (let quantidadeCotas = 1; quantidadeCotas <= maxQty; quantidadeCotas++) {
+              const ownBidOptions = lanceOption.key === "livre" ? bidCandidates(group, credit, ownBid, quantidadeCotas) : [0];
+              for (const ownBidPerQuota of ownBidOptions) {
+                const baseCalc = calcMaggi({ group, credit, prazoRule, lanceOption, ownBid: ownBidPerQuota, embPct, parcelaContemplacao });
+                const calc = aggregateCalculation(baseCalc, quantidadeCotas);
+                if (calc.lanceProprio > ownBid + 1) continue;
+                if (ctx.input.modo === "credito" && purchasingPower(calc, ctx.input) < desiredNet * 0.72) continue;
+                if (ctx.input.modo === "parcela" && calc.parcelaEstimada > desiredInstallment * 1.35) continue;
+                offers.push(buildOffer(ctx, group, range, prazoRule, lanceOption, calc, quantidadeCotas));
+              }
+            }
           }
         }
       }

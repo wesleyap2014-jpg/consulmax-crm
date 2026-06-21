@@ -30,7 +30,7 @@ const C = {
 const RADAR_SEGMENTS: RadarSegment[] = ["Automóvel", "Imóvel", "Serviços"];
 const PROBABILITY_OPTIONS = ["40", "50", "60", "70", "80", "90", "95"];
 const ADMIN_OPTIONS: Array<{ value: AdminFilter; label: string }> = [
-  { value: "todas", label: "Todas disponíveis" },
+  { value: "todas", label: "IA Decide" },
   { value: "bb", label: "BB Consórcios" },
   { value: "embracon", label: "Embracon" },
   { value: "maggi", label: "Maggi" },
@@ -130,8 +130,8 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
             <div className="mt-1 text-lg font-black" style={{ color: C.navy }}>{brMoney(offer.creditoContratado)}</div>
           </div>
           <div>
-            <div className="text-[11px] font-semibold text-slate-500">Crédito líquido</div>
-            <div className="mt-1 text-lg font-black" style={{ color: C.ruby }}>{brMoney(offer.creditoLiquido)}</div>
+            <div className="text-[11px] font-semibold text-slate-500">Poder de compra</div>
+            <div className="mt-1 text-lg font-black" style={{ color: C.ruby }}>{brMoney(offer.poderCompra)}</div>
           </div>
         </div>
 
@@ -145,20 +145,21 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
               <span className="text-[9px] font-bold leading-none">{probabilityLabel}</span>
             </div>
             <div className="text-xs text-slate-600">
-              <div className="font-black" style={{ color: C.navy }}>Assertividade</div>
-              <div>{offer.scoreLabel}</div>
+              <div className="font-black" style={{ color: C.navy }}>Probabilidade</div>
+              <div>chance de contemplação</div>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-lg font-black" style={{ color: C.ruby }}>
-              {Math.max(1, offer.prazoContemplacaoDesejado || 3)} meses
-            </div>
-            <div className="text-xs font-semibold text-slate-500">até a contemplação</div>
+            <div className="text-lg font-black" style={{ color: C.ruby }}>{offer.score}/100</div>
+            <div className="text-xs font-semibold text-slate-500">{offer.scoreLabel}</div>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-x-5 gap-y-3 text-sm">
+          <CardLine label="Crédito líquido" value={brMoney(offer.creditoLiquido)} />
+          <CardLine label="Cotas" value={`${offer.quantidadeCotas || 1}`} />
           <CardLine label="Lance próprio" value={brMoney(offer.lanceProprio)} />
+          <CardLine label="Sobra do lance" value={brMoney(offer.lanceProprioSobra)} />
           <CardLine label="% lance próprio" value={brPct(offer.lanceProprioPct)} />
           <CardLine label="Parcela inicial" value={brMoney(offer.parcelaInicial)} />
           <CardLine label="Parcela pós" value={brMoney(offer.parcelaAposContemplacao)} />
@@ -205,9 +206,8 @@ export default function RadarOfertas() {
 
     (async () => {
       setLoading(true);
-      const [adminsRes, tablesRes, bbGroupsRes, maggiGroupsRes] = await Promise.all([
+      const [adminsRes, bbGroupsRes, maggiGroupsRes] = await Promise.all([
         supabase.from("sim_admins").select("*").order("name", { ascending: true }),
-        supabase.from("sim_tables").select("*"),
         supabase.from("sim_bb_groups").select("*"),
         supabase.from("sim_maggi_groups").select("*"),
       ]);
@@ -216,7 +216,7 @@ export default function RadarOfertas() {
 
       setSourceData({
         admins: (adminsRes.data || []) as AdminRow[],
-        embraconTables: (tablesRes.data || []) as AnyRow[],
+        embraconTables: [],
         bbGroups: (bbGroupsRes.data || []) as AnyRow[],
         maggiGroups: (maggiGroupsRes.data || []) as AnyRow[],
       });
@@ -241,13 +241,17 @@ export default function RadarOfertas() {
       `Administradora: ${offer.admin.name}`,
       `Tabela/Grupo: ${offer.nomeTabela}`,
       offer.grupoCodigo ? `Grupo: ${offer.grupoCodigo}` : null,
+      `Cotas: ${offer.quantidadeCotas || 1}`,
       `Crédito contratado: ${brMoney(offer.creditoContratado)}`,
-      `Poder de compra estimado: ${brMoney(offer.creditoLiquido)}`,
+      `Crédito líquido: ${brMoney(offer.creditoLiquido)}`,
+      `Poder de compra estimado: ${brMoney(offer.poderCompra)}`,
       `Parcela inicial: ${brMoney(offer.parcelaInicial)}`,
       `Parcela pós-contemplação: ${brMoney(offer.parcelaAposContemplacao)}`,
       `Lance próprio: ${brMoney(offer.lanceProprio)} (${brPct(offer.lanceProprioPct)})`,
+      `Sobra do lance próprio: ${brMoney(offer.lanceProprioSobra)}`,
       `Lance embutido: ${brMoney(offer.lanceEmbutido)} (${brPct(offer.lanceEmbutidoPct)})`,
       `Probabilidade estimada: ${brPct(offer.probabilidadeContemplacao)}`,
+      `Score de aderência: ${offer.score}/100`,
       `Estratégia: ${offer.estrategia}`,
     ]
       .filter(Boolean)
@@ -301,7 +305,7 @@ export default function RadarOfertas() {
 
         <div className="grid gap-3 md:grid-cols-4">
           <Metric label="Ofertas aprovadas" value={`${offers.length}`} />
-          <Metric label="Fonte" value={ADMIN_OPTIONS.find((item) => item.value === input.administradora)?.label || "Todas"} />
+          <Metric label="Fonte" value={ADMIN_OPTIONS.find((item) => item.value === input.administradora)?.label || "IA Decide"} />
           <Metric label="Embutido" value={input.usarEmbutido === "ia" ? "IA Decide" : input.usarEmbutido === "sim" ? "Sim" : "Não"} />
           <Metric label="Prazo desejado" value={`${onlyNumber(input.prazoContemplacao) || 0} meses`} />
         </div>
@@ -341,7 +345,7 @@ export default function RadarOfertas() {
           </div>
           <h1 className="text-2xl font-black tracking-tight md:text-4xl">Encontre a melhor oferta usando os motores dos simuladores.</h1>
           <p className="mt-3 max-w-3xl text-sm text-white/80 md:text-base">
-            O Radar consulta BB, Embracon e Maggi, aplica as regras configuradas em cada simulador/tabela/grupo e retorna somente ofertas com probabilidade igual ou superior ao filtro.
+            O Radar consulta os grupos disponíveis de BB e Maggi, aplica as regras configuradas em cada simulador/grupo e retorna somente ofertas com probabilidade igual ou superior ao filtro.
           </p>
         </div>
       </section>
@@ -439,7 +443,7 @@ export default function RadarOfertas() {
             </div>
             <div className="rounded-2xl border bg-white/75 p-4">
               <b>Embracon</b>
-              <p className="mt-1">Usa `sim_tables`, `sim_admins.rules`, antecipação, limitador e formas reduzidas.</p>
+              <p className="mt-1">Aguardando schema de grupos disponíveis. O Radar não busca Embracon somente por tabela.</p>
             </div>
             <div className="rounded-2xl border bg-white/75 p-4">
               <b>Maggi</b>
@@ -451,4 +455,3 @@ export default function RadarOfertas() {
     </div>
   );
 }
-

@@ -56,6 +56,15 @@ export type RadarCalculation = {
   limitadorParcelaPct?: number;
 };
 
+export type RadarScoreBreakdown = {
+  credito: number;
+  parcela: number;
+  lance: number;
+  prazo: number;
+  eficiencia: number;
+  total: number;
+};
+
 export type RadarOffer = RadarCalculation & {
   id: string;
   admin: AdminRow;
@@ -63,7 +72,12 @@ export type RadarOffer = RadarCalculation & {
   table: AnyRow;
   group?: AnyRow | null;
   score: number;
+  scoreBreakdown: RadarScoreBreakdown;
   scoreLabel: string;
+  poderCompra: number;
+  lanceProprioDisponivel: number;
+  lanceProprioSobra: number;
+  quantidadeCotas: number;
   probabilidadeContemplacao: number;
   prazoContemplacaoDesejado: number;
   segmento: string;
@@ -82,4 +96,3 @@ export type EngineContext = {
 };
 
 export type EngineResult = RadarOffer[];
-

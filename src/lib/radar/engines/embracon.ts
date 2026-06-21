@@ -3,9 +3,11 @@ import {
   clamp,
   normalizeText,
   onlyNumber,
+  purchasingPower,
   rowMatchesSegment,
   safeId,
   scoreLabel,
+  scoreOffer,
 } from "../common";
 import { estimateProbability, groupBidStats } from "../probability";
 import type { AdminRow, AnyRow, EngineContext, EngineResult, RadarCalculation, RadarOffer } from "../types";
@@ -153,37 +155,28 @@ function buildOffer(params: {
   calc: RadarCalculation;
 }) {
   const { ctx, table, forma, lanceTipo, calc } = params;
-  const desiredNet = onlyNumber(ctx.input.creditoLiquido);
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
   const probabilidade = estimateProbability({ ownBidPct: calc.lanceProprioPct, group: table });
   const stats = groupBidStats(table);
-  let score = 50;
+  const power = purchasingPower(calc, ctx.input);
+  const scoreBreakdown = scoreOffer(calc, ctx.input, 1);
   const motivos: string[] = [];
   const alertas: string[] = [];
 
   if (ctx.input.modo === "credito") {
-    if (calc.creditoLiquido >= desiredNet) {
-      score += 18;
-      motivos.push("poder de compra atende o crédito líquido desejado");
-    } else {
-      score -= 18;
-      alertas.push("poder de compra abaixo do desejado");
-    }
-    if (desiredInstallment > 0 && calc.parcelaEstimada <= desiredInstallment) score += 10;
-  } else if (calc.parcelaEstimada <= desiredInstallment) {
-    score += 22;
+    if (power >= onlyNumber(ctx.input.creditoLiquido)) motivos.push("poder de compra atende o objetivo informado");
+    else alertas.push("poder de compra abaixo do desejado");
+  } else if (desiredInstallment > 0 && calc.parcelaEstimada <= desiredInstallment) {
     motivos.push("parcela estimada atende o orçamento informado");
   } else {
-    score -= 18;
     alertas.push("parcela estimada acima do orçamento");
   }
 
-  if (probabilidade >= onlyNumber(ctx.input.probabilidadeMinima)) score += 12;
   if (stats.median !== null) motivos.push(`lance próprio comparado à mediana do grupo (${stats.median.toFixed(2)}%)`);
   if (calc.antecipacaoPct) motivos.push(`considera antecipação de taxa em ${calc.antecipacaoParcelas || 0} parcela(s)`);
   if (calc.limitadorParcelaPct) motivos.push("aplica limitador de parcela quando a regra da tabela exige");
 
-  const finalScore = clamp(Math.round(score), 0, 100);
+  const finalScore = clamp(Math.round(scoreBreakdown.total), 0, 100);
   const simulatorParams: Record<string, string> = {
     origem: "radar-ofertas",
     tableId: String(table.id || ""),
@@ -205,7 +198,12 @@ function buildOffer(params: {
     table,
     group: table,
     score: finalScore,
+    scoreBreakdown,
     scoreLabel: scoreLabel(finalScore),
+    poderCompra: power,
+    lanceProprioDisponivel: onlyNumber(ctx.input.lanceProprio),
+    lanceProprioSobra: Math.max(0, onlyNumber(ctx.input.lanceProprio) - calc.lanceProprio),
+    quantidadeCotas: 1,
     probabilidadeContemplacao: probabilidade,
     prazoContemplacaoDesejado: onlyNumber(ctx.input.prazoContemplacao),
     segmento: String(table.segmento || ctx.input.segmento),

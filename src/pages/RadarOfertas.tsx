@@ -5,13 +5,12 @@ import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  AlertTriangle,
   ArrowRight,
   Building2,
-  CheckCircle2,
-  Copy,
+  ChevronDown,
   Loader2,
   Search,
+  Send,
   Sparkles,
   Target,
   Trophy,
@@ -57,6 +56,7 @@ type RadarOffer = {
   lanceTotalPct: number;
   mediaGrupoPct: number | null;
   probabilidadeContemplacao: number;
+  prazoContemplacaoDesejado: number;
   prazo: number;
   segmento: string;
   estrategia: string;
@@ -144,6 +144,41 @@ function findByKey(row: AnyRow, includes: string[], excludes: string[] = []) {
   return key ? row[key] : undefined;
 }
 
+function parseMaybeJson(value: unknown): AnyRow | AnyRow[] | null {
+  if (!value) return null;
+  if (typeof value === "object") return value as AnyRow | AnyRow[];
+  if (typeof value !== "string") return null;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function rowConfig(row: AnyRow | null | undefined): AnyRow {
+  const parsed = parseMaybeJson(row?.config);
+  return parsed && !Array.isArray(parsed) ? parsed : {};
+}
+
+function asRows(value: unknown): AnyRow[] {
+  const parsed = parseMaybeJson(value) || value;
+  if (Array.isArray(parsed)) return parsed.filter((item) => item && typeof item === "object") as AnyRow[];
+  if (!parsed || typeof parsed !== "object") return [];
+
+  const row = parsed as AnyRow;
+  const nested = row.items || row.rows || row.data || row.results || row.ranges || row.creditRanges;
+  if (Array.isArray(nested)) return nested.filter((item) => item && typeof item === "object") as AnyRow[];
+
+  const values = Object.values(row);
+  if (values.length && values.every((item) => item && typeof item === "object")) return values as AnyRow[];
+  return [row];
+}
+
+function configRows(row: AnyRow, key: string) {
+  return asRows(rowConfig(row)[key]);
+}
+
 function adminSlug(admin: AdminRow) {
   return admin.slug || slugify(admin.name);
 }
@@ -167,7 +202,21 @@ function adminRoute(admin: AdminRow) {
 
 function tableCreditMin(table: AnyRow) {
   return (
-    pickNumber(table, ["faixa_credito_min", "credito_min", "min_credit", "valor_min", "minimo", "credito_de", "valor_credito_min", "valor_bem_min"]) ||
+    pickNumber(table, [
+      "faixa_credito_min",
+      "credito_min",
+      "min_credit",
+      "valor_min",
+      "minimo",
+      "credito_de",
+      "valor_credito_min",
+      "valor_bem_min",
+      "valor_credito",
+      "valor_bem",
+      "valor_carta",
+      "credito",
+      "credit_value",
+    ]) ||
     onlyNumber(findByKey(table, ["faixa", "min"])) ||
     onlyNumber(findByKey(table, ["credito", "min"])) ||
     10_000
@@ -227,12 +276,39 @@ function maxEmbeddedPct(admin: AdminRow, table: AnyRow) {
 
 function groupAveragePct(group: AnyRow | null | undefined) {
   if (!group) return null;
-  const high = pickNumber(group, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct"]);
-  const low = pickNumber(group, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct"]);
+  const assembly = rowConfig(group).assemblyResult;
+  const assemblyRow = !Array.isArray(assembly) && assembly && typeof assembly === "object" ? assembly as AnyRow : {};
+  const high = pickNumber(group, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct"]) ||
+    pickNumber(assemblyRow, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct", "maior_lance", "highestBidPct"]);
+  const low = pickNumber(group, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct"]) ||
+    pickNumber(assemblyRow, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct", "menor_lance", "lowestBidPct"]);
   if (high > 0 && low > 0) return (high + low) / 2;
+
+  const bids = asRows(assembly)
+    .map((row) =>
+      pickNumber(row, [
+        "percentual_lance",
+        "lance_pct",
+        "lance_percentual",
+        "percentual",
+        "pct",
+        "bidPct",
+        "bid_percent",
+        "valor_lance_percentual",
+      ])
+    )
+    .filter((value) => value > 0)
+    .map((value) => (value <= 1 ? value * 100 : value));
+
+  if (bids.length) {
+    const sorted = [...bids].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
 
   const raw =
     pickNumber(group, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
+    pickNumber(assemblyRow, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
     onlyNumber(findByKey(group, ["media", "lance"])) ||
     onlyNumber(findByKey(group, ["mediana"]));
   if (!raw) return null;
@@ -301,19 +377,54 @@ function reducerOptions(table: AnyRow) {
   return [...options].sort((a, b) => a - b);
 }
 
-function tableFromBbGroup(group: AnyRow, admin: AdminRow): AnyRow {
+function groupCode(group: AnyRow) {
+  return String(group.codigo || group.grupo || group.group_code || group.code || group.numero_grupo || "").trim();
+}
+
+function rangeName(range: AnyRow, index: number) {
+  return String(range.nome || range.name || range.label || range.descricao || range.description || `Faixa ${index + 1}`);
+}
+
+function availableQuotaCount(row: AnyRow) {
+  return pickNumber(row, ["cotas", "qtd_cotas", "quantidade_cotas", "available_quotas", "quotas", "quotaCount", "cotas_disponiveis"]);
+}
+
+function reserveFundPct(row: AnyRow) {
+  const raw = pickNumber(row, ["fundo_reserva", "fundo_reserva_pct", "reserve_fund", "reserveFundPct"]);
+  return raw <= 1 && raw > 0 ? raw * 100 : raw;
+}
+
+function tableFromBbGroup(group: AnyRow, admin: AdminRow, range: AnyRow = {}, index = 0): AnyRow {
+  const code = groupCode(group);
   return {
     ...group,
-    id: group.id || group.codigo || group.grupo || group.group_code,
+    ...range,
+    id: `${group.id || code || "bb-group"}-${range.id || range.codigo || range.code || index}`,
+    group_id: group.id,
+    codigo: code || group.codigo,
+    grupo: code || group.grupo,
     original_admin_id: group.admin_id,
     admin_id: admin.id,
     administradora: group.administradora || "BB Consórcios",
-    nome_tabela: group.nome_tabela || group.nome || group.name || `Grupo BB ${group.codigo || group.grupo || group.group_code || "disponível"}`,
-    faixa_credito_min: pickNumber(group, ["faixa_credito_min", "credito_min", "valor_min"]) || 10_000,
-    faixa_credito_max: tableCreditMax(group),
-    prazo_limite: tableDeadline(group),
+    nome_tabela: `${code ? `Grupo ${code}` : "Grupo BB"} • ${rangeName(range, index)}`,
+    faixa_credito_min: pickNumber(range, ["faixa_credito_min", "credito_min", "min_credit", "valor_min", "valor_credito_min", "valor_bem_min"]) || tableCreditMin(group),
+    faixa_credito_max: tableCreditMax(range) || tableCreditMax(group),
+    prazo_limite: tableDeadline(range) || tableDeadline(group),
+    config: group.config,
+    _group: group,
+    _range: range,
     _source: "sim_bb_groups",
   };
+}
+
+function tablesFromBbGroup(group: AnyRow, admin: AdminRow) {
+  const rawRanges = parseMaybeJson(rowConfig(group).creditRanges) || rowConfig(group).creditRanges;
+  const ranges = Array.isArray(rawRanges)
+    ? rawRanges.map((range) => (range && typeof range === "object" ? range as AnyRow : { valor_credito: range }))
+    : configRows(group, "creditRanges");
+
+  if (!ranges.length) return [tableFromBbGroup(group, admin)];
+  return ranges.map((range, index) => tableFromBbGroup(group, admin, range, index));
 }
 
 function estimateProbability(params: { bidPct: number; avgPct: number | null; desiredMonths: number }) {
@@ -444,6 +555,7 @@ function buildScenario(params: {
     lanceTotalPct: bidPct,
     mediaGrupoPct: avgPct,
     probabilidadeContemplacao: probability,
+    prazoContemplacaoDesejado: desiredMonths,
     prazo,
     segmento: String(table.segmento || group?.segmento || input.segmento || "Não informado"),
     estrategia: embPct > 0 ? "Lance próprio + embutido permitido" : "Lance próprio sem embutido",
@@ -517,77 +629,112 @@ function buildOffers(input: RadarInput, admins: AdminRow[], tables: AnyRow[], gr
 }
 
 function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: number; onOpen: () => void; onCopy: () => void }) {
-  const scoreColor = offer.score >= 86 ? "#166534" : offer.score >= 72 ? C.navy : offer.score >= 58 ? "#92400e" : C.ruby;
+  const orange = "#f97316";
+  const isFeatured = rank === 1;
+  const quotas = availableQuotaCount(offer.table) || availableQuotaCount(offer.group || {});
+  const taxaAdm = tableFeePct(offer.table);
+  const fundoReserva = reserveFundPct(offer.table);
 
   return (
-    <Card className="overflow-hidden rounded-[28px] border bg-white/80 shadow-sm backdrop-blur">
-      <CardContent className="p-0">
-        <div className="flex flex-col gap-4 border-b p-5 md:flex-row md:items-start md:justify-between" style={{ background: "linear-gradient(135deg, rgba(255,255,255,.96), rgba(245,245,245,.82))" }}>
-          <div className="flex gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-white shadow-sm" style={{ background: rank === 1 ? C.ruby : C.navy }}>
-              {rank === 1 ? <Trophy className="h-5 w-5" /> : <Building2 className="h-5 w-5" />}
-            </div>
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[.18em]" style={{ color: C.gold }}>#{rank} • {offer.scoreLabel}</div>
-              <h3 className="mt-1 text-lg font-black" style={{ color: C.navy }}>{offer.admin.name}</h3>
-              <p className="text-sm text-slate-600">{offer.table.nome_tabela || offer.table.name || "Tabela/Grupo sugerido"} {offer.group?.codigo ? `• Grupo ${offer.group.codigo}` : ""}</p>
-            </div>
-          </div>
+    <Card
+      className="relative overflow-hidden rounded-[28px] bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl"
+      style={{
+        borderColor: isFeatured ? orange : "rgba(15,23,42,.10)",
+        borderWidth: isFeatured ? 2 : 1,
+        boxShadow: isFeatured ? "0 18px 42px rgba(249,115,22,.20)" : undefined,
+      }}
+    >
+      {isFeatured && (
+        <div className="absolute left-0 right-0 top-0 flex items-center gap-2 px-4 py-2 text-xs font-black text-white" style={{ background: orange }}>
+          <Trophy className="h-3.5 w-3.5" /> Recomendado pela IA
+        </div>
+      )}
 
-          <div className="rounded-2xl border px-4 py-3 text-center" style={{ borderColor: "rgba(30,41,63,.12)", color: scoreColor }}>
-            <div className="text-2xl font-black">{offer.score}</div>
-            <div className="text-[11px] font-semibold uppercase tracking-[.14em]">score</div>
+      <CardContent className={isFeatured ? "p-5 pt-12" : "p-5"}>
+        <div className="mb-5 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.08em] text-slate-500">
+              <Building2 className="h-3.5 w-3.5" /> {offer.admin.name}
+            </div>
+            <h3 className="mt-2 truncate text-base font-black" style={{ color: C.navy }}>
+              {offer.table.nome_tabela || offer.table.name || "Oferta BB Consórcios"}
+            </h3>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="text-sm font-black" style={{ color: C.navy }}>{quotas ? `${quotas} cotas` : `#${rank}`}</div>
+            <button type="button" onClick={onCopy} className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
+              <Send className="h-3.5 w-3.5" /> Enviar PDF
+            </button>
           </div>
         </div>
 
-        <div className="grid gap-3 p-5 md:grid-cols-4">
-          <Metric label="Crédito contratado" value={brMoney(offer.creditoContratado)} />
-          <Metric label="Poder de compra" value={brMoney(offer.creditoLiquido)} />
-          <Metric label="Parcela estimada" value={brMoney(offer.parcelaEstimada)} />
-          <Metric label="Probabilidade" value={brPct(offer.probabilidadeContemplacao)} />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Valor contratado</div>
+            <div className="mt-1 text-lg font-black" style={{ color: C.navy }}>{brMoney(offer.creditoContratado)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Crédito líquido</div>
+            <div className="mt-1 text-lg font-black" style={{ color: orange }}>{brMoney(offer.creditoLiquido)}</div>
+          </div>
         </div>
 
-        <div className="grid gap-4 px-5 pb-5 md:grid-cols-[1.2fr_.8fr]">
-          <div className="rounded-2xl border bg-white/70 p-4">
-            <div className="mb-2 text-sm font-bold" style={{ color: C.navy }}>Por que entrou no radar</div>
-            <div className="space-y-2">
-              {offer.motivos.map((m) => (
-                <div key={m} className="flex items-start gap-2 text-sm text-slate-700">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
-                  <span>{m}</span>
-                </div>
-              ))}
-              {offer.alertas.map((m) => (
-                <div key={m} className="flex items-start gap-2 text-sm text-amber-800">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{m}</span>
-                </div>
-              ))}
+        <div className="my-5 flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(249,115,22,.13)" }}>
+          <div className="flex items-center gap-3">
+            <div
+              className="flex h-14 w-14 flex-col items-center justify-center rounded-full border-[5px] bg-white text-center"
+              style={{ borderColor: orange, color: orange }}
+            >
+              <span className="text-base font-black leading-none">{Math.round(offer.probabilidadeContemplacao)}%</span>
+              <span className="text-[9px] font-bold leading-none">Alta</span>
+            </div>
+            <div className="text-xs text-slate-600">
+              <div className="font-black" style={{ color: C.navy }}>Assertividade</div>
+              <div>{offer.scoreLabel}</div>
             </div>
           </div>
-
-          <div className="rounded-2xl border bg-white/70 p-4 text-sm text-slate-700">
-            <div className="mb-2 font-bold" style={{ color: C.navy }}>Estratégia sugerida</div>
-            <p>{offer.estrategia}</p>
-            <p className="mt-2">Lance próprio: <b>{brMoney(offer.lanceProprio)}</b></p>
-            <p>Embutido: <b>{brMoney(offer.lanceEmbutido)}</b></p>
-            <p>Lance total: <b>{brMoney(offer.lanceTotal)} ({brPct(offer.lanceTotalPct)})</b></p>
-            <p>Mediana/média: <b>{offer.mediaGrupoPct === null ? "não cadastrada" : brPct(offer.mediaGrupoPct)}</b></p>
-            <p>Probabilidade: <b>{brPct(offer.probabilidadeContemplacao)}</b></p>
-            <p>Prazo base: <b>{offer.prazo} meses</b></p>
+          <div className="text-right">
+            <div className="text-lg font-black" style={{ color: orange }}>
+              {Math.max(1, offer.prazoContemplacaoDesejado || 3)} meses
+            </div>
+            <div className="text-xs font-semibold text-slate-500">até a contemplação</div>
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 border-t bg-slate-50/70 p-4 sm:flex-row sm:justify-end">
-          <Button variant="outline" className="rounded-2xl" onClick={onCopy}>
-            <Copy className="mr-2 h-4 w-4" /> Copiar resumo
+        <div className="grid grid-cols-2 gap-x-5 gap-y-3 text-sm">
+          <CardLine label="Lance próprio" value={brMoney(offer.lanceProprio)} />
+          <CardLine label="Parcela mensal" value={brMoney(offer.parcelaEstimada)} />
+          <CardLine label="Lance embutido" value={brMoney(offer.lanceEmbutido)} />
+          <CardLine label="Prazo total" value={`${offer.prazo} meses`} />
+          <CardLine label="Taxa adm." value={brPct(taxaAdm)} />
+          <CardLine label="Fundo reserva" value={fundoReserva ? brPct(fundoReserva) : "0,00%"} />
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-dashed border-slate-200 p-3">
+          <div className="text-xs font-bold" style={{ color: C.navy }}>Estratégia sugerida</div>
+          <p className="mt-1 text-xs text-slate-600">{offer.estrategia}</p>
+          {offer.alertas[0] && <p className="mt-2 text-xs text-amber-700">{offer.alertas[0]}</p>}
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <Button variant="ghost" className="w-full rounded-2xl font-black text-slate-700">
+            Expandir detalhes <ChevronDown className="ml-2 h-4 w-4" />
           </Button>
-          <Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={onOpen}>
-            Abrir simulador <ArrowRight className="ml-2 h-4 w-4" />
+          <Button className="w-full rounded-2xl text-white" style={{ background: orange }} onClick={onOpen}>
+            Seguir contratação <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CardLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold text-slate-500">{label}</div>
+      <div className="mt-0.5 font-black" style={{ color: C.navy }}>{value}</div>
+    </div>
   );
 }
 
@@ -623,9 +770,8 @@ export default function RadarOfertas() {
 
     (async () => {
       setLoading(true);
-      const [adminsRes, tablesRes, bbGroupsRes] = await Promise.all([
+      const [adminsRes, bbGroupsRes] = await Promise.all([
         supabase.from("sim_admins").select("*").order("name", { ascending: true }),
-        supabase.from("sim_tables").select("*"),
         supabase.from("sim_bb_groups").select("*"),
       ]);
 
@@ -635,13 +781,11 @@ export default function RadarOfertas() {
       const bbAdmin = loadedAdmins[0] || { id: "bb-consorcios", name: "BB Consórcios", slug: "bb-consorcios", behavior: null };
 
       const bbAdmins = loadedAdmins.length ? loadedAdmins : [bbAdmin];
-      const simTables = ((tablesRes.data || []) as AnyRow[])
-        .map((table) => ({ ...table, _source: "sim_tables" }))
-        .filter((table) => bbAdmins.some((admin) => String(table.admin_id || table.administradora_id || table.sim_admin_id || "") === admin.id));
       const bbGroups = ((bbGroupsRes.data || []) as AnyRow[]).map((group) => tableFromBbGroup(group, bbAdmin));
+      const bbTables = ((bbGroupsRes.data || []) as AnyRow[]).flatMap((group) => tablesFromBbGroup(group, bbAdmin));
 
       setAdmins(bbAdmins);
-      setTables([...simTables, ...bbGroups].filter((table) => table.admin_id));
+      setTables(bbTables.filter((table) => table.admin_id));
       setGroupsDb(bbGroups);
       setLoading(false);
     })();
@@ -735,7 +879,7 @@ export default function RadarOfertas() {
             Nenhuma combinação aderente foi encontrada com os dados atuais da BB Consórcios. Revise crédito/parcela, segmento, lance próprio ou probabilidade mínima.
           </Card>
         ) : (
-          <div className="space-y-4">
+          <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
             {offers.map((offer, index) => (
               <OfferCard
                 key={offer.id}

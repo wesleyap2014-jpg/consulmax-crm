@@ -51,7 +51,9 @@ type RadarOffer = {
   creditoLiquido: number;
   parcelaEstimada: number;
   lanceProprio: number;
+  lanceProprioPct: number;
   lanceEmbutido: number;
+  lanceEmbutidoPct: number;
   lanceTotal: number;
   lanceTotalPct: number;
   mediaGrupoPct: number | null;
@@ -74,6 +76,18 @@ const C = {
 
 const RADAR_SEGMENTS: RadarSegment[] = ["Automóvel", "Imóvel", "Serviços"];
 const PROBABILITY_OPTIONS = ["40", "50", "60", "70", "80", "90"];
+const SELECTED_OFFER_STORAGE = "@consulmax:radar-ofertas:selected-offer-v1";
+
+const PROBABILITY_PARAMS = {
+  menorLancePctChance: 90,
+  medianaPctChance: 95,
+  maiorLancePctChance: 99.9,
+  abaixoMenorChanceInicial: 89,
+  abaixoMenorChancePiso: 80,
+  abaixoMenorGapAtePisoPct: 10,
+  muitoAbaixoChancePiso: 45,
+  muitoAbaixoGapPct: 35,
+};
 
 const DEFAULT_INPUT: RadarInput = {
   modo: "credito",
@@ -195,9 +209,37 @@ function isBbAdmin(admin: AdminRow) {
 
 function adminRoute(admin: AdminRow) {
   const key = `${adminSlug(admin)} ${normalizeText(admin.name)}`;
+  if (key.includes("maggi")) return "/simuladores/maggi";
+  if (key.includes("embracon")) return "/simuladores/embracon";
   if (key.includes("bb-consorcios") || key.includes("bb consorcios") || key.includes("banco do brasil") || key.includes("bb"))
     return "/simuladores/bb-consorcios";
   return `/simuladores/${adminSlug(admin)}`;
+}
+
+function simulatorSearchParams(offer: RadarOffer) {
+  const params = new URLSearchParams({
+    origem: "radar-ofertas",
+    radar: "1",
+    admin: adminSlug(offer.admin),
+    tableId: String(offer.table.id || ""),
+    groupId: String(offer.table.group_id || offer.group?.id || ""),
+    grupo: String(offer.table.grupo || offer.group?.grupo || offer.group?.codigo || ""),
+    segmento: offer.segmento,
+    credito: String(Math.round(offer.creditoContratado)),
+    creditoLiquido: String(Math.round(offer.creditoLiquido)),
+    parcela: String(Math.round(offer.parcelaEstimada)),
+    prazo: String(Math.round(offer.prazo)),
+    prazoContemplacao: String(Math.round(offer.prazoContemplacaoDesejado || 0)),
+    lanceProprio: String(Math.round(offer.lanceProprio)),
+    lanceProprioPct: String(Number(offer.lanceProprioPct || 0).toFixed(4)),
+    lanceEmbutido: String(Math.round(offer.lanceEmbutido)),
+    lanceEmbutidoPct: String(Number(offer.lanceEmbutidoPct || 0).toFixed(4)),
+    lanceTotal: String(Math.round(offer.lanceTotal)),
+    lanceTotalPct: String(Number(offer.lanceTotalPct || 0).toFixed(4)),
+    probabilidade: String(Number(offer.probabilidadeContemplacao || 0).toFixed(2)),
+  });
+
+  return params.toString();
 }
 
 function tableCreditMin(table: AnyRow) {
@@ -275,14 +317,24 @@ function maxEmbeddedPct(admin: AdminRow, table: AnyRow) {
 }
 
 function groupAveragePct(group: AnyRow | null | undefined) {
-  if (!group) return null;
+  return groupBidStats(group).median;
+}
+
+function normalizePct(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return value <= 1 ? value * 100 : value;
+}
+
+function groupBidStats(group: AnyRow | null | undefined) {
+  const empty = { min: null as number | null, median: null as number | null, max: null as number | null };
+  if (!group) return empty;
+
   const assembly = rowConfig(group).assemblyResult;
   const assemblyRow = !Array.isArray(assembly) && assembly && typeof assembly === "object" ? assembly as AnyRow : {};
-  const high = pickNumber(group, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct"]) ||
-    pickNumber(assemblyRow, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct", "maior_lance", "highestBidPct"]);
-  const low = pickNumber(group, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct"]) ||
-    pickNumber(assemblyRow, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct", "menor_lance", "lowestBidPct"]);
-  if (high > 0 && low > 0) return (high + low) / 2;
+  const high = normalizePct(pickNumber(group, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct"]) ||
+    pickNumber(assemblyRow, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct", "maior_lance", "highestBidPct"]));
+  const low = normalizePct(pickNumber(group, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct"]) ||
+    pickNumber(assemblyRow, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct", "menor_lance", "lowestBidPct"]));
 
   const bids = asRows(assembly)
     .map((row) =>
@@ -298,12 +350,13 @@ function groupAveragePct(group: AnyRow | null | undefined) {
       ])
     )
     .filter((value) => value > 0)
-    .map((value) => (value <= 1 ? value * 100 : value));
+    .map(normalizePct);
 
+  let median: number | null = null;
   if (bids.length) {
     const sorted = [...bids].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   }
 
   const raw =
@@ -311,8 +364,80 @@ function groupAveragePct(group: AnyRow | null | undefined) {
     pickNumber(assemblyRow, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
     onlyNumber(findByKey(group, ["media", "lance"])) ||
     onlyNumber(findByKey(group, ["mediana"]));
-  if (!raw) return null;
-  return raw <= 1 ? raw * 100 : raw;
+  if (!median && raw) median = normalizePct(raw);
+  if (!median && high > 0 && low > 0) median = (high + low) / 2;
+
+  return {
+    min: low > 0 ? low : bids.length ? Math.min(...bids) : null,
+    median,
+    max: high > 0 ? high : bids.length ? Math.max(...bids) : null,
+  };
+}
+
+function interpolate(value: number, from: number, to: number, chanceFrom: number, chanceTo: number) {
+  if (to === from) return chanceTo;
+  const ratio = clamp((value - from) / (to - from), 0, 1);
+  return chanceFrom + (chanceTo - chanceFrom) * ratio;
+}
+
+function estimateProbability(params: { ownBidPct: number; totalBidPct: number; group: AnyRow | null; desiredMonths: number }) {
+  const { ownBidPct, group } = params;
+  const stats = groupBidStats(group);
+  const min = stats.min;
+  const median = stats.median;
+  const max = stats.max;
+
+  if (!min && !median && !max) {
+    return clamp(Math.round(60 + ownBidPct * 0.8), 5, PROBABILITY_PARAMS.maiorLancePctChance);
+  }
+
+  const baseAnchor = median ?? min ?? max ?? 0;
+  const minAnchor = min ?? Math.max(0, baseAnchor - 10);
+  const medianAnchor = median ?? (min && max ? (min + max) / 2 : baseAnchor);
+  const maxAnchor = max ?? medianAnchor + 10;
+
+  let probability = PROBABILITY_PARAMS.abaixoMenorChancePiso;
+
+  if (ownBidPct >= maxAnchor) {
+    probability = PROBABILITY_PARAMS.maiorLancePctChance;
+  } else if (ownBidPct >= medianAnchor) {
+    probability = interpolate(
+      ownBidPct,
+      medianAnchor,
+      maxAnchor,
+      PROBABILITY_PARAMS.medianaPctChance,
+      PROBABILITY_PARAMS.maiorLancePctChance
+    );
+  } else if (ownBidPct >= minAnchor) {
+    probability = interpolate(
+      ownBidPct,
+      minAnchor,
+      medianAnchor,
+      PROBABILITY_PARAMS.menorLancePctChance,
+      PROBABILITY_PARAMS.medianaPctChance
+    );
+  } else {
+    const gap = minAnchor - ownBidPct;
+    if (gap <= PROBABILITY_PARAMS.abaixoMenorGapAtePisoPct) {
+      probability = interpolate(
+        gap,
+        0,
+        PROBABILITY_PARAMS.abaixoMenorGapAtePisoPct,
+        PROBABILITY_PARAMS.abaixoMenorChanceInicial,
+        PROBABILITY_PARAMS.abaixoMenorChancePiso
+      );
+    } else {
+      probability = interpolate(
+        gap,
+        PROBABILITY_PARAMS.abaixoMenorGapAtePisoPct,
+        PROBABILITY_PARAMS.muitoAbaixoGapPct,
+        PROBABILITY_PARAMS.abaixoMenorChancePiso,
+        PROBABILITY_PARAMS.muitoAbaixoChancePiso
+      );
+    }
+  }
+
+  return clamp(Number(probability.toFixed(1)), 1, PROBABILITY_PARAMS.maiorLancePctChance);
 }
 
 function segmentAliases(segmento: RadarSegment) {
@@ -427,20 +552,6 @@ function tablesFromBbGroup(group: AnyRow, admin: AdminRow) {
   return ranges.map((range, index) => tableFromBbGroup(group, admin, range, index));
 }
 
-function estimateProbability(params: { bidPct: number; avgPct: number | null; desiredMonths: number }) {
-  const { bidPct, avgPct, desiredMonths } = params;
-  let probability = avgPct === null ? 45 : 50 + (bidPct - avgPct) * 4;
-
-  if (desiredMonths > 0 && desiredMonths <= 3) probability -= 12;
-  else if (desiredMonths > 0 && desiredMonths <= 6) probability -= 5;
-  else if (desiredMonths >= 12) probability += 6;
-
-  if (bidPct >= 50) probability += 8;
-  if (bidPct <= 20) probability -= 8;
-
-  return clamp(Math.round(probability), 5, 95);
-}
-
 function buildScenario(params: {
   input: RadarInput;
   admin: AdminRow;
@@ -464,8 +575,9 @@ function buildScenario(params: {
   const totalWithFee = credit * (1 + tableFeePct(table) / 100);
   const installment = (totalWithFee / Math.max(1, prazo)) * reducer;
   const bidPct = credit > 0 ? (totalBid / credit) * 100 : 0;
+  const ownBidPct = credit > 0 ? (ownBid / credit) * 100 : 0;
   const avgPct = groupAveragePct(group);
-  const probability = estimateProbability({ bidPct, avgPct, desiredMonths });
+  const probability = estimateProbability({ ownBidPct, totalBidPct: bidPct, group, desiredMonths });
 
   const motivos: string[] = [];
   const alertas: string[] = [];
@@ -508,21 +620,21 @@ function buildScenario(params: {
   if (reducer < 1) motivos.push(`simula parcela reduzida de ${brPct(reducer * 100)} da parcela cheia`);
 
   if (avgPct !== null) {
-    if (bidPct >= avgPct + 2) {
+    if (ownBidPct >= avgPct + 2) {
       score += 18;
-      motivos.push(`lance ofertado acima da mediana/média do grupo (${brPct(avgPct)})`);
-    } else if (bidPct >= avgPct) {
+      motivos.push(`lance próprio acima da mediana/média do grupo (${brPct(avgPct)})`);
+    } else if (ownBidPct >= avgPct) {
       score += 12;
-      motivos.push(`lance ofertado próximo da mediana/média do grupo (${brPct(avgPct)})`);
+      motivos.push(`lance próprio próximo da mediana/média do grupo (${brPct(avgPct)})`);
     } else {
       score -= 10;
-      alertas.push(`lance ofertado abaixo da mediana/média do grupo (${brPct(avgPct)})`);
+      alertas.push(`lance próprio abaixo da mediana/média do grupo (${brPct(avgPct)})`);
     }
   } else {
     alertas.push("sem média/mediana de lance cadastrada para este grupo");
   }
 
-  if (desiredMonths > 0 && desiredMonths <= 3 && (avgPct === null || bidPct < avgPct + 4)) {
+  if (desiredMonths > 0 && desiredMonths <= 3 && (avgPct === null || ownBidPct < avgPct + 4)) {
     score -= 7;
     alertas.push("prazo de contemplação muito curto para a força do lance estimada");
   }
@@ -550,7 +662,9 @@ function buildScenario(params: {
     creditoLiquido: net,
     parcelaEstimada: installment,
     lanceProprio: ownBid,
+    lanceProprioPct: ownBidPct,
     lanceEmbutido: embedded,
+    lanceEmbutidoPct: embPct,
     lanceTotal: totalBid,
     lanceTotalPct: bidPct,
     mediaGrupoPct: avgPct,
@@ -567,6 +681,7 @@ function buildScenario(params: {
 function buildOffers(input: RadarInput, admins: AdminRow[], tables: AnyRow[], groups: AnyRow[]) {
   const desiredNet = onlyNumber(input.creditoLiquido);
   const desiredInstallment = onlyNumber(input.parcelaDesejada);
+  const minProbability = onlyNumber(input.probabilidadeMinima);
   if (input.modo === "credito" && !desiredNet) return [];
   if (input.modo === "parcela" && !desiredInstallment) return [];
 
@@ -625,11 +740,15 @@ function buildOffers(input: RadarInput, admins: AdminRow[], tables: AnyRow[], gr
     if (!unique.has(key)) unique.set(key, offer);
   }
 
-  return [...unique.values()].sort((a, b) => b.score - a.score).slice(0, 30);
+  return [...unique.values()]
+    .filter((offer) => offer.probabilidadeContemplacao >= minProbability)
+    .sort((a, b) => b.probabilidadeContemplacao - a.probabilidadeContemplacao || b.score - a.score)
+    .slice(0, 30);
 }
 
 function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: number; onOpen: () => void; onCopy: () => void }) {
-  const orange = "#f97316";
+  const accent = C.ruby;
+  const probabilityLabel = offer.probabilidadeContemplacao >= 95 ? "Alta" : offer.probabilidadeContemplacao >= 90 ? "Boa" : "Média";
   const isFeatured = rank === 1;
   const quotas = availableQuotaCount(offer.table) || availableQuotaCount(offer.group || {});
   const taxaAdm = tableFeePct(offer.table);
@@ -639,13 +758,13 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
     <Card
       className="relative overflow-hidden rounded-[28px] bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl"
       style={{
-        borderColor: isFeatured ? orange : "rgba(15,23,42,.10)",
+        borderColor: isFeatured ? accent : "rgba(15,23,42,.10)",
         borderWidth: isFeatured ? 2 : 1,
-        boxShadow: isFeatured ? "0 18px 42px rgba(249,115,22,.20)" : undefined,
+        boxShadow: isFeatured ? "0 18px 42px rgba(161,28,39,.18)" : undefined,
       }}
     >
       {isFeatured && (
-        <div className="absolute left-0 right-0 top-0 flex items-center gap-2 px-4 py-2 text-xs font-black text-white" style={{ background: orange }}>
+        <div className="absolute left-0 right-0 top-0 flex items-center gap-2 px-4 py-2 text-xs font-black text-white" style={{ background: accent }}>
           <Trophy className="h-3.5 w-3.5" /> Recomendado pela IA
         </div>
       )}
@@ -675,18 +794,18 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
           </div>
           <div>
             <div className="text-[11px] font-semibold text-slate-500">Crédito líquido</div>
-            <div className="mt-1 text-lg font-black" style={{ color: orange }}>{brMoney(offer.creditoLiquido)}</div>
+            <div className="mt-1 text-lg font-black" style={{ color: accent }}>{brMoney(offer.creditoLiquido)}</div>
           </div>
         </div>
 
-        <div className="my-5 flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(249,115,22,.13)" }}>
+        <div className="my-5 flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(161,28,39,.08)" }}>
           <div className="flex items-center gap-3">
             <div
               className="flex h-14 w-14 flex-col items-center justify-center rounded-full border-[5px] bg-white text-center"
-              style={{ borderColor: orange, color: orange }}
+              style={{ borderColor: accent, color: accent }}
             >
               <span className="text-base font-black leading-none">{Math.round(offer.probabilidadeContemplacao)}%</span>
-              <span className="text-[9px] font-bold leading-none">Alta</span>
+              <span className="text-[9px] font-bold leading-none">{probabilityLabel}</span>
             </div>
             <div className="text-xs text-slate-600">
               <div className="font-black" style={{ color: C.navy }}>Assertividade</div>
@@ -694,7 +813,7 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
             </div>
           </div>
           <div className="text-right">
-            <div className="text-lg font-black" style={{ color: orange }}>
+            <div className="text-lg font-black" style={{ color: accent }}>
               {Math.max(1, offer.prazoContemplacaoDesejado || 3)} meses
             </div>
             <div className="text-xs font-semibold text-slate-500">até a contemplação</div>
@@ -703,8 +822,10 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
 
         <div className="grid grid-cols-2 gap-x-5 gap-y-3 text-sm">
           <CardLine label="Lance próprio" value={brMoney(offer.lanceProprio)} />
+          <CardLine label="% lance próprio" value={brPct(offer.lanceProprioPct)} />
           <CardLine label="Parcela mensal" value={brMoney(offer.parcelaEstimada)} />
           <CardLine label="Lance embutido" value={brMoney(offer.lanceEmbutido)} />
+          <CardLine label="Mediana grupo" value={offer.mediaGrupoPct === null ? "Sem dados" : brPct(offer.mediaGrupoPct)} />
           <CardLine label="Prazo total" value={`${offer.prazo} meses`} />
           <CardLine label="Taxa adm." value={brPct(taxaAdm)} />
           <CardLine label="Fundo reserva" value={fundoReserva ? brPct(fundoReserva) : "0,00%"} />
@@ -720,7 +841,7 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
           <Button variant="ghost" className="w-full rounded-2xl font-black text-slate-700">
             Expandir detalhes <ChevronDown className="ml-2 h-4 w-4" />
           </Button>
-          <Button className="w-full rounded-2xl text-white" style={{ background: orange }} onClick={onOpen}>
+          <Button className="w-full rounded-2xl text-white" style={{ background: accent }} onClick={onOpen}>
             Seguir contratação <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </div>
@@ -835,6 +956,20 @@ export default function RadarOfertas() {
     navigator.clipboard?.writeText(text).catch(() => {});
   }
 
+  function openOfferInSimulator(offer: RadarOffer) {
+    const payload = {
+      source: "radar-ofertas",
+      savedAt: new Date().toISOString(),
+      offer,
+    };
+
+    try {
+      sessionStorage.setItem(SELECTED_OFFER_STORAGE, JSON.stringify(payload));
+    } catch {}
+
+    navigate(`${adminRoute(offer.admin)}?${simulatorSearchParams(offer)}`);
+  }
+
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2 text-sm text-slate-600">
@@ -885,7 +1020,7 @@ export default function RadarOfertas() {
                 key={offer.id}
                 offer={offer}
                 rank={index + 1}
-                onOpen={() => navigate(adminRoute(offer.admin))}
+                onOpen={() => openOfferInSimulator(offer)}
                 onCopy={() => copyOffer(offer)}
               />
             ))}

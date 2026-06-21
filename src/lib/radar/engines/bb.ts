@@ -2,6 +2,8 @@ import {
   adminRouteFromKey,
   aggregateCalculation,
   clamp,
+  groupDeliveryStats,
+  groupNextAssembly,
   onlyNumber,
   purchasingPower,
   rowConfig,
@@ -97,10 +99,11 @@ function maxQuotaCount(ctx: EngineContext, credit: number) {
 function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: RadarCalculation, quantidadeCotas: number) {
   const desiredNet = onlyNumber(ctx.input.creditoLiquido);
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
-  const probabilidade = estimateProbability({ ownBidPct: calc.lanceProprioPct, group });
+  const probabilidade = estimateProbability({ bidPct: calc.lanceTotalPct, group });
   const stats = groupBidStats(group);
   const power = purchasingPower(calc, ctx.input);
-  const scoreBreakdown = scoreOffer(calc, ctx.input, quantidadeCotas);
+  const scoreBreakdown = scoreOffer(calc, ctx.input, quantidadeCotas, group);
+  const delivery = groupDeliveryStats(group);
   const motivos: string[] = [];
   const alertas: string[] = [];
 
@@ -114,6 +117,10 @@ function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: Rada
   if (stats.min !== null) motivos.push(`menor lance contemplado: ${stats.min.toFixed(2)}%`);
   if (stats.median !== null) motivos.push(`mediana/média do grupo: ${stats.median.toFixed(2)}%`);
   if (stats.max !== null) motivos.push(`maior lance contemplado: ${stats.max.toFixed(2)}%`);
+  if (stats.median !== null && calc.lanceTotalPct < stats.median) {
+    alertas.push(`lance total ${calc.lanceTotalPct.toFixed(2)}%, abaixo da mediana; oportunidade próxima pode exigir lance maior`);
+  }
+  if (delivery.deliveryRatio) motivos.push(`entrega da última assembleia: ${(delivery.deliveryRatio * 100).toFixed(0)}% do esperado`);
   motivos.push("faixa importada do portal BB Consórcios");
   if (quantidadeCotas > 1) motivos.push(`combina ${quantidadeCotas} cotas no mesmo grupo/faixa`);
 
@@ -131,6 +138,10 @@ function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: Rada
     lanceProprioDisponivel: onlyNumber(ctx.input.lanceProprio),
     lanceProprioSobra: Math.max(0, onlyNumber(ctx.input.lanceProprio) - calc.lanceProprio),
     quantidadeCotas,
+    entregaMediaEsperada: delivery.expectedPerAssembly,
+    entregaUltimaAssembleia: delivery.lastDelivered,
+    entregaIndicePct: delivery.deliveryRatio ? delivery.deliveryRatio * 100 : null,
+    proximaAssembleia: groupNextAssembly(group),
     probabilidadeContemplacao: probabilidade,
     prazoContemplacaoDesejado: onlyNumber(ctx.input.prazoContemplacao),
     segmento: String(group.segmento || ctx.input.segmento),
@@ -175,7 +186,9 @@ export function runBbEngine(ctx: EngineContext, groups: AnyRow[]): EngineResult 
           for (const ownBidPerQuota of bidCandidates(group, credit, ownBid, quantidadeCotas)) {
             const baseCalc = calcBb({ group, range, credit, ownBid: ownBidPerQuota, embPct });
             const calc = aggregateCalculation(baseCalc, quantidadeCotas);
+            const median = groupBidStats(group).median;
             if (calc.lanceProprio > ownBid + 1) continue;
+            if (median !== null && calc.lanceTotalPct < median - 5) continue;
             if (ctx.input.modo === "credito" && purchasingPower(calc, ctx.input) < desiredNet * 0.72) continue;
             if (ctx.input.modo === "parcela" && calc.parcelaEstimada > desiredInstallment * 1.35) continue;
             offers.push(buildOffer(ctx, group, range, calc, quantidadeCotas));

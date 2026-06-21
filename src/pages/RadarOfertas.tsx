@@ -87,6 +87,13 @@ function CardLine({ label, value }: { label: string; value: string }) {
   );
 }
 
+function brDate(value?: string | null) {
+  if (!value) return "Não informada";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("pt-BR");
+}
+
 function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: number; onOpen: () => void; onCopy: () => void }) {
   const isFeatured = rank === 1;
   const probabilityLabel = offer.probabilidadeContemplacao >= 95 ? "Alta" : offer.probabilidadeContemplacao >= 90 ? "Boa" : "Média";
@@ -160,13 +167,25 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
           <CardLine label="Cotas" value={`${offer.quantidadeCotas || 1}`} />
           <CardLine label="Lance próprio" value={brMoney(offer.lanceProprio)} />
           <CardLine label="Sobra do lance" value={brMoney(offer.lanceProprioSobra)} />
-          <CardLine label="% lance próprio" value={brPct(offer.lanceProprioPct)} />
-          <CardLine label="Parcela inicial" value={brMoney(offer.parcelaInicial)} />
-          <CardLine label="Parcela pós" value={brMoney(offer.parcelaAposContemplacao)} />
+          <CardLine label="% lance total" value={brPct(offer.lanceTotalPct)} />
+          <CardLine label="1ª parcela" value={brMoney(offer.parcelaInicial)} />
+          <CardLine label="Demais até contemplação" value={brMoney(offer.parcelaEstimada)} />
+          <CardLine label="Parcela pós-contemplação" value={brMoney(offer.parcelaAposContemplacao)} />
+          <CardLine label="Prazo após contemplação" value={`${offer.prazoRestante} meses`} />
           <CardLine label="Lance embutido" value={brMoney(offer.lanceEmbutido)} />
-          <CardLine label="Prazo total" value={`${offer.prazoTotal} meses`} />
           <CardLine label="Taxa adm." value={brPct(offer.taxaAdmPct)} />
           <CardLine label="Fundo reserva" value={brPct(offer.fundoReservaPct)} />
+          <CardLine label="Índice de entrega" value={offer.entregaIndicePct ? brPct(offer.entregaIndicePct) : "Sem dado"} />
+          <CardLine label="Próxima assembleia" value={brDate(offer.proximaAssembleia)} />
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl bg-slate-50 p-3 text-xs text-slate-600">
+          <div>Crédito aderente: <b>{offer.scoreBreakdown.credito}/100</b></div>
+          <div>Parcela aderente: <b>{offer.scoreBreakdown.parcela}/100</b></div>
+          <div>Lance aderente: <b>{offer.scoreBreakdown.lance}/100</b></div>
+          <div>Perfil do grupo: <b>{offer.scoreBreakdown.perfilGrupo}/100</b></div>
+          <div>Entregas: <b>{offer.scoreBreakdown.entregas}/100</b></div>
+          <div>Taxa/Fundo: <b>{Math.round((offer.scoreBreakdown.taxaAdm + offer.scoreBreakdown.fundoReserva) / 2)}/100</b></div>
         </div>
 
         <div className="mt-5 rounded-2xl border border-dashed border-slate-200 p-3">
@@ -245,11 +264,16 @@ export default function RadarOfertas() {
       `Crédito contratado: ${brMoney(offer.creditoContratado)}`,
       `Crédito líquido: ${brMoney(offer.creditoLiquido)}`,
       `Poder de compra estimado: ${brMoney(offer.poderCompra)}`,
-      `Parcela inicial: ${brMoney(offer.parcelaInicial)}`,
+      `Primeira parcela: ${brMoney(offer.parcelaInicial)}`,
+      `Demais parcelas até a contemplação: ${brMoney(offer.parcelaEstimada)}`,
       `Parcela pós-contemplação: ${brMoney(offer.parcelaAposContemplacao)}`,
+      `Prazo após contemplação: ${offer.prazoRestante} meses`,
       `Lance próprio: ${brMoney(offer.lanceProprio)} (${brPct(offer.lanceProprioPct)})`,
+      `Lance total: ${brMoney(offer.lanceTotal)} (${brPct(offer.lanceTotalPct)})`,
       `Sobra do lance próprio: ${brMoney(offer.lanceProprioSobra)}`,
       `Lance embutido: ${brMoney(offer.lanceEmbutido)} (${brPct(offer.lanceEmbutidoPct)})`,
+      `Índice de entrega: ${offer.entregaIndicePct ? brPct(offer.entregaIndicePct) : "Sem dado"}`,
+      `Próxima assembleia: ${brDate(offer.proximaAssembleia)}`,
       `Probabilidade estimada: ${brPct(offer.probabilidadeContemplacao)}`,
       `Score de aderência: ${offer.score}/100`,
       `Estratégia: ${offer.estrategia}`,

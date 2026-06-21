@@ -2,6 +2,8 @@ import {
   adminRouteFromKey,
   aggregateCalculation,
   clamp,
+  groupDeliveryStats,
+  groupNextAssembly,
   onlyNumber,
   purchasingPower,
   rowConfig,
@@ -161,10 +163,11 @@ function buildOffer(
 ) {
   const desiredNet = onlyNumber(ctx.input.creditoLiquido);
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
-  const probabilidade = estimateProbability({ ownBidPct: calc.lanceProprioPct, group });
+  const probabilidade = estimateProbability({ bidPct: calc.lanceTotalPct, group });
   const stats = groupBidStats(group);
   const power = purchasingPower(calc, ctx.input);
-  const scoreBreakdown = scoreOffer(calc, ctx.input, quantidadeCotas);
+  const scoreBreakdown = scoreOffer(calc, ctx.input, quantidadeCotas, group);
+  const delivery = groupDeliveryStats(group);
   const motivos: string[] = [];
   const alertas: string[] = [];
 
@@ -175,7 +178,11 @@ function buildOffer(
     alertas.push("parcela estimada acima do orçamento");
   }
 
-  if (stats.median !== null) motivos.push(`lance próprio comparado à mediana do grupo (${stats.median.toFixed(2)}%)`);
+  if (stats.median !== null) motivos.push(`lance total comparado à mediana do grupo (${stats.median.toFixed(2)}%)`);
+  if (stats.median !== null && calc.lanceTotalPct < stats.median) {
+    alertas.push(`lance total ${calc.lanceTotalPct.toFixed(2)}%, abaixo da mediana; oportunidade próxima pode exigir lance maior`);
+  }
+  if (delivery.deliveryRatio) motivos.push(`entrega da última assembleia: ${(delivery.deliveryRatio * 100).toFixed(0)}% do esperado`);
   motivos.push(`regra pós-contemplação: ${group.regra_pos_contemplacao || "saldo devedor / prazo restante"}`);
   if (rowConfig(group).firstParcelRule?.enabled) motivos.push("considera primeira parcela diferenciada");
   if (quantidadeCotas > 1) motivos.push(`combina ${quantidadeCotas} cotas no mesmo grupo/faixa`);
@@ -194,6 +201,10 @@ function buildOffer(
     lanceProprioDisponivel: onlyNumber(ctx.input.lanceProprio),
     lanceProprioSobra: Math.max(0, onlyNumber(ctx.input.lanceProprio) - calc.lanceProprio),
     quantidadeCotas,
+    entregaMediaEsperada: delivery.expectedPerAssembly,
+    entregaUltimaAssembleia: delivery.lastDelivered,
+    entregaIndicePct: delivery.deliveryRatio ? delivery.deliveryRatio * 100 : null,
+    proximaAssembleia: groupNextAssembly(group),
     probabilidadeContemplacao: probabilidade,
     prazoContemplacaoDesejado: onlyNumber(ctx.input.prazoContemplacao),
     segmento: String(group.segmento || ctx.input.segmento),
@@ -244,7 +255,9 @@ export function runMaggiEngine(ctx: EngineContext, groups: AnyRow[]): EngineResu
               for (const ownBidPerQuota of ownBidOptions) {
                 const baseCalc = calcMaggi({ group, credit, prazoRule, lanceOption, ownBid: ownBidPerQuota, embPct, parcelaContemplacao });
                 const calc = aggregateCalculation(baseCalc, quantidadeCotas);
+                const median = groupBidStats(group).median;
                 if (calc.lanceProprio > ownBid + 1) continue;
+                if (median !== null && calc.lanceTotalPct < median - 5) continue;
                 if (ctx.input.modo === "credito" && purchasingPower(calc, ctx.input) < desiredNet * 0.72) continue;
                 if (ctx.input.modo === "parcela" && calc.parcelaEstimada > desiredInstallment * 1.35) continue;
                 offers.push(buildOffer(ctx, group, range, prazoRule, lanceOption, calc, quantidadeCotas));

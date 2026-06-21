@@ -60,8 +60,11 @@ export type RadarScoreBreakdown = {
   credito: number;
   parcela: number;
   lance: number;
-  prazo: number;
-  eficiencia: number;
+  perfilGrupo: number;
+  entregas: number;
+  taxaAdm: number;
+  fundoReserva: number;
+  assembleia: number;
   total: number;
 };
 
@@ -78,6 +81,10 @@ export type RadarOffer = RadarCalculation & {
   lanceProprioDisponivel: number;
   lanceProprioSobra: number;
   quantidadeCotas: number;
+  entregaMediaEsperada: number | null;
+  entregaUltimaAssembleia: number | null;
+  entregaIndicePct: number | null;
+  proximaAssembleia?: string | null;
   probabilidadeContemplacao: number;
   prazoContemplacaoDesejado: number;
   segmento: string;

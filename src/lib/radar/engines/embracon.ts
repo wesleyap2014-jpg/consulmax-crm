@@ -1,6 +1,8 @@
 import {
   adminRouteFromKey,
   clamp,
+  groupDeliveryStats,
+  groupNextAssembly,
   normalizeText,
   onlyNumber,
   purchasingPower,
@@ -156,10 +158,11 @@ function buildOffer(params: {
 }) {
   const { ctx, table, forma, lanceTipo, calc } = params;
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
-  const probabilidade = estimateProbability({ ownBidPct: calc.lanceProprioPct, group: table });
+  const probabilidade = estimateProbability({ bidPct: calc.lanceTotalPct, group: table });
   const stats = groupBidStats(table);
   const power = purchasingPower(calc, ctx.input);
-  const scoreBreakdown = scoreOffer(calc, ctx.input, 1);
+  const scoreBreakdown = scoreOffer(calc, ctx.input, 1, table);
+  const delivery = groupDeliveryStats(table);
   const motivos: string[] = [];
   const alertas: string[] = [];
 
@@ -172,7 +175,7 @@ function buildOffer(params: {
     alertas.push("parcela estimada acima do orçamento");
   }
 
-  if (stats.median !== null) motivos.push(`lance próprio comparado à mediana do grupo (${stats.median.toFixed(2)}%)`);
+  if (stats.median !== null) motivos.push(`lance total comparado à mediana do grupo (${stats.median.toFixed(2)}%)`);
   if (calc.antecipacaoPct) motivos.push(`considera antecipação de taxa em ${calc.antecipacaoParcelas || 0} parcela(s)`);
   if (calc.limitadorParcelaPct) motivos.push("aplica limitador de parcela quando a regra da tabela exige");
 
@@ -204,6 +207,10 @@ function buildOffer(params: {
     lanceProprioDisponivel: onlyNumber(ctx.input.lanceProprio),
     lanceProprioSobra: Math.max(0, onlyNumber(ctx.input.lanceProprio) - calc.lanceProprio),
     quantidadeCotas: 1,
+    entregaMediaEsperada: delivery.expectedPerAssembly,
+    entregaUltimaAssembleia: delivery.lastDelivered,
+    entregaIndicePct: delivery.deliveryRatio ? delivery.deliveryRatio * 100 : null,
+    proximaAssembleia: groupNextAssembly(table),
     probabilidadeContemplacao: probabilidade,
     prazoContemplacaoDesejado: onlyNumber(ctx.input.prazoContemplacao),
     segmento: String(table.segmento || ctx.input.segmento),

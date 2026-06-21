@@ -156,12 +156,6 @@ export function purchasingPower(calc: Pick<RadarCalculation, "creditoLiquido" | 
   return calc.creditoLiquido + Math.max(0, ownBidAvailable - calc.lanceProprio);
 }
 
-function closenessScore(actual: number, target: number, tolerancePct: number) {
-  if (!target) return 85;
-  const diffPct = Math.abs(actual - target) / target;
-  return clamp(100 - (diffPct / tolerancePct) * 100, 0, 100);
-}
-
 function minTargetScore(actual: number, target: number) {
   if (!target) return 85;
   if (actual >= target) {
@@ -175,6 +169,151 @@ function maxBudgetScore(actual: number, target: number) {
   if (!target) return 85;
   if (actual <= target) return clamp(100 - Math.max(0, target - actual) / target * 8, 92, 100);
   return clamp(100 - ((actual - target) / target) * 120, 0, 100);
+}
+
+function assemblyRow(group: AnyRow | null | undefined): AnyRow {
+  const assembly = rowConfig(group).assemblyResult;
+  if (assembly && !Array.isArray(assembly) && typeof assembly === "object") return assembly as AnyRow;
+  return {};
+}
+
+function pickNumberDeep(group: AnyRow | null | undefined, keys: string[]) {
+  return pickNumber(group, keys) || pickNumber(rowConfig(group), keys) || pickNumber(assemblyRow(group), keys);
+}
+
+export function groupDeliveryStats(group: AnyRow | null | undefined) {
+  const activeParticipants = pickNumberDeep(group, [
+    "participantes_ativos",
+    "participantesAtivos",
+    "activeParticipants",
+    "cotas_ativas",
+    "cotasAtivas",
+    "active_quotas",
+  ]);
+  const totalAssemblies = pickNumberDeep(group, [
+    "assembleias_total",
+    "total_assembleias",
+    "totalAssemblies",
+    "qtd_assembleias",
+    "quantidade_assembleias",
+    "assemblyCount",
+  ]);
+  const lastDelivered = pickNumberDeep(group, [
+    "entregas_ultima_assembleia",
+    "entrega_ultima_assembleia",
+    "cotas_entregues_ultima",
+    "contemplados_ultima_assembleia",
+    "ultima_entrega",
+    "lastDelivered",
+    "deliveredLastAssembly",
+    "delivered_last_assembly",
+    "quantidadeContemplados",
+    "contemplados",
+  ]);
+
+  const expectedPerAssembly = activeParticipants > 0 && totalAssemblies > 0 ? activeParticipants / totalAssemblies : 0;
+  const deliveryRatio = expectedPerAssembly > 0 && lastDelivered > 0 ? lastDelivered / expectedPerAssembly : 0;
+
+  return {
+    activeParticipants: activeParticipants || null,
+    totalAssemblies: totalAssemblies || null,
+    expectedPerAssembly: expectedPerAssembly || null,
+    lastDelivered: lastDelivered || null,
+    deliveryRatio: deliveryRatio || null,
+  };
+}
+
+export function groupNextAssembly(group: AnyRow | null | undefined) {
+  const cfg = rowConfig(group);
+  const assembly = assemblyRow(group);
+  const raw =
+    group?.proxima_assembleia ||
+    group?.data_proxima_assembleia ||
+    group?.next_assembly_date ||
+    group?.nextAssemblyDate ||
+    cfg.proximaAssembleia ||
+    cfg.nextAssemblyDate ||
+    cfg.next_assembly_date ||
+    assembly.proximaAssembleia ||
+    assembly.nextAssemblyDate ||
+    assembly.next_assembly_date;
+  return raw ? String(raw) : null;
+}
+
+function deliveryScore(group: AnyRow | null | undefined) {
+  const stats = groupDeliveryStats(group);
+  if (!stats.deliveryRatio) return 70;
+  const pct = stats.deliveryRatio * 100;
+  if (pct >= 100) return 100;
+  if (pct >= 70) return 84 + ((pct - 70) / 30) * 14;
+  if (pct >= 40) return 58 + ((pct - 40) / 30) * 22;
+  if (pct >= 20) return 35 + ((pct - 20) / 20) * 18;
+  return clamp(15 + pct, 0, 35);
+}
+
+function nextAssemblyScore(group: AnyRow | null | undefined) {
+  const raw = groupNextAssembly(group);
+  if (!raw) return 70;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return 70;
+  const today = new Date();
+  const days = Math.ceil((date.getTime() - today.getTime()) / 86400000);
+  if (days < 0) return 45;
+  if (days <= 7) return 100;
+  if (days <= 15) return 92;
+  if (days <= 30) return 82;
+  if (days <= 60) return 68;
+  return 55;
+}
+
+function groupProfileScore(calc: RadarCalculation, group: AnyRow | null | undefined) {
+  const assembly = rowConfig(group).assemblyResult;
+  const bids = asRows(assembly)
+    .map((row) =>
+      pickNumber(row, [
+        "percentual_lance",
+        "lance_pct",
+        "lance_percentual",
+        "percentual",
+        "pct",
+        "bidPct",
+        "bid_percent",
+        "valor_lance_percentual",
+      ])
+    )
+    .filter((value) => value > 0)
+    .map(normalizePct)
+    .sort((a, b) => a - b);
+  const listMedian = bids.length ? (bids.length % 2 ? bids[Math.floor(bids.length / 2)] : (bids[bids.length / 2 - 1] + bids[bids.length / 2]) / 2) : 0;
+  const statsSource = assembly || group;
+  const med =
+    listMedian ||
+    pickNumber(group, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
+    pickNumber(statsSource && !Array.isArray(statsSource) ? (statsSource as AnyRow) : {}, [
+      "mediana_lance",
+      "median_lance",
+      "media_lance_livre",
+      "media_lance",
+      "avg_lance",
+      "lance_medio",
+      "median",
+      "mediana",
+    ]);
+  const medianPct = normalizePct(med);
+  if (!medianPct) return 70;
+  const gap = calc.lanceTotalPct - medianPct;
+  if (gap >= 5) return 100;
+  if (gap >= 0) return 92 + (gap / 5) * 8;
+  if (gap >= -5) return 78 + ((gap + 5) / 5) * 12;
+  if (gap >= -10) return 58 + ((gap + 10) / 5) * 16;
+  return clamp(58 + gap * 2, 10, 58);
+}
+
+function feeScore(value: number, excellent: number, acceptable: number) {
+  if (!value) return 75;
+  if (value <= excellent) return 100;
+  if (value <= acceptable) return 100 - ((value - excellent) / (acceptable - excellent)) * 30;
+  return clamp(70 - ((value - acceptable) / acceptable) * 50, 20, 70);
 }
 
 export function aggregateCalculation(calc: RadarCalculation, quantidadeCotas: number): RadarCalculation {
@@ -204,39 +343,47 @@ export function aggregateCalculation(calc: RadarCalculation, quantidadeCotas: nu
   };
 }
 
-export function scoreOffer(calc: RadarCalculation, input: RadarInput, quantidadeCotas = 1): RadarScoreBreakdown {
+export function scoreOffer(calc: RadarCalculation, input: RadarInput, quantidadeCotas = 1, group?: AnyRow | null): RadarScoreBreakdown {
   const desiredPower = onlyNumber(input.creditoLiquido);
   const desiredInstallment = onlyNumber(input.parcelaDesejada);
   const ownBidAvailable = onlyNumber(input.lanceProprio);
-  const desiredMonths = Math.max(1, onlyNumber(input.prazoContemplacao));
   const power = purchasingPower(calc, input);
 
   const creditoScore = input.modo === "credito" ? minTargetScore(power, desiredPower) : minTargetScore(calc.creditoLiquido, desiredPower);
   const parcelaScore = desiredInstallment > 0 ? maxBudgetScore(calc.parcelaEstimada, desiredInstallment) : 85;
   const lanceScore = ownBidAvailable > 0 ? maxBudgetScore(calc.lanceProprio, ownBidAvailable) : calc.lanceProprio <= 0 ? 100 : 0;
-  const prazoScore = closenessScore(desiredMonths, Math.max(1, desiredMonths), 0.35);
-  const sobraRatio = ownBidAvailable > 0 ? Math.max(0, ownBidAvailable - calc.lanceProprio) / ownBidAvailable : 0;
+  const perfilGrupoScore = groupProfileScore(calc, group);
+  const entregasScore = deliveryScore(group);
+  const taxaAdmScore = feeScore(calc.taxaAdmPct, 16, 24);
+  const fundoReservaScore = feeScore(calc.fundoReservaPct, 0.5, 3);
+  const assembleiaScore = nextAssemblyScore(group);
   const cotasPenalty = Math.max(0, quantidadeCotas - 1) * 6;
-  const eficienciaScore = clamp(92 + sobraRatio * 8 - cotasPenalty, 45, 100);
 
   const weights =
     input.modo === "parcela"
-      ? { credito: 0.22, parcela: 0.35, lance: 0.2, prazo: 0.1, eficiencia: 0.13 }
-      : { credito: 0.35, parcela: 0.22, lance: 0.2, prazo: 0.1, eficiencia: 0.13 };
+      ? { credito: 0.18, parcela: 0.28, lance: 0.16, perfilGrupo: 0.16, entregas: 0.1, taxaAdm: 0.05, fundoReserva: 0.03, assembleia: 0.04 }
+      : { credito: 0.25, parcela: 0.2, lance: 0.15, perfilGrupo: 0.18, entregas: 0.1, taxaAdm: 0.05, fundoReserva: 0.03, assembleia: 0.04 };
 
   const total =
     creditoScore * weights.credito +
     parcelaScore * weights.parcela +
     lanceScore * weights.lance +
-    prazoScore * weights.prazo +
-    eficienciaScore * weights.eficiencia;
+    perfilGrupoScore * weights.perfilGrupo +
+    entregasScore * weights.entregas +
+    taxaAdmScore * weights.taxaAdm +
+    fundoReservaScore * weights.fundoReserva +
+    assembleiaScore * weights.assembleia -
+    cotasPenalty;
 
   return {
     credito: Math.round(creditoScore),
     parcela: Math.round(parcelaScore),
     lance: Math.round(lanceScore),
-    prazo: Math.round(prazoScore),
-    eficiencia: Math.round(eficienciaScore),
+    perfilGrupo: Math.round(perfilGrupoScore),
+    entregas: Math.round(entregasScore),
+    taxaAdm: Math.round(taxaAdmScore),
+    fundoReserva: Math.round(fundoReservaScore),
+    assembleia: Math.round(assembleiaScore),
     total: Math.round(clamp(total, 0, 100)),
   };
 }

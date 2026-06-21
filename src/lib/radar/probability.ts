@@ -71,15 +71,15 @@ export function groupBidStats(group: AnyRow | null | undefined) {
   };
 }
 
-export function estimateProbability(params: { ownBidPct: number; group?: AnyRow | null }) {
-  const { ownBidPct, group } = params;
+export function estimateProbability(params: { bidPct: number; group?: AnyRow | null }) {
+  const { bidPct, group } = params;
   const stats = groupBidStats(group);
   const min = stats.min;
   const median = stats.median;
   const max = stats.max;
 
   if (!min && !median && !max) {
-    return clamp(Number((60 + ownBidPct * 0.8).toFixed(1)), 5, PROBABILITY_PARAMS.maiorLancePctChance);
+    return clamp(Number((60 + bidPct * 0.8).toFixed(1)), 5, PROBABILITY_PARAMS.maiorLancePctChance);
   }
 
   const baseAnchor = median ?? min ?? max ?? 0;
@@ -89,26 +89,26 @@ export function estimateProbability(params: { ownBidPct: number; group?: AnyRow 
 
   let probability = PROBABILITY_PARAMS.abaixoMenorChancePiso;
 
-  if (ownBidPct >= maxAnchor) {
+  if (bidPct >= maxAnchor) {
     probability = PROBABILITY_PARAMS.maiorLancePctChance;
-  } else if (ownBidPct >= medianAnchor) {
+  } else if (bidPct >= medianAnchor) {
     probability = interpolate(
-      ownBidPct,
+      bidPct,
       medianAnchor,
       maxAnchor,
       PROBABILITY_PARAMS.medianaPctChance,
       PROBABILITY_PARAMS.maiorLancePctChance
     );
-  } else if (ownBidPct >= minAnchor) {
+  } else if (bidPct >= minAnchor) {
     probability = interpolate(
-      ownBidPct,
+      bidPct,
       minAnchor,
       medianAnchor,
       PROBABILITY_PARAMS.menorLancePctChance,
       PROBABILITY_PARAMS.medianaPctChance
     );
   } else {
-    const gap = minAnchor - ownBidPct;
+    const gap = minAnchor - bidPct;
     if (gap <= PROBABILITY_PARAMS.abaixoMenorGapAtePisoPct) {
       probability = interpolate(
         gap,
@@ -130,4 +130,3 @@ export function estimateProbability(params: { ownBidPct: number; group?: AnyRow 
 
   return clamp(Number(probability.toFixed(1)), 1, PROBABILITY_PARAMS.maiorLancePctChance);
 }
-

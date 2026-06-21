@@ -10,7 +10,6 @@ import {
   Building2,
   CheckCircle2,
   Copy,
-  Database,
   Loader2,
   Search,
   Sparkles,
@@ -28,17 +27,18 @@ type AdminRow = {
 };
 
 type SearchMode = "credito" | "parcela";
+type EmbedDecision = "ia" | "sim" | "nao";
+type RadarSegment = "Automóvel" | "Imóvel" | "Serviços";
 
 type RadarInput = {
   modo: SearchMode;
-  segmento: string;
-  adminId: string;
+  segmento: RadarSegment;
   creditoLiquido: string;
   parcelaDesejada: string;
   lanceProprio: string;
   prazoContemplacao: string;
-  usarEmbutido: "sim" | "nao";
-  embutidoPct: string;
+  usarEmbutido: EmbedDecision;
+  probabilidadeMinima: string;
 };
 
 type RadarOffer = {
@@ -56,6 +56,7 @@ type RadarOffer = {
   lanceTotal: number;
   lanceTotalPct: number;
   mediaGrupoPct: number | null;
+  probabilidadeContemplacao: number;
   prazo: number;
   segmento: string;
   estrategia: string;
@@ -71,23 +72,18 @@ const C = {
   off: "#F5F5F5",
 };
 
-const STORAGE_MANUAL_GROUPS = "@consulmax:radar-ofertas:manual-groups-v1";
-
-const SAMPLE_GROUPS = `grupo;administradora;segmento;prazo_maximo;maior_pct_contemplado;menor_pct_contemplado
-9974;Embracon;Automóvel;80;35,50;28,00
-1201;Maggi;Imóvel;180;42,00;31,00
-5010;BB Consórcios;Automóvel;84;30,00;25,00`;
+const RADAR_SEGMENTS: RadarSegment[] = ["Automóvel", "Imóvel", "Serviços"];
+const PROBABILITY_OPTIONS = ["40", "50", "60", "70", "80", "90"];
 
 const DEFAULT_INPUT: RadarInput = {
   modo: "credito",
-  segmento: "",
-  adminId: "todas",
+  segmento: "Automóvel",
   creditoLiquido: "150000",
   parcelaDesejada: "1500",
   lanceProprio: "30000",
   prazoContemplacao: "6",
-  usarEmbutido: "sim",
-  embutidoPct: "25",
+  usarEmbutido: "ia",
+  probabilidadeMinima: "60",
 };
 
 function onlyNumber(value: unknown): number {
@@ -152,29 +148,26 @@ function adminSlug(admin: AdminRow) {
   return admin.slug || slugify(admin.name);
 }
 
-function isAvailableAdmin(admin: AdminRow) {
+function isBbAdmin(admin: AdminRow) {
   const key = `${adminSlug(admin)} ${normalizeText(admin.name)}`;
   return (
-    key.includes("embracon") ||
-    key.includes("maggi") ||
     key.includes("bb-consorcios") ||
     key.includes("bb consorcios") ||
-    key.includes("banco do brasil")
+    key.includes("banco do brasil") ||
+    key.includes("bb")
   );
 }
 
 function adminRoute(admin: AdminRow) {
   const key = `${adminSlug(admin)} ${normalizeText(admin.name)}`;
-  if (key.includes("maggi")) return "/simuladores/maggi";
   if (key.includes("bb-consorcios") || key.includes("bb consorcios") || key.includes("banco do brasil") || key.includes("bb"))
     return "/simuladores/bb-consorcios";
-  if (key.includes("embracon")) return "/simuladores/embracon";
   return `/simuladores/${adminSlug(admin)}`;
 }
 
 function tableCreditMin(table: AnyRow) {
   return (
-    pickNumber(table, ["faixa_credito_min", "credito_min", "min_credit", "valor_min", "minimo", "credito_de"]) ||
+    pickNumber(table, ["faixa_credito_min", "credito_min", "min_credit", "valor_min", "minimo", "credito_de", "valor_credito_min", "valor_bem_min"]) ||
     onlyNumber(findByKey(table, ["faixa", "min"])) ||
     onlyNumber(findByKey(table, ["credito", "min"])) ||
     10_000
@@ -183,7 +176,20 @@ function tableCreditMin(table: AnyRow) {
 
 function tableCreditMax(table: AnyRow) {
   return (
-    pickNumber(table, ["faixa_credito_max", "credito_max", "max_credit", "valor_max", "maximo", "credito_ate", "credito_disponivel", "credito"]) ||
+    pickNumber(table, [
+      "faixa_credito_max",
+      "credito_max",
+      "max_credit",
+      "valor_max",
+      "maximo",
+      "credito_ate",
+      "credito_disponivel",
+      "credito",
+      "valor_credito",
+      "valor_bem",
+      "valor_carta",
+      "credit_value",
+    ]) ||
     onlyNumber(findByKey(table, ["faixa", "max"])) ||
     onlyNumber(findByKey(table, ["credito", "max"])) ||
     2_000_000
@@ -191,12 +197,12 @@ function tableCreditMax(table: AnyRow) {
 }
 
 function tableDeadline(table: AnyRow) {
-  return pickNumber(table, ["prazo_limite", "prazo_maximo", "prazo", "max_prazo", "prazo_meses", "prazo_encerramento_meses"]) || 240;
+  return pickNumber(table, ["prazo_limite", "prazo_maximo", "prazo", "max_prazo", "prazo_meses", "prazo_encerramento_meses", "months", "term"]) || 240;
 }
 
 function tableFeePct(table: AnyRow) {
   const raw =
-    pickNumber(table, ["taxa_adm", "taxa_admin", "taxa_administracao", "administration_fee", "taxa"]) ||
+    pickNumber(table, ["taxa_adm", "taxa_admin", "taxa_administracao", "administration_fee", "taxa", "taxa_total", "taxa_plano"]) ||
     onlyNumber(findByKey(table, ["tax"])) ||
     18;
   return raw <= 1 ? raw * 100 : raw;
@@ -205,7 +211,15 @@ function tableFeePct(table: AnyRow) {
 function maxEmbeddedPct(admin: AdminRow, table: AnyRow) {
   const behavior = admin.behavior || {};
   const raw =
-    pickNumber(table, ["lance_embutido_max", "max_embutido", "embutido_max", "lance_embutido_pct", "max_lance_embutido"]) ||
+    pickNumber(table, [
+      "lance_embutido_max",
+      "max_embutido",
+      "embutido_max",
+      "lance_embutido_pct",
+      "max_lance_embutido",
+      "percentual_lance_embutido",
+      "lance_embutido_max_pct",
+    ]) ||
     pickNumber(behavior, ["lance_embutido_max", "max_embutido", "embutido_max", "max_lance_embutido"]) ||
     25;
   return clamp(raw <= 1 ? raw * 100 : raw, 0, 80);
@@ -213,6 +227,10 @@ function maxEmbeddedPct(admin: AdminRow, table: AnyRow) {
 
 function groupAveragePct(group: AnyRow | null | undefined) {
   if (!group) return null;
+  const high = pickNumber(group, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct"]);
+  const low = pickNumber(group, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct"]);
+  if (high > 0 && low > 0) return (high + low) / 2;
+
   const raw =
     pickNumber(group, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
     onlyNumber(findByKey(group, ["media", "lance"])) ||
@@ -221,17 +239,40 @@ function groupAveragePct(group: AnyRow | null | undefined) {
   return raw <= 1 ? raw * 100 : raw;
 }
 
-function rowSegment(row: AnyRow) {
-  return String(row.segmento || row.produto || row.category || "").trim();
+function segmentAliases(segmento: RadarSegment) {
+  const aliases: Record<RadarSegment, string[]> = {
+    Automóvel: [
+      "automovel",
+      "auto",
+      "veiculo",
+      "veiculos",
+      "motocicleta",
+      "motocicletas",
+      "moto",
+      "motos",
+      "pesado",
+      "pesados",
+      "caminhao",
+      "caminhoes",
+      "onibus",
+      "implemento",
+      "implementos",
+    ],
+    Imóvel: ["imovel", "imoveis", "imovel estendido", "imoveis estendido", "residencial", "construcao", "reforma"],
+    Serviços: ["servico", "servicos"],
+  };
+
+  return aliases[segmento];
 }
 
-function matchesSegment(row: AnyRow, segmento: string) {
-  if (!segmento) return true;
-  const haystack = normalizeText(`${row.segmento || ""} ${row.produto || ""} ${row.nome_tabela || ""} ${row.name || ""}`);
-  return haystack.includes(normalizeText(segmento));
+function matchesSegment(row: AnyRow, segmento: RadarSegment) {
+  const haystack = normalizeText(
+    `${row.segmento || ""} ${row.segment || ""} ${row.produto || ""} ${row.product || ""} ${row.category || ""} ${row.category_name || ""} ${row.categoria || ""} ${row.tipo_bem || ""} ${row.nome_tabela || ""} ${row.name || ""}`
+  );
+  return segmentAliases(segmento).some((term) => haystack.includes(term));
 }
 
-function groupMatches(group: AnyRow, admin: AdminRow, segmento: string) {
+function groupMatches(group: AnyRow, admin: AdminRow, segmento: RadarSegment) {
   const adminName = normalizeText(admin.name);
   const adminSlugText = normalizeText(adminSlug(admin));
   const gAdmin = normalizeText(group.administradora || group.admin || group.admin_name || group.name_admin || "");
@@ -260,62 +301,33 @@ function reducerOptions(table: AnyRow) {
   return [...options].sort((a, b) => a - b);
 }
 
-function splitManualLine(line: string) {
-  if (line.includes(";")) return line.split(";");
-  if (line.includes("\t")) return line.split("\t");
-  return line.split(",");
-}
-
-function parseManualGroups(text: string): AnyRow[] {
-  const lines = text
-    .split(/\r?\n/g)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  if (!lines.length) return [];
-
-  const first = normalizeText(lines[0]);
-  const hasHeader = first.includes("grupo") && first.includes("administradora");
-  const rows = hasHeader ? lines.slice(1) : lines;
-
-  return rows
-    .map((line, index) => {
-      const cols = splitManualLine(line).map((col) => col.trim());
-      const [grupo, administradora, segmento, prazoMaximo, maiorPct, menorPct] = cols;
-      const high = onlyNumber(maiorPct);
-      const low = onlyNumber(menorPct);
-      const mediana = high > 0 && low > 0 ? (high + low) / 2 : high || low || 0;
-
-      if (!grupo || !administradora || !segmento) return null;
-
-      return {
-        id: `manual-${index}-${grupo}`,
-        codigo: grupo,
-        grupo,
-        administradora,
-        segmento,
-        prazo_maximo: onlyNumber(prazoMaximo),
-        prazo_limite: onlyNumber(prazoMaximo),
-        maior_pct_contemplado: high,
-        menor_pct_contemplado: low,
-        mediana_lance: mediana,
-        _manual: true,
-      } as AnyRow;
-    })
-    .filter(Boolean) as AnyRow[];
-}
-
-function tableFromManualGroup(group: AnyRow, admin: AdminRow): AnyRow {
+function tableFromBbGroup(group: AnyRow, admin: AdminRow): AnyRow {
   return {
     ...group,
-    id: group.id || group.codigo || group.grupo,
+    id: group.id || group.codigo || group.grupo || group.group_code,
+    original_admin_id: group.admin_id,
     admin_id: admin.id,
-    nome_tabela: group.nome_tabela || group.nome || `Grupo ${group.codigo || group.grupo || "disponível"}`,
+    administradora: group.administradora || "BB Consórcios",
+    nome_tabela: group.nome_tabela || group.nome || group.name || `Grupo BB ${group.codigo || group.grupo || group.group_code || "disponível"}`,
     faixa_credito_min: pickNumber(group, ["faixa_credito_min", "credito_min", "valor_min"]) || 10_000,
     faixa_credito_max: tableCreditMax(group),
     prazo_limite: tableDeadline(group),
-    _source: "manual_group",
+    _source: "sim_bb_groups",
   };
+}
+
+function estimateProbability(params: { bidPct: number; avgPct: number | null; desiredMonths: number }) {
+  const { bidPct, avgPct, desiredMonths } = params;
+  let probability = avgPct === null ? 45 : 50 + (bidPct - avgPct) * 4;
+
+  if (desiredMonths > 0 && desiredMonths <= 3) probability -= 12;
+  else if (desiredMonths > 0 && desiredMonths <= 6) probability -= 5;
+  else if (desiredMonths >= 12) probability += 6;
+
+  if (bidPct >= 50) probability += 8;
+  if (bidPct <= 20) probability -= 8;
+
+  return clamp(Math.round(probability), 5, 95);
 }
 
 function buildScenario(params: {
@@ -325,16 +337,14 @@ function buildScenario(params: {
   group: AnyRow | null;
   credit: number;
   reducer: number;
+  embPct: number;
 }) {
-  const { input, admin, table, group, credit, reducer } = params;
+  const { input, admin, table, group, credit, reducer, embPct } = params;
   const desiredNet = onlyNumber(input.creditoLiquido);
   const desiredInstallment = onlyNumber(input.parcelaDesejada);
   const ownBid = onlyNumber(input.lanceProprio);
   const desiredMonths = Math.max(0, onlyNumber(input.prazoContemplacao));
-
-  const requestedEmbPct = onlyNumber(input.embutidoPct);
-  const limitEmbPct = maxEmbeddedPct(admin, table);
-  const embPct = input.usarEmbutido === "sim" ? clamp(requestedEmbPct, 0, limitEmbPct) : 0;
+  const minProbability = onlyNumber(input.probabilidadeMinima);
 
   const embedded = credit * (embPct / 100);
   const totalBid = ownBid + embedded;
@@ -344,6 +354,7 @@ function buildScenario(params: {
   const installment = (totalWithFee / Math.max(1, prazo)) * reducer;
   const bidPct = credit > 0 ? (totalBid / credit) * 100 : 0;
   const avgPct = groupAveragePct(group);
+  const probability = estimateProbability({ bidPct, avgPct, desiredMonths });
 
   const motivos: string[] = [];
   const alertas: string[] = [];
@@ -379,11 +390,8 @@ function buildScenario(params: {
     motivos.push(`com essa parcela, estima crédito líquido de ${brMoney(net)}`);
   }
 
-  if (input.usarEmbutido === "sim" && requestedEmbPct > limitEmbPct) {
-    alertas.push(`embutido limitado ao máximo configurado: ${brPct(limitEmbPct)}`);
-  }
-
-  if (embPct > 0) motivos.push(`usa lance embutido de ${brPct(embPct)}`);
+  if (input.usarEmbutido === "ia") motivos.push(embPct > 0 ? `IA considerou embutido de ${brPct(embPct)}` : "IA considerou proposta sem embutido");
+  else if (embPct > 0) motivos.push(`usa lance embutido permitido de ${brPct(embPct)}`);
   else motivos.push("não utiliza lance embutido");
 
   if (reducer < 1) motivos.push(`simula parcela reduzida de ${brPct(reducer * 100)} da parcela cheia`);
@@ -408,6 +416,16 @@ function buildScenario(params: {
     alertas.push("prazo de contemplação muito curto para a força do lance estimada");
   }
 
+  if (minProbability > 0) {
+    if (probability >= minProbability) {
+      score += 10;
+      motivos.push(`probabilidade estimada atende o mínimo de ${brPct(minProbability)}`);
+    } else {
+      score -= 12;
+      alertas.push(`probabilidade estimada abaixo do mínimo de ${brPct(minProbability)}`);
+    }
+  }
+
   const finalScore = clamp(Math.round(score), 0, 100);
 
   return {
@@ -425,9 +443,10 @@ function buildScenario(params: {
     lanceTotal: totalBid,
     lanceTotalPct: bidPct,
     mediaGrupoPct: avgPct,
+    probabilidadeContemplacao: probability,
     prazo,
     segmento: String(table.segmento || group?.segmento || input.segmento || "Não informado"),
-    estrategia: embPct > 0 ? "Lance próprio + embutido" : "Lance próprio sem embutido",
+    estrategia: embPct > 0 ? "Lance próprio + embutido permitido" : "Lance próprio sem embutido",
     motivos: motivos.slice(0, 5),
     alertas: alertas.slice(0, 4),
   } satisfies RadarOffer;
@@ -439,7 +458,7 @@ function buildOffers(input: RadarInput, admins: AdminRow[], tables: AnyRow[], gr
   if (input.modo === "credito" && !desiredNet) return [];
   if (input.modo === "parcela" && !desiredInstallment) return [];
 
-  const selectedAdmins = admins.filter((a) => (input.adminId === "todas" || a.id === input.adminId) && isAvailableAdmin(a));
+  const selectedAdmins = admins.filter((a) => isBbAdmin(a));
   const byAdmin = new Map(selectedAdmins.map((a) => [a.id, a]));
   const results: RadarOffer[] = [];
 
@@ -448,22 +467,28 @@ function buildOffers(input: RadarInput, admins: AdminRow[], tables: AnyRow[], gr
     if (!admin) continue;
     if (!matchesSegment(table, input.segmento)) continue;
 
-    const possibleGroups = groups.filter((g) => groupMatches(g, admin, input.segmento || rowSegment(table)));
-    const group = possibleGroups[0] || (table._source === "manual_group" || table._source === "sim_maggi_groups" ? table : null);
+    const possibleGroups = groups.filter((g) => groupMatches(g, admin, input.segmento));
+    const group = table._source === "sim_bb_groups" ? table : possibleGroups[0] || null;
 
     const minCredit = tableCreditMin(table);
     const maxCredit = tableCreditMax(table);
     const prazo = tableDeadline(table);
     const feePct = tableFeePct(table);
     const reducers = reducerOptions(table);
+    const allowedEmbPct = maxEmbeddedPct(admin, table);
+    const embOptions =
+      input.usarEmbutido === "ia"
+        ? [...new Set([0, allowedEmbPct].filter((value) => value >= 0))]
+        : [input.usarEmbutido === "sim" ? allowedEmbPct : 0];
     const credits: number[] = [];
 
     if (input.modo === "credito") {
-      const embPct = input.usarEmbutido === "sim" ? clamp(onlyNumber(input.embutidoPct), 0, maxEmbeddedPct(admin, table)) : 0;
-      const wantedGross = desiredNet / Math.max(0.1, 1 - embPct / 100);
-      credits.push(clamp(wantedGross, minCredit, maxCredit));
-      credits.push(clamp(wantedGross * 1.1, minCredit, maxCredit));
-      credits.push(clamp(wantedGross * 1.25, minCredit, maxCredit));
+      for (const embPct of embOptions) {
+        const wantedGross = desiredNet / Math.max(0.1, 1 - embPct / 100);
+        credits.push(clamp(wantedGross, minCredit, maxCredit));
+        credits.push(clamp(wantedGross * 1.1, minCredit, maxCredit));
+        credits.push(clamp(wantedGross * 1.25, minCredit, maxCredit));
+      }
     } else {
       for (const reducer of reducers) {
         const estimatedCredit = (desiredInstallment * prazo) / Math.max(0.1, 1 + feePct / 100) / Math.max(0.1, reducer);
@@ -475,7 +500,9 @@ function buildOffers(input: RadarInput, admins: AdminRow[], tables: AnyRow[], gr
 
     for (const credit of [...new Set(credits.map((value) => Math.round(value)))]) {
       for (const reducer of reducers) {
-        results.push(buildScenario({ input, admin, table, group, credit, reducer }));
+        for (const embPct of embOptions) {
+          results.push(buildScenario({ input, admin, table, group, credit, reducer, embPct }));
+        }
       }
     }
   }
@@ -515,9 +542,9 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
 
         <div className="grid gap-3 p-5 md:grid-cols-4">
           <Metric label="Crédito contratado" value={brMoney(offer.creditoContratado)} />
-          <Metric label="Crédito líquido" value={brMoney(offer.creditoLiquido)} />
+          <Metric label="Poder de compra" value={brMoney(offer.creditoLiquido)} />
           <Metric label="Parcela estimada" value={brMoney(offer.parcelaEstimada)} />
-          <Metric label="Lance total" value={`${brMoney(offer.lanceTotal)} • ${brPct(offer.lanceTotalPct)}`} />
+          <Metric label="Probabilidade" value={brPct(offer.probabilidadeContemplacao)} />
         </div>
 
         <div className="grid gap-4 px-5 pb-5 md:grid-cols-[1.2fr_.8fr]">
@@ -544,7 +571,9 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
             <p>{offer.estrategia}</p>
             <p className="mt-2">Lance próprio: <b>{brMoney(offer.lanceProprio)}</b></p>
             <p>Embutido: <b>{brMoney(offer.lanceEmbutido)}</b></p>
+            <p>Lance total: <b>{brMoney(offer.lanceTotal)} ({brPct(offer.lanceTotalPct)})</b></p>
             <p>Mediana/média: <b>{offer.mediaGrupoPct === null ? "não cadastrada" : brPct(offer.mediaGrupoPct)}</b></p>
+            <p>Probabilidade: <b>{brPct(offer.probabilidadeContemplacao)}</b></p>
             <p>Prazo base: <b>{offer.prazo} meses</b></p>
           </div>
         </div>
@@ -586,13 +615,6 @@ export default function RadarOfertas() {
   const [admins, setAdmins] = useState<AdminRow[]>([]);
   const [tables, setTables] = useState<AnyRow[]>([]);
   const [groupsDb, setGroupsDb] = useState<AnyRow[]>([]);
-  const [manualGroupsText, setManualGroupsText] = useState(() => {
-    try {
-      return localStorage.getItem(STORAGE_MANUAL_GROUPS) || "";
-    } catch {
-      return "";
-    }
-  });
   const [input, setInput] = useState<RadarInput>(DEFAULT_INPUT);
   const [searched, setSearched] = useState(false);
 
@@ -601,31 +623,26 @@ export default function RadarOfertas() {
 
     (async () => {
       setLoading(true);
-      const [adminsRes, tablesRes, groupsRes, maggiGroupsRes] = await Promise.all([
+      const [adminsRes, tablesRes, bbGroupsRes] = await Promise.all([
         supabase.from("sim_admins").select("*").order("name", { ascending: true }),
         supabase.from("sim_tables").select("*"),
-        supabase.from("groups").select("*"),
-        supabase.from("sim_maggi_groups").select("*"),
+        supabase.from("sim_bb_groups").select("*"),
       ]);
 
       if (!alive) return;
 
-      const loadedAdmins = ((adminsRes.data || []) as AdminRow[]).filter((a) => a.id && a.name && isAvailableAdmin(a));
-      const maggiAdmin = loadedAdmins.find((a) => normalizeText(a.name).includes("maggi") || normalizeText(a.slug).includes("maggi"));
+      const loadedAdmins = ((adminsRes.data || []) as AdminRow[]).filter((a) => a.id && a.name && isBbAdmin(a));
+      const bbAdmin = loadedAdmins[0] || { id: "bb-consorcios", name: "BB Consórcios", slug: "bb-consorcios", behavior: null };
 
-      const simTables = ((tablesRes.data || []) as AnyRow[]).map((table) => ({ ...table, _source: "sim_tables" }));
-      const maggiTables = ((maggiGroupsRes.data || []) as AnyRow[])
-        .map((group) => ({
-          ...group,
-          admin_id: group.admin_id || maggiAdmin?.id,
-          _source: "sim_maggi_groups",
-          nome_tabela: group.nome_tabela || group.nome || `Grupo Maggi ${group.codigo || group.grupo || ""}`,
-        }))
-        .filter((group) => group.admin_id);
+      const bbAdmins = loadedAdmins.length ? loadedAdmins : [bbAdmin];
+      const simTables = ((tablesRes.data || []) as AnyRow[])
+        .map((table) => ({ ...table, _source: "sim_tables" }))
+        .filter((table) => bbAdmins.some((admin) => String(table.admin_id || table.administradora_id || table.sim_admin_id || "") === admin.id));
+      const bbGroups = ((bbGroupsRes.data || []) as AnyRow[]).map((group) => tableFromBbGroup(group, bbAdmin));
 
-      setAdmins(loadedAdmins);
-      setTables([...simTables, ...maggiTables].filter((table) => table.admin_id));
-      setGroupsDb((groupsRes.data || []) as AnyRow[]);
+      setAdmins(bbAdmins);
+      setTables([...simTables, ...bbGroups].filter((table) => table.admin_id));
+      setGroupsDb(bbGroups);
       setLoading(false);
     })();
 
@@ -634,56 +651,21 @@ export default function RadarOfertas() {
     };
   }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_MANUAL_GROUPS, manualGroupsText);
-    } catch {}
-  }, [manualGroupsText]);
-
-  const manualGroups = useMemo(() => parseManualGroups(manualGroupsText), [manualGroupsText]);
-
-  const manualTables = useMemo(() => {
-    return manualGroups
-      .map((group) => {
-        const admin = admins.find((a) => {
-          const adminName = normalizeText(a.name);
-          const groupAdmin = normalizeText(group.administradora);
-          return adminName.includes(groupAdmin) || groupAdmin.includes(adminName);
-        });
-
-        return admin ? tableFromManualGroup(group, admin) : null;
-      })
-      .filter(Boolean) as AnyRow[];
-  }, [manualGroups, admins]);
-
-  const effectiveTables = useMemo(() => [...tables, ...manualTables], [tables, manualTables]);
-  const allGroups = useMemo(() => [...groupsDb, ...manualGroups, ...manualTables], [groupsDb, manualGroups, manualTables]);
+  const effectiveTables = useMemo(() => tables, [tables]);
+  const allGroups = useMemo(() => groupsDb, [groupsDb]);
 
   const availableAdmins = useMemo(() => {
-    return admins.filter((admin) => effectiveTables.some((table) => String(table.admin_id) === admin.id));
+    return admins.filter((admin) =>
+      isBbAdmin(admin) &&
+      effectiveTables.some((table) => String(table.admin_id || table.administradora_id || table.sim_admin_id || "") === admin.id)
+    );
   }, [admins, effectiveTables]);
-
-  const segmentos = useMemo(() => {
-    const set = new Set<string>();
-    for (const table of effectiveTables) {
-      const value = rowSegment(table);
-      if (value) set.add(value);
-    }
-    return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [effectiveTables]);
 
   const offers = useMemo(() => buildOffers(input, availableAdmins, effectiveTables, allGroups), [input, availableAdmins, effectiveTables, allGroups]);
 
-  const bestByAdmin = useMemo(() => {
-    const map = new Map<string, RadarOffer>();
-    for (const offer of offers) {
-      if (!map.has(offer.admin.id)) map.set(offer.admin.id, offer);
-    }
-    return [...map.values()].sort((a, b) => b.score - a.score);
-  }, [offers]);
-
   function update<K extends keyof RadarInput>(key: K, value: RadarInput[K]) {
     setInput((prev) => ({ ...prev, [key]: value }));
+    setSearched(false);
   }
 
   function copyOffer(offer: RadarOffer) {
@@ -693,12 +675,13 @@ export default function RadarOfertas() {
       `Tabela/Grupo: ${offer.table.nome_tabela || offer.table.name || "Sugestão"}`,
       offer.group?.codigo ? `Grupo: ${offer.group.codigo}` : null,
       `Crédito contratado: ${brMoney(offer.creditoContratado)}`,
-      `Crédito líquido estimado: ${brMoney(offer.creditoLiquido)}`,
+      `Poder de compra estimado na contemplação: ${brMoney(offer.creditoLiquido)}`,
       `Parcela estimada: ${brMoney(offer.parcelaEstimada)}`,
       `Lance próprio: ${brMoney(offer.lanceProprio)}`,
       `Lance embutido: ${brMoney(offer.lanceEmbutido)}`,
       `Lance total: ${brMoney(offer.lanceTotal)} (${brPct(offer.lanceTotalPct)})`,
       `Mediana/média: ${offer.mediaGrupoPct === null ? "não cadastrada" : brPct(offer.mediaGrupoPct)}`,
+      `Probabilidade estimada: ${brPct(offer.probabilidadeContemplacao)}`,
       `Score: ${offer.score}/100 - ${offer.scoreLabel}`,
       `Estratégia: ${offer.estrategia}`,
     ]
@@ -712,6 +695,58 @@ export default function RadarOfertas() {
     return (
       <div className="p-6 flex items-center gap-2 text-sm text-slate-600">
         <Loader2 className="h-5 w-5 animate-spin" /> Carregando Radar de Ofertas...
+      </div>
+    );
+  }
+
+  if (searched) {
+    return (
+      <div className="p-4 md:p-6 space-y-6">
+        <section
+          className="relative overflow-hidden rounded-[30px] border p-6 md:p-8 shadow-sm"
+          style={{ background: "linear-gradient(135deg, rgba(30,41,63,.98), rgba(161,28,39,.94))", borderColor: "rgba(255,255,255,.22)" }}
+        >
+          <div className="absolute -right-16 -top-16 h-56 w-56 rounded-full blur-3xl" style={{ background: "rgba(181,165,115,.30)" }} />
+          <div className="relative z-[1] flex flex-col gap-4 text-white md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur">
+                <Sparkles className="h-3.5 w-3.5" /> Resultado do Radar
+              </div>
+              <h1 className="text-2xl font-black tracking-tight md:text-4xl">Ofertas BB Consórcios encontradas</h1>
+              <p className="mt-3 max-w-3xl text-sm text-white/80 md:text-base">
+                Critérios: {input.modo === "credito" ? `poder de compra de ${brMoney(onlyNumber(input.creditoLiquido))}` : `parcela de ${brMoney(onlyNumber(input.parcelaDesejada))}`}, segmento {input.segmento}, lance próprio de {brMoney(onlyNumber(input.lanceProprio))} e probabilidade mínima de {brPct(onlyNumber(input.probabilidadeMinima))}.
+              </p>
+            </div>
+            <Button variant="outline" className="rounded-2xl border-white/30 bg-white/10 text-white hover:bg-white/20" onClick={() => setSearched(false)}>
+              Voltar e ajustar busca
+            </Button>
+          </div>
+        </section>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <Metric label="Possibilidades analisadas" value={`${offers.length}`} />
+          <Metric label="Fonte atual" value="BB Consórcios" />
+          <Metric label="Embutido" value={input.usarEmbutido === "ia" ? "IA Decide" : input.usarEmbutido === "sim" ? "Sim" : "Não"} />
+          <Metric label="Prazo desejado" value={`${onlyNumber(input.prazoContemplacao) || 0} meses`} />
+        </div>
+
+        {offers.length === 0 ? (
+          <Card className="rounded-[28px] border bg-white/80 p-6 text-sm text-slate-600">
+            Nenhuma combinação aderente foi encontrada com os dados atuais da BB Consórcios. Revise crédito/parcela, segmento, lance próprio ou probabilidade mínima.
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {offers.map((offer, index) => (
+              <OfferCard
+                key={offer.id}
+                offer={offer}
+                rank={index + 1}
+                onOpen={() => navigate(adminRoute(offer.admin))}
+                onCopy={() => copyOffer(offer)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -730,7 +765,7 @@ export default function RadarOfertas() {
           </div>
           <h1 className="text-2xl font-black tracking-tight md:text-4xl">Encontre oportunidade por crédito ou por parcela.</h1>
           <p className="mt-3 max-w-3xl text-sm text-white/80 md:text-base">
-            O Radar busca apenas administradoras disponíveis com tabelas ou grupos cadastrados, limita o lance embutido pela configuração e usa médias/medianas para ranquear as melhores alternativas.
+            Nesta primeira versão, o Radar usa somente os grupos importados da BB Consórcios e interpreta o crédito líquido como poder de compra desejado na contemplação.
           </p>
         </div>
       </section>
@@ -739,7 +774,7 @@ export default function RadarOfertas() {
         <CardContent className="p-5 md:p-6">
           <div className="mb-5">
             <h2 className="text-lg font-black" style={{ color: C.navy }}>Buscar ofertas</h2>
-            <p className="text-sm text-slate-600">Escolha se o ponto de partida é o crédito líquido desejado ou o valor da parcela.</p>
+            <p className="text-sm text-slate-600">Escolha se o ponto de partida é o poder de compra desejado ou o valor da parcela.</p>
           </div>
 
           <div className="mb-5 grid gap-3 md:grid-cols-2">
@@ -750,7 +785,7 @@ export default function RadarOfertas() {
               style={{ borderColor: input.modo === "credito" ? C.ruby : "rgba(30,41,63,.14)", background: input.modo === "credito" ? "rgba(161,28,39,.07)" : "white" }}
             >
               <div className="font-black" style={{ color: C.navy }}>Buscar por crédito</div>
-              <div className="text-sm text-slate-600">Informe o crédito líquido e veja a parcela estimada.</div>
+              <div className="text-sm text-slate-600">Informe o poder de compra desejado na contemplação.</div>
             </button>
             <button
               type="button"
@@ -781,32 +816,25 @@ export default function RadarOfertas() {
               <input className="w-full rounded-2xl border px-3 py-2" value={input.prazoContemplacao} onChange={(e) => update("prazoContemplacao", e.target.value)} placeholder="6 meses" />
             </Field>
             <Field label="Segmento">
-              <select className="w-full rounded-2xl border px-3 py-2" value={input.segmento} onChange={(e) => update("segmento", e.target.value)}>
-                <option value="">Todos</option>
-                {segmentos.map((s) => <option key={s} value={s}>{s}</option>)}
+              <select className="w-full rounded-2xl border px-3 py-2" value={input.segmento} onChange={(e) => update("segmento", e.target.value as RadarSegment)}>
+                {RADAR_SEGMENTS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>
 
-            <Field label="Administradora">
-              <select className="w-full rounded-2xl border px-3 py-2" value={input.adminId} onChange={(e) => update("adminId", e.target.value)}>
-                <option value="todas">Todas disponíveis</option>
-                {availableAdmins.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
+            <Field label="Fonte de ofertas">
+              <input className="w-full rounded-2xl border bg-slate-50 px-3 py-2 text-slate-500" value="BB Consórcios" disabled />
             </Field>
             <Field label="Usar lance embutido?">
               <select className="w-full rounded-2xl border px-3 py-2" value={input.usarEmbutido} onChange={(e) => update("usarEmbutido", e.target.value as RadarInput["usarEmbutido"])}>
+                <option value="ia">IA Decide</option>
                 <option value="sim">Sim</option>
                 <option value="nao">Não</option>
               </select>
             </Field>
-            <Field label="% de embutido utilizado">
-              <input
-                disabled={input.usarEmbutido === "nao"}
-                className="w-full rounded-2xl border px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
-                value={input.embutidoPct}
-                onChange={(e) => update("embutidoPct", e.target.value)}
-                placeholder="25"
-              />
+            <Field label="Probabilidade mínima">
+              <select className="w-full rounded-2xl border px-3 py-2" value={input.probabilidadeMinima} onChange={(e) => update("probabilidadeMinima", e.target.value)}>
+                {PROBABILITY_OPTIONS.map((value) => <option key={value} value={value}>{value}%</option>)}
+              </select>
             </Field>
             {input.modo === "credito" && (
               <Field label="Parcela máxima opcional">
@@ -826,56 +854,23 @@ export default function RadarOfertas() {
 
       <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur">
         <CardContent className="p-5 md:p-6">
-          <div className="mb-4 flex items-start gap-2">
-            <Database className="mt-1 h-5 w-5" style={{ color: C.ruby }} />
-            <div>
-              <h2 className="text-lg font-black" style={{ color: C.navy }}>Grupos disponíveis e resultados de assembleia</h2>
-              <p className="text-sm text-slate-600">Cole os dados no modelo: grupo; administradora; segmento; prazo máximo; maior % contemplado; menor % contemplado. O Radar calcula a mediana automaticamente.</p>
+          <h2 className="text-lg font-black" style={{ color: C.navy }}>Categorias consideradas</h2>
+          <div className="mt-3 grid gap-3 text-sm text-slate-700 md:grid-cols-3">
+            <div className="rounded-2xl border bg-white/75 p-4">
+              <b>Automóvel</b>
+              <p className="mt-1">Motocicletas, automóvel e pesados.</p>
             </div>
-          </div>
-          <textarea
-            value={manualGroupsText}
-            onChange={(e) => setManualGroupsText(e.target.value)}
-            rows={6}
-            className="w-full rounded-2xl border bg-white/80 p-3 font-mono text-xs text-slate-700 outline-none focus:ring-2 focus:ring-[#A11C27]/20"
-            placeholder={SAMPLE_GROUPS}
-          />
-          <div className="mt-3 flex flex-col gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-            <span>{manualGroups.length} grupo(s) lido(s) desta área manual.</span>
-            <Button type="button" variant="outline" className="rounded-2xl" onClick={() => setManualGroupsText(SAMPLE_GROUPS)}>Usar exemplo</Button>
+            <div className="rounded-2xl border bg-white/75 p-4">
+              <b>Imóvel</b>
+              <p className="mt-1">Imóveis e imóvel estendido.</p>
+            </div>
+            <div className="rounded-2xl border bg-white/75 p-4">
+              <b>Serviços</b>
+              <p className="mt-1">Categorias de serviços disponíveis na BB Consórcios.</p>
+            </div>
           </div>
         </CardContent>
       </Card>
-
-      {searched && (
-        <div className="space-y-5">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border bg-white/75 px-3 py-1 text-xs font-semibold" style={{ color: C.ruby }}>
-              <Sparkles className="h-3.5 w-3.5" /> {offers.length} possibilidades analisadas
-            </div>
-            <h2 className="mt-2 text-xl font-black" style={{ color: C.navy }}>Melhor oportunidade por administradora</h2>
-            <p className="text-sm text-slate-600">Administradoras sem simulador disponível ou sem tabela/grupo cadastrado não entram no ranking.</p>
-          </div>
-
-          {bestByAdmin.length === 0 ? (
-            <Card className="rounded-[28px] border bg-white/80 p-6 text-sm text-slate-600">
-              Nenhuma combinação aderente foi encontrada com os dados atuais. Revise crédito/parcela, segmento ou cadastre faixas e médias de grupo.
-            </Card>
-          ) : (
-            <div className="space-y-4">
-              {bestByAdmin.map((offer, index) => (
-                <OfferCard
-                  key={offer.id}
-                  offer={offer}
-                  rank={index + 1}
-                  onOpen={() => navigate(adminRoute(offer.admin))}
-                  onCopy={() => copyOffer(offer)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

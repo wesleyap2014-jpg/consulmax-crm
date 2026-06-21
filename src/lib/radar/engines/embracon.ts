@@ -140,7 +140,7 @@ function calcEmbracon(params: {
     fundoReservaPct: frPct * 100,
     seguroPct: seguroPrestPct * 100,
     antecipacaoPct: antecipPct * 100,
-    antecipacaoParcelas,
+    antecipacaoParcelas: antecipParcelas,
     limitadorParcelaPct: limitadorPct * 100,
   } satisfies RadarCalculation;
 }

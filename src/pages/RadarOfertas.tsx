@@ -135,11 +135,19 @@ function commercialProposal(offer: RadarOffer) {
 }
 
 function proposalUrl(offer: RadarOffer) {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
-  url.searchParams.set("proposta", encodeURIComponent(JSON.stringify(commercialProposal(offer))));
+  const url = new URL("/proposta.html", window.location.origin);
+  url.hash = `p=${encodeProposalPayload(commercialProposal(offer))}`;
   return url.toString();
+}
+
+function encodeProposalPayload(proposal: ReturnType<typeof commercialProposal>) {
+  const json = JSON.stringify(proposal);
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function parseProposalFromUrl() {
@@ -235,38 +243,107 @@ function printProposal(offer: RadarOffer) {
         <meta charset="utf-8" />
         <title>Proposta Consulmax</title>
         <style>
-          body { margin: 0; padding: 32px; background: #f6f7fb; font-family: Arial, sans-serif; color: #1E293F; }
-          .card { max-width: 760px; margin: 0 auto; background: #fff; border: 1px solid rgba(161,28,39,.22); border-radius: 24px; padding: 28px; }
-          .eyebrow { color: #64748b; font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-          h1 { margin: 8px 0 4px; font-size: 28px; color: #1E293F; }
-          .muted { color: #64748b; }
-          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 24px; }
-          .label { color: #64748b; font-size: 12px; font-weight: 700; }
-          .value { margin-top: 4px; font-size: 18px; font-weight: 900; color: #1E293F; }
-          .box { margin-top: 24px; border-radius: 18px; padding: 18px; background: rgba(161,28,39,.08); }
+          @page { size: A4; margin: 14mm; }
+          * { box-sizing: border-box; }
+          body { margin: 0; background: #eef1f6; font-family: Arial, sans-serif; color: #1E293F; }
+          .sheet { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; box-shadow: 0 18px 45px rgba(15,23,42,.14); }
+          .hero { padding: 28px 32px; color: #fff; background: linear-gradient(135deg, #1E293F 0%, #A11C27 100%); }
+          .brand { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+          .brand strong { font-size: 20px; letter-spacing: .01em; }
+          .pill { border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 800; }
+          h1 { margin: 26px 0 8px; max-width: 620px; font-size: 30px; line-height: 1.08; }
+          .subtitle { margin: 0; color: rgba(255,255,255,.78); font-size: 13px; }
+          .summary { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; padding: 24px 32px 6px; }
+          .highlight { border-radius: 22px; padding: 20px; background: rgba(161,28,39,.08); border: 1px solid rgba(161,28,39,.18); }
+          .highlight .label, .stat .label, .row .label { color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+          .highlight .money { margin-top: 6px; color: #A11C27; font-size: 32px; font-weight: 900; }
+          .score { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 22px; padding: 20px; background: #F8FAFC; border: 1px solid #E2E8F0; }
+          .badge { display: grid; place-items: center; width: 86px; height: 86px; border-radius: 50%; border: 7px solid #A11C27; color: #A11C27; background: #fff; font-weight: 900; }
+          .badge span { display: block; font-size: 24px; line-height: 1; }
+          .badge small { font-size: 10px; }
+          .section { padding: 18px 32px; }
+          .section h2 { margin: 0 0 12px; color: #1E293F; font-size: 16px; }
+          .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+          .stat { min-height: 84px; border: 1px solid #E2E8F0; border-radius: 18px; padding: 14px; background: #fff; }
+          .stat .value { margin-top: 7px; color: #1E293F; font-size: 17px; font-weight: 900; }
+          .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+          .box { border: 1px solid #E2E8F0; border-radius: 20px; padding: 16px; background: #fff; }
+          .row { display: flex; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid #EEF2F7; }
+          .row:last-child { border-bottom: 0; }
+          .row .value { text-align: right; font-weight: 900; }
+          .strategy { border-radius: 20px; padding: 18px; background: #FFF8EA; border: 1px solid rgba(181,165,115,.45); color: #1E293F; }
+          .footer { margin-top: 16px; padding: 18px 32px 26px; color: #64748b; font-size: 11px; }
           .ruby { color: #A11C27; }
+          @media print {
+            body { background: #fff; }
+            .sheet { width: auto; min-height: auto; box-shadow: none; }
+          }
         </style>
       </head>
       <body>
-        <main class="card">
-          <div class="eyebrow">Proposta Consulmax</div>
-          <h1>${escapeHtml(proposal.nomeTabela)}</h1>
-          <div class="muted">${escapeHtml(proposal.admin)} ${proposal.grupoCodigo ? `• Grupo ${escapeHtml(proposal.grupoCodigo)}` : ""} ${proposal.segmento ? `• ${escapeHtml(proposal.segmento)}` : ""}</div>
-          <section class="grid">
-            <div><div class="label">Crédito contratado</div><div class="value">${escapeHtml(brMoney(proposal.creditoContratado))}</div></div>
-            <div><div class="label">Poder de compra</div><div class="value ruby">${escapeHtml(brMoney(proposal.poderCompra))}</div></div>
-            <div><div class="label">Crédito líquido</div><div class="value">${escapeHtml(brMoney(proposal.creditoLiquido))}</div></div>
-            <div><div class="label">Cotas</div><div class="value">${escapeHtml(proposal.quantidadeCotas)}</div></div>
-            <div><div class="label">Lance próprio</div><div class="value">${escapeHtml(brMoney(proposal.lanceProprio))}</div></div>
-            <div><div class="label">Lance embutido</div><div class="value">${escapeHtml(brMoney(proposal.lanceEmbutido))}</div></div>
-            <div><div class="label">1ª parcela</div><div class="value">${escapeHtml(brMoney(proposal.parcelaInicial))}</div></div>
-            <div><div class="label">Parcela pós-contemplação</div><div class="value">${escapeHtml(brMoney(proposal.parcelaAposContemplacao))}</div></div>
+        <main class="sheet">
+          <header class="hero">
+            <div class="brand">
+              <strong>Consulmax</strong>
+              <div class="pill">Proposta comercial</div>
+            </div>
+            <h1>${escapeHtml(proposal.nomeTabela)}</h1>
+            <p class="subtitle">${escapeHtml(proposal.admin)} ${proposal.grupoCodigo ? `• Grupo ${escapeHtml(proposal.grupoCodigo)}` : ""} ${proposal.segmento ? `• ${escapeHtml(proposal.segmento)}` : ""}</p>
+          </header>
+
+          <section class="summary">
+            <div class="highlight">
+              <div class="label">Poder de compra estimado</div>
+              <div class="money">${escapeHtml(brMoney(proposal.poderCompra))}</div>
+              <p>Crédito líquido somado à sobra de lance próprio disponível para compra.</p>
+            </div>
+            <div class="score">
+              <div>
+                <div class="label">Aderência</div>
+                <h2>${escapeHtml(proposal.score)}/100</h2>
+                <p>${escapeHtml(proposal.scoreLabel)}</p>
+              </div>
+              <div class="badge"><div><span>${escapeHtml(Math.round(proposal.probabilidadeContemplacao))}%</span><small>chance</small></div></div>
+            </div>
           </section>
-          <section class="box">
-            <div class="label">Probabilidade estimada</div>
-            <div class="value ruby">${escapeHtml(brPct(proposal.probabilidadeContemplacao))}</div>
-            <p>${escapeHtml(proposal.estrategia)}</p>
+
+          <section class="section">
+            <h2>Resumo da contratação</h2>
+            <div class="grid">
+              <div class="stat"><div class="label">Crédito contratado</div><div class="value">${escapeHtml(brMoney(proposal.creditoContratado))}</div></div>
+              <div class="stat"><div class="label">Crédito líquido</div><div class="value">${escapeHtml(brMoney(proposal.creditoLiquido))}</div></div>
+              <div class="stat"><div class="label">Cotas</div><div class="value">${escapeHtml(proposal.quantidadeCotas)}</div></div>
+              <div class="stat"><div class="label">Lance próprio</div><div class="value">${escapeHtml(brMoney(proposal.lanceProprio))}</div></div>
+              <div class="stat"><div class="label">Lance embutido</div><div class="value">${escapeHtml(brMoney(proposal.lanceEmbutido))}</div></div>
+              <div class="stat"><div class="label">Lance total</div><div class="value">${escapeHtml(brMoney(proposal.lanceTotal))}</div></div>
+            </div>
           </section>
+
+          <section class="section two">
+            <div class="box">
+              <h2>Parcelas</h2>
+              <div class="row"><div class="label">1ª parcela</div><div class="value">${escapeHtml(brMoney(proposal.parcelaInicial))}</div></div>
+              <div class="row"><div class="label">Até contemplação</div><div class="value">${escapeHtml(brMoney(proposal.parcelaEstimada))}</div></div>
+              <div class="row"><div class="label">Após contemplação</div><div class="value ruby">${escapeHtml(brMoney(proposal.parcelaAposContemplacao))}</div></div>
+            </div>
+            <div class="box">
+              <h2>Condições</h2>
+              <div class="row"><div class="label">Prazo pós-contemplação</div><div class="value">${escapeHtml(proposal.prazoRestante)} meses</div></div>
+              <div class="row"><div class="label">Probabilidade</div><div class="value ruby">${escapeHtml(brPct(proposal.probabilidadeContemplacao))}</div></div>
+              <div class="row"><div class="label">Administradora</div><div class="value">${escapeHtml(proposal.admin)}</div></div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="strategy">
+              <strong>Estratégia sugerida</strong>
+              <p>${escapeHtml(proposal.estrategia)}</p>
+            </div>
+          </section>
+
+          <footer class="footer">
+            Proposta gerada pelo Radar de Ofertas Consulmax. Valores sujeitos à confirmação da administradora, disponibilidade do grupo e regras vigentes no momento da contratação.
+          </footer>
         </main>
         <script>window.print();</script>
       </body>

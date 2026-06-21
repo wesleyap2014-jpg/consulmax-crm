@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proposta Consulmax</title>
+    <style>
+      :root {
+        --ruby: #a11c27;
+        --navy: #1e293f;
+        --gold: #b5a573;
+        --line: #e2e8f0;
+        --muted: #64748b;
+        --bg: #f4f6fa;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--navy);
+        font-family: Arial, sans-serif;
+      }
+
+      .page {
+        min-height: 100vh;
+        padding: 28px;
+      }
+
+      .wrap {
+        max-width: 860px;
+        margin: 0 auto;
+      }
+
+      .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+
+      .brand {
+        color: var(--ruby);
+        font-size: 15px;
+        font-weight: 900;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        margin-top: 4px;
+        font-size: 30px;
+        line-height: 1.1;
+      }
+
+      button {
+        border: 0;
+        border-radius: 14px;
+        padding: 12px 16px;
+        background: var(--ruby);
+        color: #fff;
+        font-weight: 900;
+        cursor: pointer;
+      }
+
+      .proposal {
+        overflow: hidden;
+        border: 1px solid rgba(161, 28, 39, 0.22);
+        border-radius: 28px;
+        background: #fff;
+        box-shadow: 0 24px 65px rgba(15, 23, 42, 0.12);
+      }
+
+      .hero {
+        padding: 30px;
+        color: #fff;
+        background: linear-gradient(135deg, var(--navy), var(--ruby));
+      }
+
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .pill {
+        border: 1px solid rgba(255, 255, 255, 0.34);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .hero h2 {
+        margin-top: 28px;
+        max-width: 680px;
+        font-size: 30px;
+        line-height: 1.08;
+      }
+
+      .hero p {
+        margin-top: 8px;
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      .content {
+        padding: 26px;
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 16px;
+      }
+
+      .highlight,
+      .score,
+      .stat,
+      .box,
+      .strategy {
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: #fff;
+      }
+
+      .highlight {
+        padding: 20px;
+        background: rgba(161, 28, 39, 0.08);
+        border-color: rgba(161, 28, 39, 0.18);
+      }
+
+      .label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .money {
+        margin-top: 6px;
+        color: var(--ruby);
+        font-size: 34px;
+        font-weight: 900;
+      }
+
+      .score {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 20px;
+        background: #f8fafc;
+      }
+
+      .badge {
+        display: grid;
+        place-items: center;
+        width: 88px;
+        height: 88px;
+        border: 7px solid var(--ruby);
+        border-radius: 50%;
+        background: #fff;
+        color: var(--ruby);
+        text-align: center;
+        font-weight: 900;
+      }
+
+      .badge span {
+        display: block;
+        font-size: 24px;
+        line-height: 1;
+      }
+
+      .badge small {
+        font-size: 10px;
+      }
+
+      .section {
+        margin-top: 22px;
+      }
+
+      .section h3 {
+        margin: 0 0 12px;
+        font-size: 17px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+
+      .stat {
+        min-height: 86px;
+        padding: 14px;
+      }
+
+      .value {
+        margin-top: 7px;
+        font-size: 17px;
+        font-weight: 900;
+      }
+
+      .two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .box,
+      .strategy {
+        padding: 16px;
+      }
+
+      .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 11px 0;
+        border-bottom: 1px solid #eef2f7;
+      }
+
+      .row:last-child {
+        border-bottom: 0;
+      }
+
+      .row .value {
+        margin: 0;
+        text-align: right;
+      }
+
+      .strategy {
+        background: #fff8ea;
+        border-color: rgba(181, 165, 115, 0.45);
+      }
+
+      .strategy p {
+        margin-top: 8px;
+        color: #475569;
+      }
+
+      .footer {
+        padding: 0 26px 26px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .error {
+        border-radius: 22px;
+        background: #fff;
+        padding: 24px;
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          padding: 14px;
+        }
+
+        .top,
+        .summary,
+        .two {
+          display: block;
+        }
+
+        button {
+          width: 100%;
+          margin-top: 12px;
+        }
+
+        .score,
+        .section,
+        .two .box + .box {
+          margin-top: 14px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .page {
+          padding: 0;
+        }
+
+        .top button {
+          display: none;
+        }
+
+        .proposal {
+          border-radius: 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="wrap">
+        <div class="top">
+          <div>
+            <div class="brand">Consulmax</div>
+            <h1>Informações comerciais da proposta</h1>
+          </div>
+          <button type="button" onclick="window.print()">Salvar PDF</button>
+        </div>
+        <div id="app"></div>
+      </div>
+    </div>
+
+    <script>
+      const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+      const pct = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+      function brMoney(value) {
+        return money.format(Number(value || 0));
+      }
+
+      function brPct(value) {
+        return `${pct.format(Number(value || 0))}%`;
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function decodePayload() {
+        const raw = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("p");
+        if (!raw) return null;
+        const base64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+        const binary = atob(padded);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
+      }
+
+      function stat(label, value) {
+        return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`;
+      }
+
+      function render(proposal) {
+        document.getElementById("app").innerHTML = `
+          <main class="proposal">
+            <header class="hero">
+              <div class="hero-meta">
+                <strong>Proposta Consulmax</strong>
+                <span class="pill">${escapeHtml(Math.round(proposal.probabilidadeContemplacao || 0))}% de probabilidade</span>
+              </div>
+              <h2>${escapeHtml(proposal.nomeTabela)}</h2>
+              <p>${escapeHtml(proposal.admin)} ${proposal.grupoCodigo ? `• Grupo ${escapeHtml(proposal.grupoCodigo)}` : ""} ${proposal.segmento ? `• ${escapeHtml(proposal.segmento)}` : ""}</p>
+            </header>
+
+            <section class="content">
+              <div class="summary">
+                <div class="highlight">
+                  <div class="label">Poder de compra estimado</div>
+                  <div class="money">${escapeHtml(brMoney(proposal.poderCompra))}</div>
+                  <p>Crédito líquido somado à sobra de lance próprio disponível para compra.</p>
+                </div>
+                <div class="score">
+                  <div>
+                    <div class="label">Aderência</div>
+                    <h2>${escapeHtml(proposal.score)}/100</h2>
+                    <p>${escapeHtml(proposal.scoreLabel)}</p>
+                  </div>
+                  <div class="badge"><div><span>${escapeHtml(Math.round(proposal.probabilidadeContemplacao || 0))}%</span><small>chance</small></div></div>
+                </div>
+              </div>
+
+              <section class="section">
+                <h3>Resumo da contratação</h3>
+                <div class="grid">
+                  ${stat("Crédito contratado", brMoney(proposal.creditoContratado))}
+                  ${stat("Crédito líquido", brMoney(proposal.creditoLiquido))}
+                  ${stat("Cotas", proposal.quantidadeCotas || 1)}
+                  ${stat("Lance próprio", brMoney(proposal.lanceProprio))}
+                  ${stat("Lance embutido", brMoney(proposal.lanceEmbutido))}
+                  ${stat("Lance total", brMoney(proposal.lanceTotal))}
+                </div>
+              </section>
+
+              <section class="section two">
+                <div class="box">
+                  <h3>Parcelas</h3>
+                  <div class="row"><div class="label">1ª parcela</div><div class="value">${escapeHtml(brMoney(proposal.parcelaInicial))}</div></div>
+                  <div class="row"><div class="label">Até contemplação</div><div class="value">${escapeHtml(brMoney(proposal.parcelaEstimada))}</div></div>
+                  <div class="row"><div class="label">Após contemplação</div><div class="value">${escapeHtml(brMoney(proposal.parcelaAposContemplacao))}</div></div>
+                </div>
+                <div class="box">
+                  <h3>Condições</h3>
+                  <div class="row"><div class="label">Prazo pós-contemplação</div><div class="value">${escapeHtml(proposal.prazoRestante)} meses</div></div>
+                  <div class="row"><div class="label">Probabilidade</div><div class="value">${escapeHtml(brPct(proposal.probabilidadeContemplacao))}</div></div>
+                  <div class="row"><div class="label">Administradora</div><div class="value">${escapeHtml(proposal.admin)}</div></div>
+                </div>
+              </section>
+
+              <section class="section">
+                <div class="strategy">
+                  <strong>Estratégia sugerida</strong>
+                  <p>${escapeHtml(proposal.estrategia)}</p>
+                </div>
+              </section>
+            </section>
+            <footer class="footer">
+              Proposta gerada pelo Radar de Ofertas Consulmax. Valores sujeitos à confirmação da administradora, disponibilidade do grupo e regras vigentes no momento da contratação.
+            </footer>
+          </main>
+        `;
+      }
+
+      try {
+        const proposal = decodePayload();
+        if (!proposal) throw new Error("Proposta não encontrada.");
+        render(proposal);
+      } catch (error) {
+        document.getElementById("app").innerHTML = `
+          <div class="error">
+            <h2>Não foi possível abrir esta proposta.</h2>
+            <p>Solicite um novo link ao consultor Consulmax.</p>
+          </div>
+        `;
+      }
+    </script>
+  </body>
+</html>

@@ -8,13 +8,18 @@ import {
   ArrowRight,
   Building2,
   ChevronDown,
-  ChevronUp,
+  Copy,
+  FileText,
+  Link2,
   Loader2,
+  Mail,
+  MessageCircle,
   Search,
   Send,
   Sparkles,
   Target,
   Trophy,
+  X,
 } from "lucide-react";
 import { brMoney, brPct } from "@/lib/radar/common";
 import { findBestOffers, offerToSimulatorQuery } from "@/lib/radar/radarEngine";
@@ -104,13 +109,327 @@ function brDate(value?: string | null) {
   return date.toLocaleDateString("pt-BR");
 }
 
-function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: number; onOpen: () => void; onCopy: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const isFeatured = rank === 1;
-  const probabilityLabel = offer.probabilidadeContemplacao >= 95 ? "Alta" : offer.probabilidadeContemplacao >= 90 ? "Boa" : "Média";
+function commercialProposal(offer: RadarOffer) {
+  return {
+    admin: offer.admin.name,
+    nomeTabela: offer.nomeTabela,
+    grupoCodigo: offer.grupoCodigo,
+    segmento: offer.segmento,
+    creditoContratado: offer.creditoContratado,
+    creditoLiquido: offer.creditoLiquido,
+    poderCompra: offer.poderCompra,
+    quantidadeCotas: offer.quantidadeCotas || 1,
+    lanceProprio: offer.lanceProprio,
+    lanceEmbutido: offer.lanceEmbutido,
+    lanceTotal: offer.lanceTotal,
+    parcelaInicial: offer.parcelaInicial,
+    parcelaEstimada: offer.parcelaEstimada,
+    parcelaAposContemplacao: offer.parcelaAposContemplacao,
+    prazoRestante: offer.prazoRestante,
+    probabilidadeContemplacao: offer.probabilidadeContemplacao,
+    score: offer.score,
+    scoreLabel: offer.scoreLabel,
+    estrategia: offer.estrategia,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function proposalUrl(offer: RadarOffer) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("proposta", encodeURIComponent(JSON.stringify(commercialProposal(offer))));
+  return url.toString();
+}
+
+function parseProposalFromUrl() {
+  if (typeof window === "undefined") return null;
+  const raw = new URLSearchParams(window.location.search).get("proposta");
+  if (!raw) return null;
+  try {
+    return JSON.parse(decodeURIComponent(raw)) as ReturnType<typeof commercialProposal>;
+  } catch {
+    return null;
+  }
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function ProposalCard({ proposal }: { proposal: ReturnType<typeof commercialProposal> }) {
+  return (
+    <div className="rounded-[28px] border bg-white p-5 shadow-sm" style={{ borderColor: "rgba(161,28,39,.22)" }}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[.12em] text-slate-500">Proposta Consulmax</div>
+          <h2 className="mt-1 text-xl font-black" style={{ color: C.navy }}>{proposal.nomeTabela}</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {proposal.admin} {proposal.grupoCodigo ? `• Grupo ${proposal.grupoCodigo}` : ""} {proposal.segmento ? `• ${proposal.segmento}` : ""}
+          </p>
+        </div>
+        <div className="rounded-full px-3 py-1 text-xs font-black text-white" style={{ background: C.ruby }}>
+          {Math.round(proposal.probabilidadeContemplacao)}%
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <CardLine label="Crédito contratado" value={brMoney(proposal.creditoContratado)} />
+        <CardLine label="Poder de compra" value={brMoney(proposal.poderCompra)} />
+        <CardLine label="Crédito líquido" value={brMoney(proposal.creditoLiquido)} />
+        <CardLine label="Cotas" value={`${proposal.quantidadeCotas}`} />
+        <CardLine label="Lance próprio" value={brMoney(proposal.lanceProprio)} />
+        <CardLine label="Lance embutido" value={brMoney(proposal.lanceEmbutido)} />
+        <CardLine label="1ª parcela" value={brMoney(proposal.parcelaInicial)} />
+        <CardLine label="Demais até contemplação" value={brMoney(proposal.parcelaEstimada)} />
+        <CardLine label="Parcela pós-contemplação" value={brMoney(proposal.parcelaAposContemplacao)} />
+        <CardLine label="Prazo após contemplação" value={`${proposal.prazoRestante} meses`} />
+      </div>
+
+      <div className="mt-5 rounded-2xl p-4" style={{ background: "rgba(161,28,39,.08)" }}>
+        <div className="text-xs font-semibold text-slate-500">Aderência da proposta</div>
+        <div className="mt-1 text-lg font-black" style={{ color: C.ruby }}>{proposal.score}/100</div>
+        <div className="text-sm text-slate-600">{proposal.scoreLabel}</div>
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-dashed border-slate-200 p-4">
+        <div className="text-xs font-bold" style={{ color: C.navy }}>Estratégia sugerida</div>
+        <p className="mt-1 text-sm text-slate-600">{proposal.estrategia}</p>
+      </div>
+    </div>
+  );
+}
+
+function proposalText(offer: RadarOffer, link?: string) {
+  return [
+    "Proposta Consulmax",
+    `Administradora: ${offer.admin.name}`,
+    `Oferta: ${offer.nomeTabela}`,
+    offer.grupoCodigo ? `Grupo: ${offer.grupoCodigo}` : null,
+    `Crédito contratado: ${brMoney(offer.creditoContratado)}`,
+    `Crédito líquido: ${brMoney(offer.creditoLiquido)}`,
+    `Poder de compra: ${brMoney(offer.poderCompra)}`,
+    `Cotas: ${offer.quantidadeCotas || 1}`,
+    `Lance próprio: ${brMoney(offer.lanceProprio)}`,
+    `Lance embutido: ${brMoney(offer.lanceEmbutido)}`,
+    `1ª parcela: ${brMoney(offer.parcelaInicial)}`,
+    `Demais até contemplação: ${brMoney(offer.parcelaEstimada)}`,
+    `Parcela pós-contemplação: ${brMoney(offer.parcelaAposContemplacao)}`,
+    `Prazo após contemplação: ${offer.prazoRestante} meses`,
+    `Probabilidade estimada: ${brPct(offer.probabilidadeContemplacao)}`,
+    link ? `Link da proposta: ${link}` : null,
+  ].filter(Boolean).join("\n");
+}
+
+function printProposal(offer: RadarOffer) {
+  const proposal = commercialProposal(offer);
+  const html = `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Proposta Consulmax</title>
+        <style>
+          body { margin: 0; padding: 32px; background: #f6f7fb; font-family: Arial, sans-serif; color: #1E293F; }
+          .card { max-width: 760px; margin: 0 auto; background: #fff; border: 1px solid rgba(161,28,39,.22); border-radius: 24px; padding: 28px; }
+          .eyebrow { color: #64748b; font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+          h1 { margin: 8px 0 4px; font-size: 28px; color: #1E293F; }
+          .muted { color: #64748b; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 24px; }
+          .label { color: #64748b; font-size: 12px; font-weight: 700; }
+          .value { margin-top: 4px; font-size: 18px; font-weight: 900; color: #1E293F; }
+          .box { margin-top: 24px; border-radius: 18px; padding: 18px; background: rgba(161,28,39,.08); }
+          .ruby { color: #A11C27; }
+        </style>
+      </head>
+      <body>
+        <main class="card">
+          <div class="eyebrow">Proposta Consulmax</div>
+          <h1>${escapeHtml(proposal.nomeTabela)}</h1>
+          <div class="muted">${escapeHtml(proposal.admin)} ${proposal.grupoCodigo ? `• Grupo ${escapeHtml(proposal.grupoCodigo)}` : ""} ${proposal.segmento ? `• ${escapeHtml(proposal.segmento)}` : ""}</div>
+          <section class="grid">
+            <div><div class="label">Crédito contratado</div><div class="value">${escapeHtml(brMoney(proposal.creditoContratado))}</div></div>
+            <div><div class="label">Poder de compra</div><div class="value ruby">${escapeHtml(brMoney(proposal.poderCompra))}</div></div>
+            <div><div class="label">Crédito líquido</div><div class="value">${escapeHtml(brMoney(proposal.creditoLiquido))}</div></div>
+            <div><div class="label">Cotas</div><div class="value">${escapeHtml(proposal.quantidadeCotas)}</div></div>
+            <div><div class="label">Lance próprio</div><div class="value">${escapeHtml(brMoney(proposal.lanceProprio))}</div></div>
+            <div><div class="label">Lance embutido</div><div class="value">${escapeHtml(brMoney(proposal.lanceEmbutido))}</div></div>
+            <div><div class="label">1ª parcela</div><div class="value">${escapeHtml(brMoney(proposal.parcelaInicial))}</div></div>
+            <div><div class="label">Parcela pós-contemplação</div><div class="value">${escapeHtml(brMoney(proposal.parcelaAposContemplacao))}</div></div>
+          </section>
+          <section class="box">
+            <div class="label">Probabilidade estimada</div>
+            <div class="value ruby">${escapeHtml(brPct(proposal.probabilidadeContemplacao))}</div>
+            <p>${escapeHtml(proposal.estrategia)}</p>
+          </section>
+        </main>
+        <script>window.print();</script>
+      </body>
+    </html>
+  `;
+  const popup = window.open("", "_blank", "width=900,height=900");
+  if (!popup) return;
+  popup.document.open();
+  popup.document.write(html);
+  popup.document.close();
+}
+
+function ProposalPublicView({ proposal }: { proposal: ReturnType<typeof commercialProposal> }) {
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 md:p-10">
+      <div className="mx-auto max-w-3xl">
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-black" style={{ color: C.ruby }}>Consulmax</div>
+            <h1 className="text-2xl font-black" style={{ color: C.navy }}>Informações comerciais da proposta</h1>
+          </div>
+          <Button type="button" className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => window.print()}>
+            <FileText className="mr-2 h-4 w-4" /> Salvar PDF
+          </Button>
+        </div>
+        <ProposalCard proposal={proposal} />
+      </div>
+    </div>
+  );
+}
+
+function OfferDetailsDrawer({
+  offer,
+  onClose,
+  onOpen,
+  onCopy,
+  onCopyLink,
+  onEmail,
+  onWhatsApp,
+  onPrint,
+}: {
+  offer: RadarOffer;
+  onClose: () => void;
+  onOpen: () => void;
+  onCopy: () => void;
+  onCopyLink: () => void;
+  onEmail: () => void;
+  onWhatsApp: () => void;
+  onPrint: () => void;
+}) {
   const taxaFrTotal = offer.taxaAdmPct + offer.fundoReservaPct;
   const parcelasPagas = Math.max(1, offer.prazoTotal - offer.prazoRestante);
   const totalPagoAteContemplacao = offer.parcelaInicial * parcelasPagas;
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button type="button" aria-label="Fechar detalhes" className="absolute inset-0 bg-slate-950/35" onClick={onClose} />
+      <aside className="absolute bottom-0 right-0 top-0 flex w-full max-w-[620px] flex-col overflow-hidden bg-white shadow-2xl">
+        <div className="border-b bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[.12em] text-slate-500">Detalhes da proposta</div>
+              <h2 className="mt-1 text-lg font-black" style={{ color: C.navy }}>{offer.nomeTabela}</h2>
+              <p className="mt-1 text-xs text-slate-500">{offer.admin.name} {offer.grupoCodigo ? `• Grupo ${offer.grupoCodigo}` : ""}</p>
+            </div>
+            <button type="button" className="rounded-full border p-2 text-slate-500 hover:bg-slate-50" onClick={onClose}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Button type="button" variant="outline" className="rounded-2xl" onClick={onPrint}>
+              <FileText className="mr-2 h-4 w-4" /> PDF
+            </Button>
+            <Button type="button" variant="outline" className="rounded-2xl" onClick={onEmail}>
+              <Mail className="mr-2 h-4 w-4" /> E-mail
+            </Button>
+            <Button type="button" variant="outline" className="rounded-2xl" onClick={onCopyLink}>
+              <Link2 className="mr-2 h-4 w-4" /> Link
+            </Button>
+            <Button type="button" variant="outline" className="rounded-2xl" onClick={onWhatsApp}>
+              <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto bg-slate-50 p-4">
+          <ProposalCard proposal={commercialProposal(offer)} />
+
+          <div className="rounded-[28px] border bg-white p-4">
+            <h3 className="text-sm font-black" style={{ color: C.navy }}>Memória de cálculo</h3>
+            <div className="mt-2 px-1">
+              <DetailLine label="Taxa adm. total" value={brPct(offer.taxaAdmPct)} />
+              <DetailLine label="Fundo reserva total" value={brPct(offer.fundoReservaPct)} />
+              <DetailLine label="Taxa + fundo" value={brPct(taxaFrTotal)} />
+              <DetailLine label="Valor da categoria" value={brMoney(offer.valorCategoria)} />
+              <DetailLine label="Parcela inicial" value={`${brMoney(offer.valorCategoria)} / ${offer.prazoTotal} = ${brMoney(offer.parcelaInicial)}`} />
+              <DetailLine label="Parcela da contemplação" value={`${parcelasPagas} de ${offer.prazoTotal}`} />
+              <DetailLine label="Prazo restante" value={`${offer.prazoTotal} - ${parcelasPagas} = ${offer.prazoRestante} meses`} />
+              <DetailLine label="Total pago até contemplação" value={`${brMoney(offer.parcelaInicial)} x ${parcelasPagas} = ${brMoney(totalPagoAteContemplacao)}`} />
+              <DetailLine label="Lance total" value={`${brMoney(offer.lanceTotal)} (${brPct(offer.lanceTotalPct)})`} />
+              <DetailLine label="Saldo pós-contemplação" value={brMoney(offer.saldoDevedor)} />
+              <DetailLine label="Parcela pós-contemplação" value={`${brMoney(offer.saldoDevedor)} / ${offer.prazoRestante} = ${brMoney(offer.parcelaAposContemplacao)}`} />
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border bg-white p-4">
+            <h3 className="text-sm font-black" style={{ color: C.navy }}>Critérios de aderência</h3>
+            <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+              <DetailLine label="Crédito" value={`${offer.scoreBreakdown.credito}/100`} />
+              <DetailLine label="Parcela" value={`${offer.scoreBreakdown.parcela}/100`} />
+              <DetailLine label="Lance" value={`${offer.scoreBreakdown.lance}/100`} />
+              <DetailLine label="Perfil do grupo" value={`${offer.scoreBreakdown.perfilGrupo}/100`} />
+              <DetailLine label="Entregas" value={`${offer.scoreBreakdown.entregas}/100`} />
+              <DetailLine label="Taxa adm." value={`${offer.scoreBreakdown.taxaAdm}/100`} />
+              <DetailLine label="Fundo reserva" value={`${offer.scoreBreakdown.fundoReserva}/100`} />
+              <DetailLine label="Assembleia" value={`${offer.scoreBreakdown.assembleia}/100`} />
+            </div>
+          </div>
+
+          <div className="grid gap-3 text-xs sm:grid-cols-2">
+            <div className="rounded-[24px] border bg-white p-4">
+              <h3 className="font-black" style={{ color: C.navy }}>Motivos</h3>
+              <ul className="mt-2 space-y-1 text-slate-600">
+                {offer.motivos.length ? offer.motivos.map((item, index) => <li key={`${index}-${item}`}>• {item}</li>) : <li>Sem motivos adicionais.</li>}
+              </ul>
+            </div>
+            <div className="rounded-[24px] border bg-white p-4">
+              <h3 className="font-black" style={{ color: C.navy }}>Alertas</h3>
+              <ul className="mt-2 space-y-1 text-amber-700">
+                {offer.alertas.length ? offer.alertas.map((item, index) => <li key={`${index}-${item}`}>• {item}</li>) : <li>Nenhum alerta relevante.</li>}
+              </ul>
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border bg-white p-4 text-xs">
+            <h3 className="font-black" style={{ color: C.navy }}>Parâmetros enviados ao simulador</h3>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {Object.entries(offer.simulatorParams).map(([key, value]) => (
+                <DetailLine key={key} label={key} value={String(value)} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t bg-white p-4">
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" className="rounded-2xl" onClick={onCopy}>
+              <Copy className="mr-2 h-4 w-4" /> Copiar resumo
+            </Button>
+            <Button type="button" className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={onOpen}>
+              Seguir contratação <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function OfferCard({ offer, rank, onOpen, onDetails }: { offer: RadarOffer; rank: number; onOpen: () => void; onDetails: () => void }) {
+  const isFeatured = rank === 1;
+  const probabilityLabel = offer.probabilidadeContemplacao >= 95 ? "Alta" : offer.probabilidadeContemplacao >= 90 ? "Boa" : "Média";
 
   return (
     <Card
@@ -142,8 +461,8 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
           </div>
           <div className="shrink-0 text-right">
             <div className="text-sm font-black" style={{ color: C.navy }}>{offer.grupoCodigo ? `Grupo ${offer.grupoCodigo}` : `#${rank}`}</div>
-            <button type="button" onClick={onCopy} className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
-              <Send className="h-3.5 w-3.5" /> Enviar PDF
+            <button type="button" onClick={onDetails} className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
+              <Send className="h-3.5 w-3.5" /> Enviar proposta
             </button>
           </div>
         </div>
@@ -212,70 +531,9 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
           {offer.alertas[0] && <p className="mt-2 text-xs text-amber-700">{offer.alertas[0]}</p>}
         </div>
 
-        {expanded && (
-          <div className="mt-5 space-y-4 rounded-2xl border bg-slate-50/70 p-4">
-            <div>
-              <h4 className="text-sm font-black" style={{ color: C.navy }}>Memória de cálculo</h4>
-              <div className="mt-2 rounded-2xl bg-white px-3">
-                <DetailLine label="Crédito contratado" value={brMoney(offer.creditoContratado)} />
-                <DetailLine label="Taxa adm. total" value={brPct(offer.taxaAdmPct)} />
-                <DetailLine label="Fundo reserva total" value={brPct(offer.fundoReservaPct)} />
-                <DetailLine label="Taxa + fundo" value={brPct(taxaFrTotal)} />
-                <DetailLine label="Valor da categoria" value={brMoney(offer.valorCategoria)} />
-                <DetailLine label="Parcela inicial" value={`${brMoney(offer.valorCategoria)} / ${offer.prazoTotal} = ${brMoney(offer.parcelaInicial)}`} />
-                <DetailLine label="Parcela da contemplação" value={`${parcelasPagas} de ${offer.prazoTotal}`} />
-                <DetailLine label="Prazo restante" value={`${offer.prazoTotal} - ${parcelasPagas} = ${offer.prazoRestante} meses`} />
-                <DetailLine label="Total pago até contemplação" value={`${brMoney(offer.parcelaInicial)} x ${parcelasPagas} = ${brMoney(totalPagoAteContemplacao)}`} />
-                <DetailLine label="Lance total" value={`${brMoney(offer.lanceTotal)} (${brPct(offer.lanceTotalPct)})`} />
-                <DetailLine label="Saldo pós-contemplação" value={brMoney(offer.saldoDevedor)} />
-                <DetailLine label="Parcela pós-contemplação" value={`${brMoney(offer.saldoDevedor)} / ${offer.prazoRestante} = ${brMoney(offer.parcelaAposContemplacao)}`} />
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-sm font-black" style={{ color: C.navy }}>Critérios de aderência</h4>
-              <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                <DetailLine label="Crédito" value={`${offer.scoreBreakdown.credito}/100`} />
-                <DetailLine label="Parcela" value={`${offer.scoreBreakdown.parcela}/100`} />
-                <DetailLine label="Lance" value={`${offer.scoreBreakdown.lance}/100`} />
-                <DetailLine label="Perfil do grupo" value={`${offer.scoreBreakdown.perfilGrupo}/100`} />
-                <DetailLine label="Entregas" value={`${offer.scoreBreakdown.entregas}/100`} />
-                <DetailLine label="Taxa adm." value={`${offer.scoreBreakdown.taxaAdm}/100`} />
-                <DetailLine label="Fundo reserva" value={`${offer.scoreBreakdown.fundoReserva}/100`} />
-                <DetailLine label="Assembleia" value={`${offer.scoreBreakdown.assembleia}/100`} />
-              </div>
-            </div>
-
-            <div className="grid gap-3 text-xs sm:grid-cols-2">
-              <div className="rounded-2xl bg-white p-3">
-                <h4 className="font-black" style={{ color: C.navy }}>Motivos</h4>
-                <ul className="mt-2 space-y-1 text-slate-600">
-                  {offer.motivos.length ? offer.motivos.map((item, index) => <li key={`${index}-${item}`}>• {item}</li>) : <li>Sem motivos adicionais.</li>}
-                </ul>
-              </div>
-              <div className="rounded-2xl bg-white p-3">
-                <h4 className="font-black" style={{ color: C.navy }}>Alertas</h4>
-                <ul className="mt-2 space-y-1 text-amber-700">
-                  {offer.alertas.length ? offer.alertas.map((item, index) => <li key={`${index}-${item}`}>• {item}</li>) : <li>Nenhum alerta relevante.</li>}
-                </ul>
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-white p-3 text-xs">
-              <h4 className="font-black" style={{ color: C.navy }}>Parâmetros enviados ao simulador</h4>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {Object.entries(offer.simulatorParams).map(([key, value]) => (
-                  <DetailLine key={key} label={key} value={String(value)} />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         <div className="mt-5 space-y-2">
-          <Button type="button" variant="ghost" className="w-full rounded-2xl font-black text-slate-700" onClick={() => setExpanded((value) => !value)}>
-            {expanded ? "Ocultar detalhes" : "Expandir detalhes"}
-            {expanded ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" />}
+          <Button type="button" variant="ghost" className="w-full rounded-2xl font-black text-slate-700" onClick={onDetails}>
+            Expandir detalhes <ChevronDown className="ml-2 h-4 w-4 -rotate-90" />
           </Button>
           <Button className="w-full rounded-2xl text-white" style={{ background: C.ruby }} onClick={onOpen}>
             Seguir contratação <ArrowRight className="ml-2 h-4 w-4" />
@@ -288,6 +546,7 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
 
 export default function RadarOfertas() {
   const navigate = useNavigate();
+  const sharedProposal = useMemo(() => parseProposalFromUrl(), []);
   const [loading, setLoading] = useState(true);
   const [sourceData, setSourceData] = useState<RadarSourceData>({
     admins: [],
@@ -297,8 +556,14 @@ export default function RadarOfertas() {
   });
   const [input, setInput] = useState<RadarInput>(DEFAULT_INPUT);
   const [searched, setSearched] = useState(false);
+  const [detailsOffer, setDetailsOffer] = useState<RadarOffer | null>(null);
 
   useEffect(() => {
+    if (sharedProposal) {
+      setLoading(false);
+      return;
+    }
+
     let alive = true;
 
     (async () => {
@@ -323,7 +588,7 @@ export default function RadarOfertas() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [sharedProposal]);
 
   const offers = useMemo(() => findBestOffers(input, sourceData), [input, sourceData]);
   const topOffers = offers.slice(0, 3);
@@ -366,6 +631,23 @@ export default function RadarOfertas() {
     navigator.clipboard?.writeText(text).catch(() => {});
   }
 
+  function copyProposalLink(offer: RadarOffer) {
+    navigator.clipboard?.writeText(proposalUrl(offer)).catch(() => {});
+  }
+
+  function emailProposal(offer: RadarOffer) {
+    const link = proposalUrl(offer);
+    const subject = `Proposta Consulmax - ${offer.nomeTabela}`;
+    const body = proposalText(offer, link);
+    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
+  function whatsAppProposal(offer: RadarOffer) {
+    const link = proposalUrl(offer);
+    const text = `Olá, segue a proposta Consulmax:\n\n${proposalText(offer, link)}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+  }
+
   function openOfferInSimulator(offer: RadarOffer) {
     try {
       sessionStorage.setItem(
@@ -375,6 +657,10 @@ export default function RadarOfertas() {
     } catch {}
 
     navigate(`${offer.simulatorPath}?${offerToSimulatorQuery(offer)}`);
+  }
+
+  if (sharedProposal) {
+    return <ProposalPublicView proposal={sharedProposal} />;
   }
 
   if (loading) {
@@ -423,17 +709,33 @@ export default function RadarOfertas() {
         ) : (
           <div className="space-y-8">
             <section className="space-y-3">
-              <h2 className="text-xl font-black" style={{ color: C.navy }}>Top 3 Ofertas</h2>
-              <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
-                {topOffers.map((offer, index) => (
-                  <OfferCard
-                    key={offer.id}
-                    offer={offer}
-                    rank={index + 1}
-                    onOpen={() => openOfferInSimulator(offer)}
-                    onCopy={() => copyOffer(offer)}
-                  />
-                ))}
+              <div
+                className="relative overflow-hidden rounded-[34px] border-2 p-4 shadow-sm md:p-5"
+                style={{ borderColor: C.ruby, background: "linear-gradient(135deg, rgba(161,28,39,.07), rgba(181,165,115,.14), #fff)" }}
+              >
+                <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black text-white" style={{ background: C.ruby }}>
+                      <Trophy className="h-3.5 w-3.5" /> Recomendações principais
+                    </div>
+                    <h2 className="mt-2 text-2xl font-black" style={{ color: C.navy }}>Top 3 Ofertas</h2>
+                    <p className="text-sm text-slate-600">Prioridade comercial do Radar: maior aderência, probabilidade e melhor combinação de cotas.</p>
+                  </div>
+                  <div className="rounded-2xl border bg-white/80 px-4 py-2 text-sm font-black" style={{ color: C.ruby, borderColor: "rgba(161,28,39,.18)" }}>
+                    {topOffers.length} selecionadas
+                  </div>
+                </div>
+                <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+                  {topOffers.map((offer, index) => (
+                    <OfferCard
+                      key={offer.id}
+                      offer={offer}
+                      rank={index + 1}
+                      onOpen={() => openOfferInSimulator(offer)}
+                      onDetails={() => setDetailsOffer(offer)}
+                    />
+                  ))}
+                </div>
               </div>
             </section>
 
@@ -447,13 +749,26 @@ export default function RadarOfertas() {
                       offer={offer}
                       rank={index + 4}
                       onOpen={() => openOfferInSimulator(offer)}
-                      onCopy={() => copyOffer(offer)}
+                      onDetails={() => setDetailsOffer(offer)}
                     />
                   ))}
                 </div>
               </section>
             )}
           </div>
+        )}
+
+        {detailsOffer && (
+          <OfferDetailsDrawer
+            offer={detailsOffer}
+            onClose={() => setDetailsOffer(null)}
+            onOpen={() => openOfferInSimulator(detailsOffer)}
+            onCopy={() => copyOffer(detailsOffer)}
+            onCopyLink={() => copyProposalLink(detailsOffer)}
+            onEmail={() => emailProposal(detailsOffer)}
+            onWhatsApp={() => whatsAppProposal(detailsOffer)}
+            onPrint={() => printProposal(detailsOffer)}
+          />
         )}
       </div>
     );

@@ -137,12 +137,12 @@ function calcMaggi(params: {
   } satisfies RadarCalculation;
 }
 
-function bidCandidates(group: AnyRow, credit: number, ownBidAvailable: number, quantidadeCotas: number) {
+function bidCandidates(group: AnyRow, credit: number, ownBidAvailable: number, quantidadeCotas: number, embeddedValuePerQuota = 0) {
   const maxPerQuota = quantidadeCotas > 0 ? ownBidAvailable / quantidadeCotas : ownBidAvailable;
   const stats = groupBidStats(group);
   const pcts = [0, stats.min, stats.median, stats.max, credit > 0 ? (maxPerQuota / credit) * 100 : 0]
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-  const values = pcts.map((pct) => Math.min(maxPerQuota, credit * (pct / 100))).filter((value) => value >= 0);
+  const values = pcts.map((pct) => Math.min(maxPerQuota, Math.max(0, credit * (pct / 100) - embeddedValuePerQuota))).filter((value) => value >= 0);
   return [...new Set(values.map((value) => Math.round(value)))];
 }
 
@@ -210,7 +210,7 @@ function buildOffer(
     segmento: String(group.segmento || ctx.input.segmento),
     nomeTabela: `${quantidadeCotas > 1 ? `${quantidadeCotas} cotas • ` : ""}Grupo ${group.grupo} • ${range.label || "Faixa"}`,
     grupoCodigo: String(group.grupo || ""),
-    estrategia: `${lanceOption.nomeComercial || "Lance"} • ${rowConfig(group).seguroMomento === "contratacao" ? "seguro na contratação" : "seguro na contemplação"}`,
+    estrategia: `${lanceOption.nomeComercial || "Lance"} • lance/embutido base categoria • ${rowConfig(group).seguroMomento === "contratacao" ? "seguro na contratação" : "seguro na contemplação"}`,
     motivos: motivos.slice(0, 5),
     alertas: alertas.slice(0, 4),
     simulatorPath: adminRouteFromKey("maggi"),
@@ -251,7 +251,10 @@ export function runMaggiEngine(ctx: EngineContext, groups: AnyRow[]): EngineResu
           for (const embPct of [...new Set(embOptions)]) {
             const maxQty = maxQuotaCount(ctx, credit);
             for (let quantidadeCotas = 1; quantidadeCotas <= maxQty; quantidadeCotas++) {
-              const ownBidOptions = lanceOption.key === "livre" ? bidCandidates(group, credit, ownBid, quantidadeCotas) : [0];
+              const valorCategoria = credit * (1 + normalizeFraction(onlyNumber(prazoRule.taxaAdmPct)) + normalizeFraction(onlyNumber(prazoRule.fundoReservaPct)));
+              const embeddedValuePerQuota =
+                group.permite_lance_embutido === false ? 0 : Math.min(valorCategoria * normalizeFraction(embPct), valorCategoria * cfg.maxLanceEmbutidoPct);
+              const ownBidOptions = lanceOption.key === "livre" ? bidCandidates(group, credit, ownBid, quantidadeCotas, embeddedValuePerQuota) : [0];
               for (const ownBidPerQuota of ownBidOptions) {
                 const baseCalc = calcMaggi({ group, credit, prazoRule, lanceOption, ownBid: ownBidPerQuota, embPct, parcelaContemplacao });
                 const calc = aggregateCalculation(baseCalc, quantidadeCotas);

@@ -43,27 +43,43 @@ function maxEmbeddedPct(group: AnyRow) {
   const cfg = rowConfig(group);
   const raw =
     onlyNumber(group.lance_embutido_max || group.max_embutido || group.embutido_max || group.lance_embutido_pct || group.lance_embutido_max_pct) ||
-    onlyNumber(cfg.maxLanceEmbutidoPct) ||
-    25;
+    onlyNumber(cfg.maxLanceEmbutidoPct);
   return raw <= 1 ? raw * 100 : raw;
 }
 
-function calcBb(params: { group: AnyRow; range: AnyRow; credit: number; ownBid: number; embPct: number }) {
-  const { group, range, credit, ownBid, embPct } = params;
+function embeddedConfig(group: AnyRow, range: AnyRow) {
+  const cfg = { ...rowConfig(group), ...rowConfig(range) };
+  const explicitNo = group.permite_lance_embutido === false || range.permite_lance_embutido === false || cfg.permiteLanceEmbutido === false;
+  const explicitYes = group.permite_lance_embutido === true || range.permite_lance_embutido === true || cfg.permiteLanceEmbutido === true;
+  const maxPct = maxEmbeddedPct({ ...group, config: { ...rowConfig(group), ...rowConfig(range) } });
+  const base = String(cfg.lanceEmbutidoBase || cfg.embut_base || cfg.embutidoBase || group.lance_embutido_base || "credito");
+  return {
+    allowed: !explicitNo && (explicitYes || maxPct > 0),
+    maxPct: explicitNo ? 0 : maxPct,
+    base: base.includes("categoria") || base.includes("valor") ? "valor_categoria" : "credito",
+  };
+}
+
+function calcBb(params: { group: AnyRow; range: AnyRow; credit: number; ownBid: number; embPct: number; parcelaContemplacao: number }) {
+  const { group, range, credit, ownBid, embPct, parcelaContemplacao } = params;
   const prazo = tableDeadline(range) || tableDeadline(group);
   const taxa = (tableFeePct(range) || tableFeePct(group) || 18) / 100;
   const fr = (tableFrPct(range) || tableFrPct(group) || 0) / 100;
   const valorCategoria = credit * (1 + taxa + fr);
   const parcela = valorCategoria / prazo;
-  const lanceEmbutido = credit * (embPct / 100);
+  const embCfg = embeddedConfig(group, range);
+  const embBase = embCfg.base === "valor_categoria" ? valorCategoria : credit;
+  const lanceEmbutido = embCfg.allowed ? embBase * (embPct / 100) : 0;
   const lanceTotal = ownBid + lanceEmbutido;
   const saldoDevedor = Math.max(0, valorCategoria - lanceTotal);
+  const parcelasPagas = clamp(Math.max(1, parcelaContemplacao), 1, prazo);
+  const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
   return {
     creditoContratado: credit,
     creditoLiquido: Math.max(0, credit - lanceEmbutido),
     parcelaInicial: parcela,
-    parcelaAposContemplacao: saldoDevedor / prazo,
+    parcelaAposContemplacao: saldoDevedor / prazoRestante,
     parcelaEstimada: parcela,
     lanceProprio: ownBid,
     lanceProprioPct: credit > 0 ? (ownBid / credit) * 100 : 0,
@@ -74,19 +90,19 @@ function calcBb(params: { group: AnyRow; range: AnyRow; credit: number; ownBid: 
     valorCategoria,
     saldoDevedor,
     prazoTotal: prazo,
-    prazoRestante: prazo,
+    prazoRestante,
     taxaAdmPct: taxa * 100,
     fundoReservaPct: fr * 100,
     seguroPct: 0,
   } satisfies RadarCalculation;
 }
 
-function bidCandidates(group: AnyRow, credit: number, ownBidAvailable: number, quantidadeCotas: number) {
+function bidCandidates(group: AnyRow, credit: number, ownBidAvailable: number, quantidadeCotas: number, embeddedValuePerQuota = 0) {
   const maxPerQuota = quantidadeCotas > 0 ? ownBidAvailable / quantidadeCotas : ownBidAvailable;
   const stats = groupBidStats(group);
   const pcts = [0, stats.min, stats.median, stats.max, credit > 0 ? (maxPerQuota / credit) * 100 : 0]
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-  const values = pcts.map((pct) => Math.min(maxPerQuota, credit * (pct / 100))).filter((value) => value >= 0);
+  const values = pcts.map((pct) => Math.min(maxPerQuota, Math.max(0, credit * (pct / 100) - embeddedValuePerQuota))).filter((value) => value >= 0);
   return [...new Set(values.map((value) => Math.round(value)))];
 }
 
@@ -147,7 +163,7 @@ function buildOffer(ctx: EngineContext, group: AnyRow, range: AnyRow, calc: Rada
     segmento: String(group.segmento || ctx.input.segmento),
     nomeTabela: `${quantidadeCotas > 1 ? `${quantidadeCotas} cotas • ` : ""}Grupo ${group.grupo || group.codigo || ""} • ${range.label || "Faixa"}`,
     grupoCodigo: String(group.grupo || group.codigo || ""),
-    estrategia: calc.lanceEmbutido > 0 ? "Lance próprio + embutido BB" : "Lance próprio sem embutido",
+    estrategia: calc.lanceEmbutido > 0 ? `Lance próprio + embutido BB (${embeddedConfig(group, range).base === "valor_categoria" ? "base categoria" : "base crédito"})` : "Lance próprio sem embutido",
     motivos: motivos.slice(0, 5),
     alertas: alertas.slice(0, 4),
     simulatorPath: adminRouteFromKey("bb"),
@@ -167,6 +183,7 @@ export function runBbEngine(ctx: EngineContext, groups: AnyRow[]): EngineResult 
   const desiredNet = onlyNumber(ctx.input.creditoLiquido);
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
   const ownBid = onlyNumber(ctx.input.lanceProprio);
+  const parcelaContemplacao = Math.max(1, onlyNumber(ctx.input.prazoContemplacao));
   const offers: RadarOffer[] = [];
 
   for (const group of groups) {
@@ -176,15 +193,18 @@ export function runBbEngine(ctx: EngineContext, groups: AnyRow[]): EngineResult 
       const credit = onlyNumber(range.valor || range.valor_credito || range.credito || range.credit_value);
       if (!credit) continue;
 
+      const embCfg = embeddedConfig(group, range);
       const embOptions =
         ctx.input.usarEmbutido === "ia"
-          ? [0, maxEmbeddedPct(group)]
-          : [ctx.input.usarEmbutido === "sim" ? maxEmbeddedPct(group) : 0];
+          ? [0, embCfg.allowed ? embCfg.maxPct : 0]
+          : [ctx.input.usarEmbutido === "sim" && embCfg.allowed ? embCfg.maxPct : 0];
       for (const embPct of [...new Set(embOptions)]) {
         const maxQty = maxQuotaCount(ctx, credit);
         for (let quantidadeCotas = 1; quantidadeCotas <= maxQty; quantidadeCotas++) {
-          for (const ownBidPerQuota of bidCandidates(group, credit, ownBid, quantidadeCotas)) {
-            const baseCalc = calcBb({ group, range, credit, ownBid: ownBidPerQuota, embPct });
+          const embBase = embCfg.base === "valor_categoria" ? credit * (1 + ((tableFeePct(range) || tableFeePct(group) || 18) / 100) + ((tableFrPct(range) || tableFrPct(group) || 0) / 100)) : credit;
+          const embeddedValuePerQuota = embCfg.allowed ? embBase * (embPct / 100) : 0;
+          for (const ownBidPerQuota of bidCandidates(group, credit, ownBid, quantidadeCotas, embeddedValuePerQuota)) {
+            const baseCalc = calcBb({ group, range, credit, ownBid: ownBidPerQuota, embPct, parcelaContemplacao });
             const calc = aggregateCalculation(baseCalc, quantidadeCotas);
             const median = groupBidStats(group).median;
             if (calc.lanceProprio > ownBid + 1) continue;

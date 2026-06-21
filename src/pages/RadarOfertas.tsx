@@ -122,6 +122,9 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
             <h3 className="mt-2 truncate text-base font-black" style={{ color: C.navy }}>
               {offer.nomeTabela}
             </h3>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              Segmento/Tabela: {offer.segmento || "Não informado"} {offer.table?.nome_tabela ? `• ${offer.table.nome_tabela}` : ""}
+            </p>
           </div>
           <div className="shrink-0 text-right">
             <div className="text-sm font-black" style={{ color: C.navy }}>{offer.grupoCodigo ? `Grupo ${offer.grupoCodigo}` : `#${rank}`}</div>
@@ -173,8 +176,8 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
           <CardLine label="Parcela pós-contemplação" value={brMoney(offer.parcelaAposContemplacao)} />
           <CardLine label="Prazo após contemplação" value={`${offer.prazoRestante} meses`} />
           <CardLine label="Lance embutido" value={brMoney(offer.lanceEmbutido)} />
-          <CardLine label="Taxa adm." value={brPct(offer.taxaAdmPct)} />
-          <CardLine label="Fundo reserva" value={brPct(offer.fundoReservaPct)} />
+          <CardLine label="Taxa adm. mensal" value={brPct(offer.prazoRestante > 0 ? offer.taxaAdmPct / offer.prazoRestante : offer.taxaAdmPct)} />
+          <CardLine label="Fundo reserva mensal" value={brPct(offer.prazoRestante > 0 ? offer.fundoReservaPct / offer.prazoRestante : offer.fundoReservaPct)} />
           <CardLine label="Índice de entrega" value={offer.entregaIndicePct ? brPct(offer.entregaIndicePct) : "Sem dado"} />
           <CardLine label="Próxima assembleia" value={brDate(offer.proximaAssembleia)} />
         </div>
@@ -248,6 +251,8 @@ export default function RadarOfertas() {
   }, []);
 
   const offers = useMemo(() => findBestOffers(input, sourceData), [input, sourceData]);
+  const topOffers = offers.slice(0, 3);
+  const otherOffers = offers.slice(3);
 
   function update<K extends keyof RadarInput>(key: K, value: RadarInput[K]) {
     setInput((prev) => ({ ...prev, [key]: value }));
@@ -272,6 +277,8 @@ export default function RadarOfertas() {
       `Lance total: ${brMoney(offer.lanceTotal)} (${brPct(offer.lanceTotalPct)})`,
       `Sobra do lance próprio: ${brMoney(offer.lanceProprioSobra)}`,
       `Lance embutido: ${brMoney(offer.lanceEmbutido)} (${brPct(offer.lanceEmbutidoPct)})`,
+      `Taxa adm. mensal: ${brPct(offer.prazoRestante > 0 ? offer.taxaAdmPct / offer.prazoRestante : offer.taxaAdmPct)}`,
+      `Fundo reserva mensal: ${brPct(offer.prazoRestante > 0 ? offer.fundoReservaPct / offer.prazoRestante : offer.fundoReservaPct)}`,
       `Índice de entrega: ${offer.entregaIndicePct ? brPct(offer.entregaIndicePct) : "Sem dado"}`,
       `Próxima assembleia: ${brDate(offer.proximaAssembleia)}`,
       `Probabilidade estimada: ${brPct(offer.probabilidadeContemplacao)}`,
@@ -339,16 +346,38 @@ export default function RadarOfertas() {
             Nenhuma combinação atingiu a probabilidade mínima solicitada. Ajuste crédito/parcela, lance próprio, administradora ou probabilidade mínima.
           </Card>
         ) : (
-          <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
-            {offers.map((offer, index) => (
-              <OfferCard
-                key={offer.id}
-                offer={offer}
-                rank={index + 1}
-                onOpen={() => openOfferInSimulator(offer)}
-                onCopy={() => copyOffer(offer)}
-              />
-            ))}
+          <div className="space-y-8">
+            <section className="space-y-3">
+              <h2 className="text-xl font-black" style={{ color: C.navy }}>Top 3 Ofertas</h2>
+              <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+                {topOffers.map((offer, index) => (
+                  <OfferCard
+                    key={offer.id}
+                    offer={offer}
+                    rank={index + 1}
+                    onOpen={() => openOfferInSimulator(offer)}
+                    onCopy={() => copyOffer(offer)}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {otherOffers.length > 0 && (
+              <section className="space-y-3">
+                <h2 className="text-xl font-black" style={{ color: C.navy }}>Outras ofertas parecidas</h2>
+                <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+                  {otherOffers.map((offer, index) => (
+                    <OfferCard
+                      key={offer.id}
+                      offer={offer}
+                      rank={index + 4}
+                      onOpen={() => openOfferInSimulator(offer)}
+                      onCopy={() => copyOffer(offer)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>

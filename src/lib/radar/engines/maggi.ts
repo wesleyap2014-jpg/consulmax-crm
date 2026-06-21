@@ -183,7 +183,7 @@ function calcMaggi(params: {
 function bidCandidates(bidBase: number, ownBidAvailable: number, quantidadeCotas: number, group: AnyRow, embeddedValuePerQuota = 0) {
   const maxPerQuota = quantidadeCotas > 0 ? ownBidAvailable / quantidadeCotas : ownBidAvailable;
   const stats = groupBidStats(group);
-  const pcts = [0, stats.min, stats.median, stats.max, bidBase > 0 ? (maxPerQuota / bidBase) * 100 : 0]
+  const pcts = [stats.median, stats.max, bidBase > 0 ? (maxPerQuota / bidBase) * 100 : 0]
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
   const values = pcts.map((pct) => Math.min(maxPerQuota, Math.max(0, bidBase * (pct / 100) - embeddedValuePerQuota))).filter((value) => value >= 0);
   return [...new Set(values.map((value) => Math.round(value)))];
@@ -310,7 +310,7 @@ export function runMaggiEngine(ctx: EngineContext, groups: AnyRow[]): EngineResu
                 const median = groupBidStats(group).median;
                 if (calc.lanceProprio > ownBid + 1) continue;
                 if (median !== null && calc.lanceTotalPct < median - 5) continue;
-                if (ctx.input.modo === "credito" && purchasingPower(calc, ctx.input) < desiredNet * 0.72) continue;
+                if (ctx.input.modo === "credito" && purchasingPower(calc, ctx.input) < desiredNet * 0.9) continue;
                 if (ctx.input.modo === "parcela" && calc.parcelaEstimada > desiredInstallment * 1.35) continue;
                 offers.push(buildOffer(ctx, group, range, prazoRule, lanceOption, calc, quantidadeCotas));
               }

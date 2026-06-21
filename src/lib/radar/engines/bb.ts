@@ -32,11 +32,23 @@ function tableDeadline(row: AnyRow) {
 }
 
 function tableFeePct(row: AnyRow) {
-  return onlyNumber(row.taxa_adm || row.taxa_admin || row.taxa_administracao || row.taxa_total || row.taxa_plano || row.taxa_adm_pct);
+  const cfg = rowConfig(row);
+  const raw =
+    onlyNumber(row.taxa_adm || row.taxa_admin || row.taxa_administracao || row.taxa_total || row.taxa_plano || row.taxa_adm_pct) ||
+    onlyNumber(row.taxaAdmPct || row.taxaAdministracao || row.taxaAdministracaoPct || row.adminFeePct || row.administrationFeePct) ||
+    onlyNumber(cfg.taxa_adm || cfg.taxa_admin || cfg.taxa_administracao || cfg.taxa_total || cfg.taxa_plano || cfg.taxa_adm_pct) ||
+    onlyNumber(cfg.taxaAdmPct || cfg.taxaAdministracao || cfg.taxaAdministracaoPct || cfg.adminFeePct || cfg.administrationFeePct);
+  return raw > 0 && raw <= 1 ? raw * 100 : raw;
 }
 
 function tableFrPct(row: AnyRow) {
-  return onlyNumber(row.fundo_reserva || row.fundo_reserva_pct || row.reserve_fund || row.reserveFundPct);
+  const cfg = rowConfig(row);
+  const raw =
+    onlyNumber(row.fundo_reserva || row.fundo_reserva_pct || row.reserve_fund || row.reserveFundPct) ||
+    onlyNumber(row.fundoReservaPct || row.fundoReserva || row.reserveFund || row.reserve_fee_pct) ||
+    onlyNumber(cfg.fundo_reserva || cfg.fundo_reserva_pct || cfg.reserve_fund || cfg.reserveFundPct) ||
+    onlyNumber(cfg.fundoReservaPct || cfg.fundoReserva || cfg.reserveFund || cfg.reserve_fee_pct);
+  return raw > 0 && raw <= 1 ? raw * 100 : raw;
 }
 
 function maxEmbeddedPct(group: AnyRow) {
@@ -63,7 +75,7 @@ function embeddedConfig(group: AnyRow, range: AnyRow) {
 function calcBb(params: { group: AnyRow; range: AnyRow; credit: number; ownBid: number; embPct: number; parcelaContemplacao: number }) {
   const { group, range, credit, ownBid, embPct, parcelaContemplacao } = params;
   const prazo = tableDeadline(range) || tableDeadline(group);
-  const taxa = (tableFeePct(range) || tableFeePct(group) || 18) / 100;
+  const taxa = (tableFeePct(range) || tableFeePct(group) || 0) / 100;
   const fr = (tableFrPct(range) || tableFrPct(group) || 0) / 100;
   const valorCategoria = credit * (1 + taxa + fr);
   const parcela = valorCategoria / prazo;
@@ -189,6 +201,7 @@ export function runBbEngine(ctx: EngineContext, groups: AnyRow[]): EngineResult 
   for (const group of groups) {
     if (group.is_active === false) continue;
     if (!rowMatchesSegment(group, ctx.input.segmento)) continue;
+    if (groupBidStats(group).median === null) continue;
     for (const range of creditRanges(group)) {
       const credit = onlyNumber(range.valor || range.valor_credito || range.credito || range.credit_value);
       if (!credit) continue;
@@ -201,7 +214,7 @@ export function runBbEngine(ctx: EngineContext, groups: AnyRow[]): EngineResult 
       for (const embPct of [...new Set(embOptions)]) {
         const maxQty = maxQuotaCount(ctx, credit);
         for (let quantidadeCotas = 1; quantidadeCotas <= maxQty; quantidadeCotas++) {
-          const embBase = embCfg.base === "valor_categoria" ? credit * (1 + ((tableFeePct(range) || tableFeePct(group) || 18) / 100) + ((tableFrPct(range) || tableFrPct(group) || 0) / 100)) : credit;
+          const embBase = embCfg.base === "valor_categoria" ? credit * (1 + ((tableFeePct(range) || tableFeePct(group) || 0) / 100) + ((tableFrPct(range) || tableFrPct(group) || 0) / 100)) : credit;
           const embeddedValuePerQuota = embCfg.allowed ? embBase * (embPct / 100) : 0;
           for (const ownBidPerQuota of bidCandidates(group, credit, ownBid, quantidadeCotas, embeddedValuePerQuota)) {
             const baseCalc = calcBb({ group, range, credit, ownBid: ownBidPerQuota, embPct, parcelaContemplacao });

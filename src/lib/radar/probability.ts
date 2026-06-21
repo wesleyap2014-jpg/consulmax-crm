@@ -78,9 +78,7 @@ export function estimateProbability(params: { bidPct: number; group?: AnyRow | n
   const median = stats.median;
   const max = stats.max;
 
-  if (!min && !median && !max) {
-    return clamp(Number((60 + bidPct * 0.8).toFixed(1)), 5, PROBABILITY_PARAMS.maiorLancePctChance);
-  }
+  if (!min && !median && !max) return 0;
 
   const baseAnchor = median ?? min ?? max ?? 0;
   const minAnchor = min ?? Math.max(0, baseAnchor - 10);

@@ -57,6 +57,45 @@ function normalizeFraction(value: number) {
   return value > 1 ? value / 100 : value;
 }
 
+function normalizeBase(value: unknown) {
+  const key = String(value || "").toLowerCase();
+  if (key.includes("categoria") || key.includes("termo") || key.includes("parcela_termo") || key.includes("valor_categoria")) return "valor_categoria";
+  return "credito";
+}
+
+function maggiBaseConfig(group: AnyRow, adminRules: AnyRow | null | undefined) {
+  const cfg = rowConfig(group);
+  const rules = adminRules || {};
+  const lanceBase =
+    cfg.lanceBase ||
+    cfg.lanceBaseCalculo ||
+    cfg.baseCalculoLance ||
+    group.lance_base ||
+    group.base_calculo_lance ||
+    rules?.lance?.base_ofertado ||
+    rules?.modelo_lance_base ||
+    "credito";
+  const embutidoBase =
+    cfg.embutBase ||
+    cfg.embut_base ||
+    cfg.lanceEmbutidoBase ||
+    cfg.baseCalculoEmbutido ||
+    group.embut_base ||
+    group.lance_embutido_base ||
+    rules?.lance_embutido?.base ||
+    rules?.embut_base ||
+    "credito";
+
+  return {
+    lanceBase: normalizeBase(lanceBase),
+    embutidoBase: normalizeBase(embutidoBase),
+  };
+}
+
+function baseValue(base: string, credit: number, valorCategoria: number) {
+  return base === "valor_categoria" ? valorCategoria : credit;
+}
+
 function firstParcelAdd(credit: number, valorCategoria: number, rule: AnyRow) {
   if (!rule?.enabled || rule.tipo === "nenhum") return 0;
   if (rule.tipo === "valor_fixo") return onlyNumber(rule.valor);
@@ -73,9 +112,11 @@ function calcMaggi(params: {
   ownBid: number;
   embPct: number;
   parcelaContemplacao: number;
+  adminRules?: AnyRow | null;
 }) {
-  const { group, credit, prazoRule, lanceOption, ownBid, embPct, parcelaContemplacao } = params;
+  const { group, credit, prazoRule, lanceOption, ownBid, embPct, parcelaContemplacao, adminRules } = params;
   const cfg = normalizeMaggiGroup(group);
+  const baseCfg = maggiBaseConfig(group, adminRules);
   const prazo = Math.max(1, onlyNumber(prazoRule.prazo));
   const taxaAdm = normalizeFraction(onlyNumber(prazoRule.taxaAdmPct));
   const fundoReserva = normalizeFraction(onlyNumber(prazoRule.fundoReservaPct));
@@ -88,10 +129,12 @@ function calcMaggi(params: {
   const parcelaAntes = parcelaBase + (cfg.seguroMomento === "contratacao" ? seguroMensal : 0);
   const parcelasPagas = clamp(parcelaContemplacao, 1, prazo);
   const prazoRestanteBase = Math.max(1, prazo - parcelasPagas);
+  const lanceBase = baseValue(baseCfg.lanceBase, credit, valorCategoria);
+  const embutidoBase = baseValue(baseCfg.embutidoBase, credit, valorCategoria);
   const lancePct = lanceOption.key === "livre" ? 0 : normalizeFraction(onlyNumber(lanceOption.pct));
-  const lanceFixo = valorCategoria * lancePct;
+  const lanceFixo = lanceBase * lancePct;
   const maxEmbPct = group.permite_lance_embutido === false ? 0 : cfg.maxLanceEmbutidoPct;
-  const embutidoSolicitado = Math.min(valorCategoria * normalizeFraction(embPct), valorCategoria * maxEmbPct);
+  const embutidoSolicitado = Math.min(embutidoBase * normalizeFraction(embPct), embutidoBase * maxEmbPct);
   const lanceEmbutido = lanceOption.key === "livre" ? embutidoSolicitado : Math.min(embutidoSolicitado, lanceFixo);
   const lanceProprio = lanceOption.key === "livre" ? ownBid : Math.max(0, lanceFixo - lanceEmbutido);
   const lanceTotal = lanceProprio + lanceEmbutido;
@@ -122,11 +165,11 @@ function calcMaggi(params: {
     parcelaAposContemplacao: parcelaApos,
     parcelaEstimada: parcelaAntes,
     lanceProprio,
-    lanceProprioPct: credit > 0 ? (lanceProprio / credit) * 100 : 0,
+    lanceProprioPct: lanceBase > 0 ? (lanceProprio / lanceBase) * 100 : 0,
     lanceEmbutido,
-    lanceEmbutidoPct: credit > 0 ? (lanceEmbutido / credit) * 100 : 0,
+    lanceEmbutidoPct: embutidoBase > 0 ? (lanceEmbutido / embutidoBase) * 100 : 0,
     lanceTotal,
-    lanceTotalPct: credit > 0 ? (lanceTotal / credit) * 100 : 0,
+    lanceTotalPct: lanceBase > 0 ? (lanceTotal / lanceBase) * 100 : 0,
     valorCategoria,
     saldoDevedor: saldoAposLance,
     prazoTotal: prazo,
@@ -137,12 +180,12 @@ function calcMaggi(params: {
   } satisfies RadarCalculation;
 }
 
-function bidCandidates(group: AnyRow, credit: number, ownBidAvailable: number, quantidadeCotas: number, embeddedValuePerQuota = 0) {
+function bidCandidates(bidBase: number, ownBidAvailable: number, quantidadeCotas: number, group: AnyRow, embeddedValuePerQuota = 0) {
   const maxPerQuota = quantidadeCotas > 0 ? ownBidAvailable / quantidadeCotas : ownBidAvailable;
   const stats = groupBidStats(group);
-  const pcts = [0, stats.min, stats.median, stats.max, credit > 0 ? (maxPerQuota / credit) * 100 : 0]
+  const pcts = [0, stats.min, stats.median, stats.max, bidBase > 0 ? (maxPerQuota / bidBase) * 100 : 0]
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-  const values = pcts.map((pct) => Math.min(maxPerQuota, Math.max(0, credit * (pct / 100) - embeddedValuePerQuota))).filter((value) => value >= 0);
+  const values = pcts.map((pct) => Math.min(maxPerQuota, Math.max(0, bidBase * (pct / 100) - embeddedValuePerQuota))).filter((value) => value >= 0);
   return [...new Set(values.map((value) => Math.round(value)))];
 }
 
@@ -165,6 +208,7 @@ function buildOffer(
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
   const probabilidade = estimateProbability({ bidPct: calc.lanceTotalPct, group });
   const stats = groupBidStats(group);
+  const baseCfg = maggiBaseConfig(group, ctx.admin.rules || {});
   const power = purchasingPower(calc, ctx.input);
   const scoreBreakdown = scoreOffer(calc, ctx.input, quantidadeCotas, group);
   const delivery = groupDeliveryStats(group);
@@ -210,7 +254,7 @@ function buildOffer(
     segmento: String(group.segmento || ctx.input.segmento),
     nomeTabela: `${quantidadeCotas > 1 ? `${quantidadeCotas} cotas • ` : ""}Grupo ${group.grupo} • ${range.label || "Faixa"}`,
     grupoCodigo: String(group.grupo || ""),
-    estrategia: `${lanceOption.nomeComercial || "Lance"} • lance/embutido base categoria • ${rowConfig(group).seguroMomento === "contratacao" ? "seguro na contratação" : "seguro na contemplação"}`,
+    estrategia: `${lanceOption.nomeComercial || "Lance"} • lance base ${baseCfg.lanceBase === "valor_categoria" ? "categoria" : "crédito"} • embutido base ${baseCfg.embutidoBase === "valor_categoria" ? "categoria" : "crédito"} • ${rowConfig(group).seguroMomento === "contratacao" ? "seguro na contratação" : "seguro na contemplação"}`,
     motivos: motivos.slice(0, 5),
     alertas: alertas.slice(0, 4),
     simulatorPath: adminRouteFromKey("maggi"),
@@ -233,30 +277,36 @@ export function runMaggiEngine(ctx: EngineContext, groups: AnyRow[]): EngineResu
   const desiredInstallment = onlyNumber(ctx.input.parcelaDesejada);
   const ownBid = onlyNumber(ctx.input.lanceProprio);
   const parcelaContemplacao = Math.max(1, onlyNumber(ctx.input.prazoContemplacao));
+  const adminRules = ctx.admin.rules || {};
   const offers: RadarOffer[] = [];
 
   for (const group of groups) {
     if (group.is_active === false) continue;
     if (!rowMatchesSegment(group, ctx.input.segmento)) continue;
+    if (groupBidStats(group).median === null) continue;
     const cfg = normalizeMaggiGroup(group);
     for (const range of cfg.creditRanges) {
       const credit = onlyNumber(range.valor);
       if (!credit) continue;
       for (const prazoRule of cfg.prazoRules) {
+        const valorCategoria = credit * (1 + normalizeFraction(onlyNumber(prazoRule.taxaAdmPct)) + normalizeFraction(onlyNumber(prazoRule.fundoReservaPct)));
+        const baseCfg = maggiBaseConfig(group, adminRules);
+        const lanceBase = baseValue(baseCfg.lanceBase, credit, valorCategoria);
+        const embutidoBase = baseValue(baseCfg.embutidoBase, credit, valorCategoria);
         for (const lanceOption of cfg.lanceOptions) {
+          const embAllowed = group.permite_lance_embutido !== false && cfg.maxLanceEmbutidoPct > 0;
           const embOptions =
             ctx.input.usarEmbutido === "ia"
-              ? [0, cfg.maxLanceEmbutidoPct]
-              : [ctx.input.usarEmbutido === "sim" ? cfg.maxLanceEmbutidoPct : 0];
+              ? [0, embAllowed ? cfg.maxLanceEmbutidoPct : 0]
+              : [ctx.input.usarEmbutido === "sim" && embAllowed ? cfg.maxLanceEmbutidoPct : 0];
           for (const embPct of [...new Set(embOptions)]) {
             const maxQty = maxQuotaCount(ctx, credit);
             for (let quantidadeCotas = 1; quantidadeCotas <= maxQty; quantidadeCotas++) {
-              const valorCategoria = credit * (1 + normalizeFraction(onlyNumber(prazoRule.taxaAdmPct)) + normalizeFraction(onlyNumber(prazoRule.fundoReservaPct)));
               const embeddedValuePerQuota =
-                group.permite_lance_embutido === false ? 0 : Math.min(valorCategoria * normalizeFraction(embPct), valorCategoria * cfg.maxLanceEmbutidoPct);
-              const ownBidOptions = lanceOption.key === "livre" ? bidCandidates(group, credit, ownBid, quantidadeCotas, embeddedValuePerQuota) : [0];
+                group.permite_lance_embutido === false ? 0 : Math.min(embutidoBase * normalizeFraction(embPct), embutidoBase * cfg.maxLanceEmbutidoPct);
+              const ownBidOptions = lanceOption.key === "livre" ? bidCandidates(lanceBase, ownBid, quantidadeCotas, group, embeddedValuePerQuota) : [0];
               for (const ownBidPerQuota of ownBidOptions) {
-                const baseCalc = calcMaggi({ group, credit, prazoRule, lanceOption, ownBid: ownBidPerQuota, embPct, parcelaContemplacao });
+                const baseCalc = calcMaggi({ group, credit, prazoRule, lanceOption, ownBid: ownBidPerQuota, embPct, parcelaContemplacao, adminRules });
                 const calc = aggregateCalculation(baseCalc, quantidadeCotas);
                 const median = groupBidStats(group).median;
                 if (calc.lanceProprio > ownBid + 1) continue;

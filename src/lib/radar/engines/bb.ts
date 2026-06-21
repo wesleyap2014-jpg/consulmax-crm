@@ -83,9 +83,10 @@ function calcBb(params: { group: AnyRow; range: AnyRow; credit: number; ownBid: 
   const embBase = embCfg.base === "valor_categoria" ? valorCategoria : credit;
   const lanceEmbutido = embCfg.allowed ? embBase * (embPct / 100) : 0;
   const lanceTotal = ownBid + lanceEmbutido;
-  const saldoDevedor = Math.max(0, valorCategoria - lanceTotal);
   const parcelasPagas = clamp(Math.max(1, parcelaContemplacao), 1, prazo);
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
+  const totalPagoAteContemplacao = parcela * parcelasPagas;
+  const saldoDevedor = Math.max(0, valorCategoria - totalPagoAteContemplacao - lanceTotal);
 
   return {
     creditoContratado: credit,

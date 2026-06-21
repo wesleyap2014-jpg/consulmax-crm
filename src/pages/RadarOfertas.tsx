@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Building2,
   ChevronDown,
+  ChevronUp,
   Loader2,
   Search,
   Send,
@@ -87,6 +88,15 @@ function CardLine({ label, value }: { label: string; value: string }) {
   );
 }
 
+function DetailLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-slate-100 py-2 text-xs last:border-0">
+      <span className="text-slate-500">{label}</span>
+      <span className="max-w-[62%] text-right font-bold" style={{ color: C.navy }}>{value}</span>
+    </div>
+  );
+}
+
 function brDate(value?: string | null) {
   if (!value) return "Não informada";
   const date = new Date(value);
@@ -95,8 +105,12 @@ function brDate(value?: string | null) {
 }
 
 function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: number; onOpen: () => void; onCopy: () => void }) {
+  const [expanded, setExpanded] = useState(false);
   const isFeatured = rank === 1;
   const probabilityLabel = offer.probabilidadeContemplacao >= 95 ? "Alta" : offer.probabilidadeContemplacao >= 90 ? "Boa" : "Média";
+  const taxaFrTotal = offer.taxaAdmPct + offer.fundoReservaPct;
+  const parcelasPagas = Math.max(1, offer.prazoTotal - offer.prazoRestante);
+  const totalPagoAteContemplacao = offer.parcelaInicial * parcelasPagas;
 
   return (
     <Card
@@ -198,9 +212,70 @@ function OfferCard({ offer, rank, onOpen, onCopy }: { offer: RadarOffer; rank: n
           {offer.alertas[0] && <p className="mt-2 text-xs text-amber-700">{offer.alertas[0]}</p>}
         </div>
 
+        {expanded && (
+          <div className="mt-5 space-y-4 rounded-2xl border bg-slate-50/70 p-4">
+            <div>
+              <h4 className="text-sm font-black" style={{ color: C.navy }}>Memória de cálculo</h4>
+              <div className="mt-2 rounded-2xl bg-white px-3">
+                <DetailLine label="Crédito contratado" value={brMoney(offer.creditoContratado)} />
+                <DetailLine label="Taxa adm. total" value={brPct(offer.taxaAdmPct)} />
+                <DetailLine label="Fundo reserva total" value={brPct(offer.fundoReservaPct)} />
+                <DetailLine label="Taxa + fundo" value={brPct(taxaFrTotal)} />
+                <DetailLine label="Valor da categoria" value={brMoney(offer.valorCategoria)} />
+                <DetailLine label="Parcela inicial" value={`${brMoney(offer.valorCategoria)} / ${offer.prazoTotal} = ${brMoney(offer.parcelaInicial)}`} />
+                <DetailLine label="Parcela da contemplação" value={`${parcelasPagas} de ${offer.prazoTotal}`} />
+                <DetailLine label="Prazo restante" value={`${offer.prazoTotal} - ${parcelasPagas} = ${offer.prazoRestante} meses`} />
+                <DetailLine label="Total pago até contemplação" value={`${brMoney(offer.parcelaInicial)} x ${parcelasPagas} = ${brMoney(totalPagoAteContemplacao)}`} />
+                <DetailLine label="Lance total" value={`${brMoney(offer.lanceTotal)} (${brPct(offer.lanceTotalPct)})`} />
+                <DetailLine label="Saldo pós-contemplação" value={brMoney(offer.saldoDevedor)} />
+                <DetailLine label="Parcela pós-contemplação" value={`${brMoney(offer.saldoDevedor)} / ${offer.prazoRestante} = ${brMoney(offer.parcelaAposContemplacao)}`} />
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-black" style={{ color: C.navy }}>Critérios de aderência</h4>
+              <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                <DetailLine label="Crédito" value={`${offer.scoreBreakdown.credito}/100`} />
+                <DetailLine label="Parcela" value={`${offer.scoreBreakdown.parcela}/100`} />
+                <DetailLine label="Lance" value={`${offer.scoreBreakdown.lance}/100`} />
+                <DetailLine label="Perfil do grupo" value={`${offer.scoreBreakdown.perfilGrupo}/100`} />
+                <DetailLine label="Entregas" value={`${offer.scoreBreakdown.entregas}/100`} />
+                <DetailLine label="Taxa adm." value={`${offer.scoreBreakdown.taxaAdm}/100`} />
+                <DetailLine label="Fundo reserva" value={`${offer.scoreBreakdown.fundoReserva}/100`} />
+                <DetailLine label="Assembleia" value={`${offer.scoreBreakdown.assembleia}/100`} />
+              </div>
+            </div>
+
+            <div className="grid gap-3 text-xs sm:grid-cols-2">
+              <div className="rounded-2xl bg-white p-3">
+                <h4 className="font-black" style={{ color: C.navy }}>Motivos</h4>
+                <ul className="mt-2 space-y-1 text-slate-600">
+                  {offer.motivos.length ? offer.motivos.map((item, index) => <li key={`${index}-${item}`}>• {item}</li>) : <li>Sem motivos adicionais.</li>}
+                </ul>
+              </div>
+              <div className="rounded-2xl bg-white p-3">
+                <h4 className="font-black" style={{ color: C.navy }}>Alertas</h4>
+                <ul className="mt-2 space-y-1 text-amber-700">
+                  {offer.alertas.length ? offer.alertas.map((item, index) => <li key={`${index}-${item}`}>• {item}</li>) : <li>Nenhum alerta relevante.</li>}
+                </ul>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-white p-3 text-xs">
+              <h4 className="font-black" style={{ color: C.navy }}>Parâmetros enviados ao simulador</h4>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {Object.entries(offer.simulatorParams).map(([key, value]) => (
+                  <DetailLine key={key} label={key} value={String(value)} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="mt-5 space-y-2">
-          <Button variant="ghost" className="w-full rounded-2xl font-black text-slate-700">
-            Expandir detalhes <ChevronDown className="ml-2 h-4 w-4" />
+          <Button type="button" variant="ghost" className="w-full rounded-2xl font-black text-slate-700" onClick={() => setExpanded((value) => !value)}>
+            {expanded ? "Ocultar detalhes" : "Expandir detalhes"}
+            {expanded ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" />}
           </Button>
           <Button className="w-full rounded-2xl text-white" style={{ background: C.ruby }} onClick={onOpen}>
             Seguir contratação <ArrowRight className="ml-2 h-4 w-4" />

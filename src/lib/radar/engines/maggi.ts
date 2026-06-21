@@ -283,7 +283,6 @@ export function runMaggiEngine(ctx: EngineContext, groups: AnyRow[]): EngineResu
   for (const group of groups) {
     if (group.is_active === false) continue;
     if (!rowMatchesSegment(group, ctx.input.segmento)) continue;
-    if (groupBidStats(group).median === null) continue;
     const cfg = normalizeMaggiGroup(group);
     for (const range of cfg.creditRanges) {
       const credit = onlyNumber(range.valor);

@@ -18,34 +18,130 @@ function interpolate(value: number, from: number, to: number, chanceFrom: number
   return chanceFrom + (chanceTo - chanceFrom) * ratio;
 }
 
+const MIN_KEYS = [
+  "menor_pct_contemplado",
+  "menor_pct_lance_livre",
+  "menor_lance_livre",
+  "menor_pct_contemplado",
+  "menor_lance_pct",
+  "lance_minimo_pct",
+  "lowest_bid_pct",
+  "menor_lance",
+  "lowestBidPct",
+  "menorLancePct",
+  "menorLanceContemplado",
+  "menorLanceContempladoPct",
+  "minBidPct",
+  "min_bid_pct",
+  "lowestBid",
+];
+
+const MEDIAN_KEYS = [
+  "mediana_pct_contemplado",
+  "mediana_pct_lance_livre",
+  "mediana_lance_livre",
+  "mediana_lance",
+  "median_lance",
+  "media_lance_livre",
+  "media_lance",
+  "avg_lance",
+  "lance_medio",
+  "median",
+  "mediana",
+  "medianaLance",
+  "medianaLancePct",
+  "mediaLance",
+  "mediaLancePct",
+  "lanceMedio",
+  "lanceMedioPct",
+  "averageBidPct",
+  "avgBidPct",
+  "medianBidPct",
+];
+
+const MAX_KEYS = [
+  "maior_pct_contemplado",
+  "maior_pct_lance_livre",
+  "maior_lance_livre",
+  "maior_pct_contemplado",
+  "maior_lance_pct",
+  "lance_maximo_pct",
+  "highest_bid_pct",
+  "maior_lance",
+  "highestBidPct",
+  "maiorLancePct",
+  "maiorLanceContemplado",
+  "maiorLanceContempladoPct",
+  "maxBidPct",
+  "max_bid_pct",
+  "highestBid",
+];
+
+const BID_KEYS = [
+  "percentual_lance",
+  "lance_pct",
+  "lance_percentual",
+  "percentual",
+  "pct",
+  "bidPct",
+  "bid_percent",
+  "valor_lance_percentual",
+  "lancePct",
+  "lancePercentual",
+  "percentualLance",
+  "bid",
+];
+
+function nestedRows(value: unknown): AnyRow[] {
+  const direct = asRows(value);
+  const nested: AnyRow[] = [];
+  for (const row of direct) {
+    nested.push(row);
+    for (const item of Object.values(row)) {
+      if (Array.isArray(item)) nested.push(...asRows(item));
+      else if (item && typeof item === "object") nested.push(...asRows(item));
+    }
+  }
+  return nested;
+}
+
+function assemblyValue(group: AnyRow | null | undefined, key: "maiorPct" | "menorPct" | "medianaPct") {
+  const cfg = rowConfig(group);
+  const assembly = cfg.assemblyResult;
+  if (assembly && !Array.isArray(assembly) && typeof assembly === "object") {
+    return normalizePct(pickNumber(assembly as AnyRow, [key]));
+  }
+  return 0;
+}
+
+function lanceLivreFromConfig(group: AnyRow | null | undefined) {
+  const cfg = rowConfig(group);
+  const raw =
+    cfg.lanceLivreMedia ||
+    cfg.lance_livre_media ||
+    cfg.lanceLivre ||
+    cfg.lance_livre ||
+    cfg.percentual_lance_livre ||
+    cfg.lanceLivrePct;
+  return normalizePct(typeof raw === "number" ? raw : pickNumber(cfg, ["lanceLivreMedia", "lance_livre_media", "lanceLivre", "lance_livre", "percentual_lance_livre", "lanceLivrePct"]));
+}
+
 export function groupBidStats(group: AnyRow | null | undefined) {
   const empty = { min: null as number | null, median: null as number | null, max: null as number | null };
   if (!group) return empty;
 
-  const assembly = rowConfig(group).assemblyResult;
+  const config = rowConfig(group);
+  const assembly = config.assemblyResult || config.resultadoAssembleia || config.assembly || config.assemblies || config.resultados;
   const assemblyRow = !Array.isArray(assembly) && assembly && typeof assembly === "object" ? (assembly as AnyRow) : {};
   const high = normalizePct(
-    pickNumber(group, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct"]) ||
-      pickNumber(assemblyRow, ["maior_pct_contemplado", "maior_lance_pct", "lance_maximo_pct", "highest_bid_pct", "maior_lance", "highestBidPct"])
+    assemblyValue(group, "maiorPct") || pickNumber(group, MAX_KEYS) || pickNumber(config, MAX_KEYS) || pickNumber(assemblyRow, MAX_KEYS)
   );
   const low = normalizePct(
-    pickNumber(group, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct"]) ||
-      pickNumber(assemblyRow, ["menor_pct_contemplado", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct", "menor_lance", "lowestBidPct"])
+    assemblyValue(group, "menorPct") || pickNumber(group, MIN_KEYS) || pickNumber(config, MIN_KEYS) || pickNumber(assemblyRow, MIN_KEYS) || lanceLivreFromConfig(group)
   );
 
-  const bids = asRows(assembly)
-    .map((row) =>
-      pickNumber(row, [
-        "percentual_lance",
-        "lance_pct",
-        "lance_percentual",
-        "percentual",
-        "pct",
-        "bidPct",
-        "bid_percent",
-        "valor_lance_percentual",
-      ])
-    )
+  const bids = nestedRows(assembly)
+    .map((row) => pickNumber(row, BID_KEYS))
     .filter((value) => value > 0)
     .map(normalizePct);
 
@@ -57,12 +153,13 @@ export function groupBidStats(group: AnyRow | null | undefined) {
   }
 
   const rawMedian = normalizePct(
-    pickNumber(group, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
-      pickNumber(assemblyRow, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"])
+    assemblyValue(group, "medianaPct") || pickNumber(group, MEDIAN_KEYS) || pickNumber(config, MEDIAN_KEYS) || pickNumber(assemblyRow, MEDIAN_KEYS)
   );
 
   if (!median && rawMedian) median = rawMedian;
   if (!median && high > 0 && low > 0) median = (high + low) / 2;
+  if (!median && high > 0) median = high;
+  if (!median && low > 0) median = low;
 
   return {
     min: low > 0 ? low : bids.length ? Math.min(...bids) : null,

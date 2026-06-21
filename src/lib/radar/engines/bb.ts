@@ -201,7 +201,6 @@ export function runBbEngine(ctx: EngineContext, groups: AnyRow[]): EngineResult 
   for (const group of groups) {
     if (group.is_active === false) continue;
     if (!rowMatchesSegment(group, ctx.input.segmento)) continue;
-    if (groupBidStats(group).median === null) continue;
     for (const range of creditRanges(group)) {
       const credit = onlyNumber(range.valor || range.valor_credito || range.credito || range.credit_value);
       if (!credit) continue;

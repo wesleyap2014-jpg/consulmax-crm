@@ -267,7 +267,8 @@ function nextAssemblyScore(group: AnyRow | null | undefined) {
 }
 
 function groupProfileScore(calc: RadarCalculation, group: AnyRow | null | undefined) {
-  const assembly = rowConfig(group).assemblyResult;
+  const cfg = rowConfig(group);
+  const assembly = cfg.assemblyResult;
   const bids = asRows(assembly)
     .map((row) =>
       pickNumber(row, [
@@ -288,8 +289,14 @@ function groupProfileScore(calc: RadarCalculation, group: AnyRow | null | undefi
   const statsSource = assembly || group;
   const med =
     listMedian ||
-    pickNumber(group, ["mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
+    pickNumber(statsSource && !Array.isArray(statsSource) ? (statsSource as AnyRow) : {}, ["medianaPct"]) ||
+    pickNumber(group, ["mediana_pct_contemplado", "mediana_pct_lance_livre", "mediana_lance_livre", "mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
+    pickNumber(cfg, ["mediana_pct_contemplado", "mediana_pct_lance_livre", "mediana_lance_livre", "mediana_lance", "median_lance", "media_lance_livre", "media_lance", "avg_lance", "lance_medio", "median", "mediana"]) ||
     pickNumber(statsSource && !Array.isArray(statsSource) ? (statsSource as AnyRow) : {}, [
+      "medianaPct",
+      "mediana_pct_contemplado",
+      "mediana_pct_lance_livre",
+      "mediana_lance_livre",
       "mediana_lance",
       "median_lance",
       "media_lance_livre",

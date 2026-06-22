@@ -23,6 +23,7 @@ export type RadarInput = {
   prazoContemplacao: string;
   usarEmbutido: EmbedDecision;
   probabilidadeMinima: string;
+  aderenciaMinima: string;
 };
 
 export type RadarSourceData = {

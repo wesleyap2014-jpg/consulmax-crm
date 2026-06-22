@@ -35,6 +35,7 @@ const C = {
 
 const RADAR_SEGMENTS: RadarSegment[] = ["Automóvel", "Imóvel", "Serviços"];
 const PROBABILITY_OPTIONS = ["40", "50", "60", "70", "80", "90", "95"];
+const ADHERENCE_OPTIONS = ["0", "50", "60", "70", "80", "90"];
 const ADMIN_OPTIONS: Array<{ value: AdminFilter; label: string }> = [
   { value: "todas", label: "IA Decide" },
   { value: "bb", label: "BB Consórcios" },
@@ -47,12 +48,13 @@ const DEFAULT_INPUT: RadarInput = {
   modo: "credito",
   administradora: "todas",
   segmento: "Automóvel",
-  creditoLiquido: "150000",
-  parcelaDesejada: "1500",
-  lanceProprio: "30000",
+  creditoLiquido: "150.000,00",
+  parcelaDesejada: "1.500,00",
+  lanceProprio: "30.000,00",
   prazoContemplacao: "6",
   usarEmbutido: "ia",
   probabilidadeMinima: "80",
+  aderenciaMinima: "0",
 };
 
 function onlyNumber(value: unknown): number {
@@ -72,6 +74,33 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+function formatCurrencyValue(value: string) {
+  const number = onlyNumber(value);
+  if (!value || !number) return "";
+  return number.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function CurrencyInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <input
+      className="w-full rounded-2xl border px-3 py-2"
+      inputMode="decimal"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={(event) => onChange(formatCurrencyValue(event.target.value))}
+      placeholder={placeholder}
+    />
   );
 }
 
@@ -695,6 +724,7 @@ export default function RadarOfertas() {
     maggiGroups: [],
   });
   const [input, setInput] = useState<RadarInput>(DEFAULT_INPUT);
+  const [searchInput, setSearchInput] = useState<RadarInput>(DEFAULT_INPUT);
   const [searched, setSearched] = useState(false);
   const [detailsOffer, setDetailsOffer] = useState<RadarOffer | null>(null);
   const [reevaluationLoading, setReevaluationLoading] = useState(false);
@@ -733,13 +763,35 @@ export default function RadarOfertas() {
     };
   }, [sharedProposal]);
 
-  const offers = useMemo(() => findBestOffers(input, sourceData), [input, sourceData]);
+  const offers = useMemo(() => (searched ? findBestOffers(searchInput, sourceData) : []), [searched, searchInput, sourceData]);
   const topOffers = offers.slice(0, 3);
   const otherOffers = offers.slice(3);
 
   function update<K extends keyof RadarInput>(key: K, value: RadarInput[K]) {
     setInput((prev) => ({ ...prev, [key]: value }));
     setSearched(false);
+    setReevaluation(null);
+    setReevaluationError("");
+  }
+
+  function resetFilters() {
+    setInput(DEFAULT_INPUT);
+    setSearchInput(DEFAULT_INPUT);
+    setSearched(false);
+    setReevaluation(null);
+    setReevaluationError("");
+  }
+
+  function runSearch() {
+    const normalized = {
+      ...input,
+      creditoLiquido: formatCurrencyValue(input.creditoLiquido),
+      lanceProprio: formatCurrencyValue(input.lanceProprio),
+      parcelaDesejada: formatCurrencyValue(input.parcelaDesejada),
+    };
+    setInput(normalized);
+    setSearchInput(normalized);
+    setSearched(true);
     setReevaluation(null);
     setReevaluationError("");
   }
@@ -754,7 +806,7 @@ export default function RadarOfertas() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          input,
+          input: searchInput,
           offers: offers.slice(0, 30).map(offerForReevaluation),
           groupSummaries: groupSummariesForReevaluation(offers.slice(0, 30)),
         }),
@@ -856,7 +908,7 @@ export default function RadarOfertas() {
               </div>
               <h1 className="text-2xl font-black tracking-tight md:text-4xl">Melhores ofertas calculadas pelos motores reais</h1>
               <p className="mt-3 max-w-3xl text-sm text-white/80 md:text-base">
-                Critérios: {input.modo === "credito" ? `poder de compra de ${brMoney(onlyNumber(input.creditoLiquido))}` : `parcela de ${brMoney(onlyNumber(input.parcelaDesejada))}`}, segmento {input.segmento}, lance próprio de {brMoney(onlyNumber(input.lanceProprio))} e probabilidade mínima de {brPct(onlyNumber(input.probabilidadeMinima))}.
+                Critérios: poder de compra de {brMoney(onlyNumber(searchInput.creditoLiquido))}, segmento {searchInput.segmento}, lance próprio de {brMoney(onlyNumber(searchInput.lanceProprio))}, probabilidade mínima de {brPct(onlyNumber(searchInput.probabilidadeMinima))} e aderência mínima de {onlyNumber(searchInput.aderenciaMinima) || 0}/100.
               </p>
             </div>
             <Button variant="outline" className="rounded-2xl border-white/30 bg-white/10 text-white hover:bg-white/20" onClick={() => setSearched(false)}>
@@ -865,16 +917,17 @@ export default function RadarOfertas() {
           </div>
         </section>
 
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-5">
           <Metric label="Ofertas aprovadas" value={`${offers.length}`} />
-          <Metric label="Fonte" value={ADMIN_OPTIONS.find((item) => item.value === input.administradora)?.label || "IA Decide"} />
-          <Metric label="Embutido" value={input.usarEmbutido === "ia" ? "IA Decide" : input.usarEmbutido === "sim" ? "Sim" : "Não"} />
-          <Metric label="Prazo desejado" value={`${onlyNumber(input.prazoContemplacao) || 0} meses`} />
+          <Metric label="Fonte" value={ADMIN_OPTIONS.find((item) => item.value === searchInput.administradora)?.label || "IA Decide"} />
+          <Metric label="Embutido" value={searchInput.usarEmbutido === "ia" ? "IA Decide" : searchInput.usarEmbutido === "sim" ? "Sim" : "Não"} />
+          <Metric label="Prazo estimado" value={`${onlyNumber(searchInput.prazoContemplacao) || 0} meses`} />
+          <Metric label="Aderência mínima" value={`${onlyNumber(searchInput.aderenciaMinima) || 0}/100`} />
         </div>
 
         {offers.length === 0 ? (
           <Card className="rounded-[28px] border bg-white/80 p-6 text-sm text-slate-600">
-            Nenhuma combinação atingiu a probabilidade mínima solicitada. Ajuste crédito/parcela, lance próprio, administradora ou probabilidade mínima.
+            Nenhuma combinação atingiu os filtros mínimos solicitados. Ajuste crédito/parcela, lance próprio, administradora, probabilidade mínima ou aderência mínima.
           </Card>
         ) : (
           <div className="space-y-8">
@@ -1047,21 +1100,17 @@ export default function RadarOfertas() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-4">
-            {input.modo === "credito" ? (
-              <Field label="Crédito líquido desejado">
-                <input className="w-full rounded-2xl border px-3 py-2" value={input.creditoLiquido} onChange={(e) => update("creditoLiquido", e.target.value)} placeholder="150000" />
-              </Field>
-            ) : (
-              <Field label="Parcela desejada">
-                <input className="w-full rounded-2xl border px-3 py-2" value={input.parcelaDesejada} onChange={(e) => update("parcelaDesejada", e.target.value)} placeholder="1500" />
-              </Field>
-            )}
-
-            <Field label="Lance próprio disponível">
-              <input className="w-full rounded-2xl border px-3 py-2" value={input.lanceProprio} onChange={(e) => update("lanceProprio", e.target.value)} placeholder="30000" />
+            <Field label="Crédito líquido desejado">
+              <CurrencyInput value={input.creditoLiquido} onChange={(value) => update("creditoLiquido", value)} placeholder="500.000,00" />
             </Field>
-            <Field label="Prazo desejado para contemplação">
-              <input className="w-full rounded-2xl border px-3 py-2" value={input.prazoContemplacao} onChange={(e) => update("prazoContemplacao", e.target.value)} placeholder="6 meses" />
+            <Field label="Lance próprio disponível">
+              <CurrencyInput value={input.lanceProprio} onChange={(value) => update("lanceProprio", value)} placeholder="50.000,00" />
+            </Field>
+            <Field label="Parcela desejada (opcional)">
+              <CurrencyInput value={input.parcelaDesejada} onChange={(value) => update("parcelaDesejada", value)} placeholder="1.000,00" />
+            </Field>
+            <Field label="Prazo estimado para contemplação">
+              <input className="w-full rounded-2xl border px-3 py-2" inputMode="numeric" value={input.prazoContemplacao} onChange={(e) => update("prazoContemplacao", e.target.value)} placeholder="6 meses" />
             </Field>
             <Field label="Segmento">
               <select className="w-full rounded-2xl border px-3 py-2" value={input.segmento} onChange={(e) => update("segmento", e.target.value as RadarSegment)}>
@@ -1073,28 +1122,28 @@ export default function RadarOfertas() {
                 {ADMIN_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </Field>
-            <Field label="Usar lance embutido?">
+            <Field label="Lance embutido">
               <select className="w-full rounded-2xl border px-3 py-2" value={input.usarEmbutido} onChange={(e) => update("usarEmbutido", e.target.value as RadarInput["usarEmbutido"])}>
                 <option value="ia">IA Decide</option>
                 <option value="sim">Sim</option>
                 <option value="nao">Não</option>
               </select>
             </Field>
-            <Field label="Probabilidade mínima">
+            <Field label="Prob. mínima">
               <select className="w-full rounded-2xl border px-3 py-2" value={input.probabilidadeMinima} onChange={(e) => update("probabilidadeMinima", e.target.value)}>
                 {PROBABILITY_OPTIONS.map((value) => <option key={value} value={value}>{value}%</option>)}
               </select>
             </Field>
-            {input.modo === "credito" && (
-              <Field label="Parcela máxima opcional">
-                <input className="w-full rounded-2xl border px-3 py-2" value={input.parcelaDesejada} onChange={(e) => update("parcelaDesejada", e.target.value)} placeholder="1500" />
-              </Field>
-            )}
+            <Field label="Aderência mínima">
+              <select className="w-full rounded-2xl border px-3 py-2" value={input.aderenciaMinima} onChange={(e) => update("aderenciaMinima", e.target.value)}>
+                {ADHERENCE_OPTIONS.map((value) => <option key={value} value={value}>{value === "0" ? "Sem mínimo" : `${value}/100`}</option>)}
+              </select>
+            </Field>
           </div>
 
           <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" className="rounded-2xl" onClick={() => setInput(DEFAULT_INPUT)}>Limpar filtros</Button>
-            <Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => setSearched(true)}>
+            <Button variant="outline" className="rounded-2xl" onClick={resetFilters}>Limpar filtros</Button>
+            <Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={runSearch}>
               <Search className="mr-2 h-4 w-4" /> Buscar melhores ofertas
             </Button>
           </div>

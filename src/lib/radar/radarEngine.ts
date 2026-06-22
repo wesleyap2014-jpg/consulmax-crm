@@ -81,6 +81,7 @@ function limitOffersPerGroup(offers: RadarOffer[], input: RadarInput) {
 
 export function findBestOffers(input: RadarInput, data: RadarSourceData) {
   const minProbability = onlyNumber(input.probabilidadeMinima);
+  const minAdherence = onlyNumber(input.aderenciaMinima);
   const offers: RadarOffer[] = [];
 
   if (shouldRun(input, "bb")) {
@@ -94,6 +95,7 @@ export function findBestOffers(input: RadarInput, data: RadarSourceData) {
   const filtered = dedupeOffers(offers).filter((offer) => offer.probabilidadeContemplacao >= minProbability);
 
   const scored = applyRelativeFeeScores(filtered)
+    .filter((offer) => offer.score >= minAdherence)
     .sort((a, b) => b.score - a.score || b.probabilidadeContemplacao - a.probabilidadeContemplacao);
 
   return limitOffersPerGroup(scored, input)

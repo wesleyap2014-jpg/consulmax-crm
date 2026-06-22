@@ -323,40 +323,46 @@ function printProposal(offer: RadarOffer) {
         <meta charset="utf-8" />
         <title>Proposta Consulmax</title>
         <style>
-          @page { size: A4; margin: 14mm; }
+          @page { size: A4; margin: 12mm; }
           * { box-sizing: border-box; }
-          body { margin: 0; background: #eef1f6; font-family: Arial, sans-serif; color: #1E293F; }
-          .sheet { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; box-shadow: 0 18px 45px rgba(15,23,42,.14); }
-          .hero { padding: 28px 32px; color: #fff; background: linear-gradient(135deg, #1E293F 0%, #A11C27 100%); }
+          body { margin: 0; background: #f3f5f8; font-family: Arial, sans-serif; color: #1E293F; }
+          .sheet { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; border: 1px solid #E2E8F0; box-shadow: 0 18px 45px rgba(15,23,42,.12); overflow: hidden; }
+          .hero { position: relative; padding: 24px 30px 26px; color: #fff; background: linear-gradient(135deg, #1E293F 0%, #6f2336 52%, #A11C27 100%); }
+          .hero:after { content: ""; position: absolute; right: -70px; top: -90px; width: 210px; height: 210px; border-radius: 50%; background: rgba(181,165,115,.28); }
           .brand { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-          .brand strong { font-size: 20px; letter-spacing: .01em; }
-          .pill { border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 800; }
-          h1 { margin: 26px 0 8px; max-width: 620px; font-size: 30px; line-height: 1.08; }
-          .subtitle { margin: 0; color: rgba(255,255,255,.78); font-size: 13px; }
-          .summary { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; padding: 24px 32px 6px; }
-          .highlight { border-radius: 22px; padding: 20px; background: rgba(161,28,39,.08); border: 1px solid rgba(161,28,39,.18); }
+          .brand strong { font-size: 22px; letter-spacing: .01em; }
+          .brand small { display: block; margin-top: 3px; color: rgba(255,255,255,.72); font-size: 11px; font-weight: 700; }
+          .pill { border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 800; background: rgba(255,255,255,.10); }
+          h1 { position: relative; z-index: 1; margin: 24px 0 8px; max-width: 650px; font-size: 28px; line-height: 1.12; }
+          .subtitle { position: relative; z-index: 1; margin: 0; color: rgba(255,255,255,.80); font-size: 13px; }
+          .summary { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; padding: 22px 30px 8px; }
+          .highlight { border-radius: 18px; padding: 18px; background: linear-gradient(135deg, rgba(161,28,39,.08), rgba(181,165,115,.16)); border: 1px solid rgba(161,28,39,.18); }
           .highlight .label, .stat .label, .row .label { color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-          .highlight .money { margin-top: 6px; color: #A11C27; font-size: 32px; font-weight: 900; }
-          .score { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 22px; padding: 20px; background: #F8FAFC; border: 1px solid #E2E8F0; }
-          .badge { display: grid; place-items: center; width: 86px; height: 86px; border-radius: 50%; border: 7px solid #A11C27; color: #A11C27; background: #fff; font-weight: 900; }
-          .badge span { display: block; font-size: 24px; line-height: 1; }
+          .highlight .money { margin-top: 6px; color: #A11C27; font-size: 31px; font-weight: 900; }
+          .highlight p, .score p { margin: 8px 0 0; color: #475569; font-size: 12px; line-height: 1.45; }
+          .score { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 18px; padding: 18px; background: #F8FAFC; border: 1px solid #E2E8F0; }
+          .score h2 { margin: 7px 0 0; color: #A11C27; font-size: 27px; }
+          .badge { display: grid; place-items: center; width: 82px; height: 82px; border-radius: 50%; border: 7px solid #A11C27; color: #A11C27; background: #fff; font-weight: 900; }
+          .badge span { display: block; font-size: 23px; line-height: 1; }
           .badge small { font-size: 10px; }
-          .section { padding: 18px 32px; }
+          .section { padding: 16px 30px; }
           .section h2 { margin: 0 0 12px; color: #1E293F; font-size: 16px; }
           .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-          .stat { min-height: 84px; border: 1px solid #E2E8F0; border-radius: 18px; padding: 14px; background: #fff; }
+          .stat { min-height: 82px; border: 1px solid #E2E8F0; border-radius: 16px; padding: 13px; background: #fff; }
           .stat .value { margin-top: 7px; color: #1E293F; font-size: 17px; font-weight: 900; }
           .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-          .box { border: 1px solid #E2E8F0; border-radius: 20px; padding: 16px; background: #fff; }
+          .box { border: 1px solid #E2E8F0; border-radius: 18px; padding: 16px; background: #fff; }
           .row { display: flex; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid #EEF2F7; }
           .row:last-child { border-bottom: 0; }
           .row .value { text-align: right; font-weight: 900; }
-          .strategy { border-radius: 20px; padding: 18px; background: #FFF8EA; border: 1px solid rgba(181,165,115,.45); color: #1E293F; }
-          .footer { margin-top: 16px; padding: 18px 32px 26px; color: #64748b; font-size: 11px; }
+          .strategy { border-radius: 18px; padding: 18px; background: #FFF8EA; border: 1px solid rgba(181,165,115,.45); color: #1E293F; }
+          .strategy p { margin: 8px 0 0; color: #475569; line-height: 1.45; }
+          .footer { margin-top: 10px; padding: 16px 30px 24px; color: #64748b; font-size: 11px; border-top: 1px solid #E2E8F0; }
+          .footer strong { color: #1E293F; }
           .ruby { color: #A11C27; }
           @media print {
             body { background: #fff; }
-            .sheet { width: auto; min-height: auto; box-shadow: none; }
+            .sheet { width: auto; min-height: auto; box-shadow: none; border: 0; }
           }
         </style>
       </head>
@@ -364,8 +370,8 @@ function printProposal(offer: RadarOffer) {
         <main class="sheet">
           <header class="hero">
             <div class="brand">
-              <strong>Consulmax</strong>
-              <div class="pill">Proposta comercial</div>
+              <div><strong>Consulmax</strong><small>Radar de Ofertas</small></div>
+              <div class="pill">Proposta comercial • ${escapeHtml(new Date().toLocaleDateString("pt-BR"))}</div>
             </div>
             <h1>${escapeHtml(proposal.nomeTabela)}</h1>
             <p class="subtitle">${escapeHtml(proposal.admin)} ${proposal.grupoCodigo ? `• Grupo ${escapeHtml(proposal.grupoCodigo)}` : ""} ${proposal.segmento ? `• ${escapeHtml(proposal.segmento)}` : ""}</p>
@@ -422,7 +428,7 @@ function printProposal(offer: RadarOffer) {
           </section>
 
           <footer class="footer">
-            Proposta gerada pelo Radar de Ofertas Consulmax. Valores sujeitos à confirmação da administradora, disponibilidade do grupo e regras vigentes no momento da contratação.
+            <strong>Observação:</strong> proposta gerada pelo Radar de Ofertas Consulmax. Valores sujeitos à confirmação da administradora, disponibilidade do grupo e regras vigentes no momento da contratação.
           </footer>
         </main>
         <script>window.print();</script>
@@ -588,15 +594,17 @@ function OfferDetailsDrawer({
 function OfferCard({
   offer,
   rank,
+  badgeLabel,
   onOpen,
   onDetails,
 }: {
   offer: RadarOffer;
   rank: number;
+  badgeLabel?: string;
   onOpen: () => void;
   onDetails: () => void;
 }) {
-  const isFeatured = rank === 1;
+  const isFeatured = Boolean(badgeLabel) || rank === 1;
   const probabilityLabel = offer.probabilidadeContemplacao >= 95 ? "Alta" : offer.probabilidadeContemplacao >= 90 ? "Boa" : "Média";
 
   return (
@@ -610,7 +618,7 @@ function OfferCard({
     >
       {isFeatured && (
         <div className="absolute left-0 right-0 top-0 flex items-center gap-2 px-4 py-2 text-xs font-black text-white" style={{ background: C.ruby }}>
-          <Trophy className="h-3.5 w-3.5" /> Maior aderência
+          <Trophy className="h-3.5 w-3.5" /> {badgeLabel || "Maior aderência"}
         </div>
       )}
 
@@ -730,6 +738,8 @@ export default function RadarOfertas() {
   const [reevaluationLoading, setReevaluationLoading] = useState(false);
   const [reevaluationError, setReevaluationError] = useState("");
   const [reevaluation, setReevaluation] = useState<any>(null);
+  const [resultAdminFilter, setResultAdminFilter] = useState("todos");
+  const [resultGroupFilter, setResultGroupFilter] = useState("todos");
 
   useEffect(() => {
     if (sharedProposal) {
@@ -763,15 +773,57 @@ export default function RadarOfertas() {
     };
   }, [sharedProposal]);
 
-  const offers = useMemo(() => (searched ? findBestOffers(searchInput, sourceData) : []), [searched, searchInput, sourceData]);
-  const topOffers = offers.slice(0, 3);
-  const otherOffers = offers.slice(3);
+  const baseOffers = useMemo(() => (searched ? findBestOffers(searchInput, sourceData) : []), [searched, searchInput, sourceData]);
+  const availableAdmins = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const offer of baseOffers) map.set(offer.adminKey, offer.admin.name);
+    return [...map.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [baseOffers]);
+  const availableGroups = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const offer of baseOffers) {
+      if (resultAdminFilter !== "todos" && offer.adminKey !== resultAdminFilter) continue;
+      const code = String(offer.grupoCodigo || "");
+      if (code) map.set(code, `Grupo ${code}`);
+    }
+    return [...map.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.value.localeCompare(b.value));
+  }, [baseOffers, resultAdminFilter]);
+  const offers = useMemo(
+    () =>
+      baseOffers.filter((offer) => {
+        if (resultAdminFilter !== "todos" && offer.adminKey !== resultAdminFilter) return false;
+        if (resultGroupFilter !== "todos" && String(offer.grupoCodigo || "") !== resultGroupFilter) return false;
+        return true;
+      }),
+    [baseOffers, resultAdminFilter, resultGroupFilter]
+  );
+  const deterministicTopOffers = offers.slice(0, 3);
+  const aiRecommendedOffer = reevaluation?.finalOfferId ? offers.find((offer) => offer.id === reevaluation.finalOfferId) : null;
+  const topOffers = useMemo(() => {
+    if (!aiRecommendedOffer) return deterministicTopOffers;
+    const deterministicFirst = deterministicTopOffers[0];
+    if (!deterministicFirst || deterministicFirst.id === aiRecommendedOffer.id) return deterministicTopOffers;
+    return [deterministicFirst, aiRecommendedOffer, ...deterministicTopOffers.filter((offer) => offer.id !== deterministicFirst.id && offer.id !== aiRecommendedOffer.id)].slice(0, 3);
+  }, [aiRecommendedOffer, deterministicTopOffers]);
+  const topOfferIds = new Set(topOffers.map((offer) => offer.id));
+  const otherOffers = offers.filter((offer) => !topOfferIds.has(offer.id));
+  const deterministicFirstId = deterministicTopOffers[0]?.id || "";
+  const aiRecommendedId = aiRecommendedOffer?.id || "";
+
+  function topOfferBadge(offer: RadarOffer, index: number) {
+    if (offer.id === deterministicFirstId && offer.id === aiRecommendedId) return "Maior aderência - Confirmado por IA";
+    if (offer.id === deterministicFirstId) return "Maior aderência";
+    if (offer.id === aiRecommendedId) return "Recomendado por IA";
+    return index === 0 ? "Maior aderência" : undefined;
+  }
 
   function update<K extends keyof RadarInput>(key: K, value: RadarInput[K]) {
     setInput((prev) => ({ ...prev, [key]: value }));
     setSearched(false);
     setReevaluation(null);
     setReevaluationError("");
+    setResultAdminFilter("todos");
+    setResultGroupFilter("todos");
   }
 
   function resetFilters() {
@@ -780,6 +832,8 @@ export default function RadarOfertas() {
     setSearched(false);
     setReevaluation(null);
     setReevaluationError("");
+    setResultAdminFilter("todos");
+    setResultGroupFilter("todos");
   }
 
   function runSearch() {
@@ -794,6 +848,8 @@ export default function RadarOfertas() {
     setSearched(true);
     setReevaluation(null);
     setReevaluationError("");
+    setResultAdminFilter("todos");
+    setResultGroupFilter("todos");
   }
 
   async function requestAiReevaluation() {
@@ -918,12 +974,64 @@ export default function RadarOfertas() {
         </section>
 
         <div className="grid gap-3 md:grid-cols-5">
-          <Metric label="Ofertas aprovadas" value={`${offers.length}`} />
+          <Metric label="Ofertas aprovadas" value={baseOffers.length === offers.length ? `${offers.length}` : `${offers.length} de ${baseOffers.length}`} />
           <Metric label="Fonte" value={ADMIN_OPTIONS.find((item) => item.value === searchInput.administradora)?.label || "IA Decide"} />
           <Metric label="Embutido" value={searchInput.usarEmbutido === "ia" ? "IA Decide" : searchInput.usarEmbutido === "sim" ? "Sim" : "Não"} />
           <Metric label="Prazo estimado" value={`${onlyNumber(searchInput.prazoContemplacao) || 0} meses`} />
           <Metric label="Aderência mínima" value={`${onlyNumber(searchInput.aderenciaMinima) || 0}/100`} />
         </div>
+
+        {baseOffers.length > 0 && (
+          <Card className="rounded-[24px] border bg-white/80 shadow-sm">
+            <CardContent className="grid gap-4 p-4 md:grid-cols-3">
+              <Field label="Filtrar por administradora">
+                <select
+                  className="w-full rounded-2xl border px-3 py-2"
+                  value={resultAdminFilter}
+                  onChange={(event) => {
+                    setResultAdminFilter(event.target.value);
+                    setResultGroupFilter("todos");
+                    setReevaluation(null);
+                  }}
+                >
+                  <option value="todos">Todas com oferta</option>
+                  {availableAdmins.map((admin) => (
+                    <option key={admin.value} value={admin.value}>{admin.label}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Filtrar por grupo">
+                <select
+                  className="w-full rounded-2xl border px-3 py-2"
+                  value={resultGroupFilter}
+                  onChange={(event) => {
+                    setResultGroupFilter(event.target.value);
+                    setReevaluation(null);
+                  }}
+                >
+                  <option value="todos">Todos com oferta</option>
+                  {availableGroups.map((group) => (
+                    <option key={group.value} value={group.value}>{group.label}</option>
+                  ))}
+                </select>
+              </Field>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full rounded-2xl"
+                  onClick={() => {
+                    setResultAdminFilter("todos");
+                    setResultGroupFilter("todos");
+                    setReevaluation(null);
+                  }}
+                >
+                  Limpar filtros do resultado
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {offers.length === 0 ? (
           <Card className="rounded-[28px] border bg-white/80 p-6 text-sm text-slate-600">
@@ -939,13 +1047,13 @@ export default function RadarOfertas() {
                 <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                   <div>
                     <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black text-white" style={{ background: C.ruby }}>
-                      <Trophy className="h-3.5 w-3.5" /> Maiores aderências
+                      <Trophy className="h-3.5 w-3.5" /> Recomendações principais
                     </div>
                     <h2 className="mt-2 text-2xl font-black" style={{ color: C.navy }}>Top 3 Ofertas</h2>
-                    <p className="text-sm text-slate-600">As três propostas com maior aderência ao pedido do cliente. A chance de contemplação entra como desempate.</p>
+                    <p className="text-sm text-slate-600">Começa pelas maiores aderências. Quando a IA confirma outra opção, ela entra no Top 3 sem remover a maior aderência determinística.</p>
                   </div>
                   <div className="rounded-2xl border bg-white/80 px-4 py-2 text-sm font-black" style={{ color: C.ruby, borderColor: "rgba(161,28,39,.18)" }}>
-                    {topOffers.length} maiores aderências
+                    {topOffers.length} ofertas em destaque
                   </div>
                 </div>
                 <div className="mb-4 flex flex-col gap-2 rounded-2xl border bg-white/75 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1009,6 +1117,7 @@ export default function RadarOfertas() {
                       key={offer.id}
                       offer={offer}
                       rank={index + 1}
+                      badgeLabel={topOfferBadge(offer, index)}
                       onOpen={() => openOfferInSimulator(offer)}
                       onDetails={() => setDetailsOffer(offer)}
                     />

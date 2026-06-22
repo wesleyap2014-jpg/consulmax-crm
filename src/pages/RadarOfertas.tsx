@@ -21,7 +21,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import { brMoney, brPct } from "@/lib/radar/common";
+import { brMoney, brPct, rowConfig } from "@/lib/radar/common";
 import { findBestOffers, offerToSimulatorQuery } from "@/lib/radar/radarEngine";
 import type { AdminFilter, AdminRow, AnyRow, RadarInput, RadarOffer, RadarSegment, RadarSourceData } from "@/lib/radar/types";
 
@@ -107,6 +107,57 @@ function brDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("pt-BR");
+}
+
+function offerForReevaluation(offer: RadarOffer) {
+  return {
+    id: offer.id,
+    admin: offer.admin.name,
+    nomeTabela: offer.nomeTabela,
+    grupoCodigo: offer.grupoCodigo,
+    creditoContratado: offer.creditoContratado,
+    creditoLiquido: offer.creditoLiquido,
+    poderCompra: offer.poderCompra,
+    lanceProprio: offer.lanceProprio,
+    lanceEmbutido: offer.lanceEmbutido,
+    lanceTotalPct: offer.lanceTotalPct,
+    parcelaAposContemplacao: offer.parcelaAposContemplacao,
+    probabilidadeContemplacao: offer.probabilidadeContemplacao,
+    score: offer.score,
+    scoreBreakdown: offer.scoreBreakdown,
+    motivos: offer.motivos,
+    alertas: offer.alertas,
+  };
+}
+
+function groupSummariesForReevaluation(offers: RadarOffer[]) {
+  const map = new Map<string, any>();
+  for (const offer of offers) {
+    const code = String(offer.grupoCodigo || "");
+    if (!code || map.has(code)) continue;
+    const group = offer.group || {};
+    const cfg = rowConfig(group);
+    const assembly = cfg.assemblyResult || {};
+    const rawRanges = Array.isArray(cfg.creditRanges) ? cfg.creditRanges : [];
+    const ranges = rawRanges
+      .map((range: any, index: number) => ({
+        id: String(range.id || range.key || range.label || `faixa-${index + 1}`),
+        label: String(range.label || range.nome || range.name || `Faixa ${index + 1}`),
+        valor: onlyNumber(range.valor || range.credito || range.valor_credito || range.credit_value),
+      }))
+      .filter((range: any) => range.valor > 0);
+
+    map.set(code, {
+      grupoCodigo: code,
+      admin: offer.admin.name,
+      segmento: offer.segmento,
+      menorPct: onlyNumber(assembly.menorPct || cfg.menorPct || group.menor_pct_contemplado),
+      medianaPct: onlyNumber(assembly.medianaPct || cfg.medianaPct || group.mediana_pct_contemplado),
+      maiorPct: onlyNumber(assembly.maiorPct || cfg.maiorPct || group.maior_pct_contemplado),
+      ranges,
+    });
+  }
+  return [...map.values()];
 }
 
 function commercialProposal(offer: RadarOffer) {
@@ -646,6 +697,9 @@ export default function RadarOfertas() {
   const [input, setInput] = useState<RadarInput>(DEFAULT_INPUT);
   const [searched, setSearched] = useState(false);
   const [detailsOffer, setDetailsOffer] = useState<RadarOffer | null>(null);
+  const [reevaluationLoading, setReevaluationLoading] = useState(false);
+  const [reevaluationError, setReevaluationError] = useState("");
+  const [reevaluation, setReevaluation] = useState<any>(null);
 
   useEffect(() => {
     if (sharedProposal) {
@@ -686,6 +740,33 @@ export default function RadarOfertas() {
   function update<K extends keyof RadarInput>(key: K, value: RadarInput[K]) {
     setInput((prev) => ({ ...prev, [key]: value }));
     setSearched(false);
+    setReevaluation(null);
+    setReevaluationError("");
+  }
+
+  async function requestAiReevaluation() {
+    setReevaluationLoading(true);
+    setReevaluationError("");
+    setReevaluation(null);
+
+    try {
+      const response = await fetch("/api/radar-ai-reevaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input,
+          offers: offers.slice(0, 30).map(offerForReevaluation),
+          groupSummaries: groupSummariesForReevaluation(offers.slice(0, 30)),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "Falha ao confirmar com IA");
+      setReevaluation(data);
+    } catch (error: any) {
+      setReevaluationError(error?.message || "Falha ao confirmar com IA");
+    } finally {
+      setReevaluationLoading(false);
+    }
   }
 
   function copyOffer(offer: RadarOffer) {
@@ -814,6 +895,60 @@ export default function RadarOfertas() {
                     {topOffers.length} maiores aderências
                   </div>
                 </div>
+                <div className="mb-4 flex flex-col gap-2 rounded-2xl border bg-white/75 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-black" style={{ color: C.navy }}>Reavaliação consultiva</div>
+                    <p className="text-xs text-slate-600">A IA pode confirmar a melhor opção ou pedir até 3 testes usando apenas faixas válidas. O ranking não é alterado automaticamente.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-2xl"
+                    disabled={reevaluationLoading}
+                    onClick={requestAiReevaluation}
+                  >
+                    {reevaluationLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                    Confirmar com IA
+                  </Button>
+                </div>
+                {reevaluationError && (
+                  <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    {reevaluationError}
+                  </div>
+                )}
+                {reevaluation && (
+                  <div className="mb-4 rounded-2xl border bg-white p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="text-sm font-black" style={{ color: C.navy }}>Resultado da IA</div>
+                        <p className="mt-1 text-sm text-slate-600">{reevaluation.summary}</p>
+                      </div>
+                      <div className="rounded-2xl px-3 py-2 text-xs font-black text-white" style={{ background: C.ruby }}>
+                        {(() => {
+                          const finalOffer = offers.find((offer) => offer.id === reevaluation.finalOfferId);
+                          return finalOffer ? `Indicação: Grupo ${finalOffer.grupoCodigo} • ${brMoney(finalOffer.creditoContratado)}` : "Indicação consultiva";
+                        })()}
+                      </div>
+                    </div>
+                    {Array.isArray(reevaluation.tests) && reevaluation.tests.length > 0 && (
+                      <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
+                        {reevaluation.tests.map((test: any, index: number) => (
+                          <div key={`${test.groupCode || index}-${index}`} className="rounded-2xl bg-slate-50 p-3">
+                            <div className="font-black" style={{ color: C.navy }}>Teste {index + 1} • Grupo {test.groupCode || "N/D"}</div>
+                            <div className="mt-1 text-slate-600">Crédito testado: {brMoney(Number(test.requestedCredit || 0))}</div>
+                            <div className="text-slate-600">Status: {test.status === "calculated" ? "calculado pelo motor" : "não validado pelo motor"}</div>
+                            {test.reason && <div className="mt-1 text-slate-500">{test.reason}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {Array.isArray(reevaluation.commercialNotes) && reevaluation.commercialNotes.length > 0 && (
+                      <ul className="mt-3 space-y-1 text-xs text-slate-600">
+                        {reevaluation.commercialNotes.map((note: string, index: number) => <li key={`${index}-${note}`}>• {note}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
                   {topOffers.map((offer, index) => (
                     <OfferCard

@@ -65,6 +65,7 @@ export type RadarScoreBreakdown = {
   taxaAdm: number;
   fundoReserva: number;
   assembleia: number;
+  cotas: number;
   total: number;
 };
 

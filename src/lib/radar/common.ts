@@ -1,4 +1,4 @@
-import type { AnyRow, RadarCalculation, RadarInput, RadarScoreBreakdown, RadarSegment } from "./types";
+import type { AnyRow, RadarCalculation, RadarInput, RadarOffer, RadarScoreBreakdown, RadarSegment } from "./types";
 
 export function onlyNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -156,19 +156,20 @@ export function purchasingPower(calc: Pick<RadarCalculation, "creditoLiquido" | 
   return calc.creditoLiquido + Math.max(0, ownBidAvailable - calc.lanceProprio);
 }
 
-function minTargetScore(actual: number, target: number) {
+function creditPowerScore(actual: number, target: number) {
   if (!target) return 85;
-  if (actual >= target) {
-    const excess = (actual - target) / target;
-    return clamp(100 - Math.max(0, excess - 0.15) * 80, 70, 100);
-  }
-  return clamp((actual / target) * 100, 0, 100);
+  const diffPct = ((actual - target) / target) * 100;
+  if (diffPct >= -15 && diffPct <= 20) return 100;
+  if (diffPct < -15) return clamp(100 - (Math.abs(diffPct) - 15) * 5, 0, 100);
+  return clamp(100 - (diffPct - 20) * 1.5, 0, 100);
 }
 
-function maxBudgetScore(actual: number, target: number) {
+function postContemplationInstallmentScore(actual: number, target: number) {
   if (!target) return 85;
-  if (actual <= target) return clamp(100 - Math.max(0, target - actual) / target * 8, 92, 100);
-  return clamp(100 - ((actual - target) / target) * 120, 0, 100);
+  if (actual <= target) return 100;
+  const overPct = ((actual - target) / target) * 100;
+  if (overPct <= 35) return clamp(100 - overPct, 0, 100);
+  return clamp(65 - (overPct - 35) * 2, 0, 65);
 }
 
 function assemblyRow(group: AnyRow | null | undefined): AnyRow {
@@ -306,21 +307,38 @@ function groupProfileScore(calc: RadarCalculation, group: AnyRow | null | undefi
       "median",
       "mediana",
     ]);
+  const min =
+    pickNumber(group, ["menor_pct_contemplado", "menor_pct_lance_livre", "menor_lance_livre", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct", "menor_lance", "lowestBidPct", "menorLancePct", "menorLanceContemplado", "menorLanceContempladoPct", "minBidPct", "min_bid_pct", "lowestBid"]) ||
+    pickNumber(cfg, ["menor_pct_contemplado", "menor_pct_lance_livre", "menor_lance_livre", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct", "menor_lance", "lowestBidPct", "menorLancePct", "menorLanceContemplado", "menorLanceContempladoPct", "minBidPct", "min_bid_pct", "lowestBid"]) ||
+    pickNumber(statsSource && !Array.isArray(statsSource) ? (statsSource as AnyRow) : {}, ["menorPct", "menor_pct_contemplado", "menor_pct_lance_livre", "menor_lance_livre", "menor_lance_pct", "lance_minimo_pct", "lowest_bid_pct", "menor_lance", "lowestBidPct", "menorLancePct", "menorLanceContemplado", "menorLanceContempladoPct", "minBidPct", "min_bid_pct", "lowestBid"]);
   const medianPct = normalizePct(med);
+  const minPct = normalizePct(min);
   if (!medianPct) return 70;
-  const gap = calc.lanceTotalPct - medianPct;
-  if (gap >= 5) return 100;
-  if (gap >= 0) return 92 + (gap / 5) * 8;
-  if (gap >= -5) return 78 + ((gap + 5) / 5) * 12;
-  if (gap >= -10) return 58 + ((gap + 10) / 5) * 16;
-  return clamp(58 + gap * 2, 10, 58);
+  if (calc.lanceTotalPct >= medianPct) return 100;
+
+  const toleranceFloor = medianPct * 0.9;
+  if (calc.lanceTotalPct >= toleranceFloor && (!minPct || calc.lanceTotalPct >= minPct)) return 100;
+
+  const requiredFloor = Math.max(toleranceFloor, minPct || 0);
+  const extraGapPct = requiredFloor > 0 ? ((requiredFloor - calc.lanceTotalPct) / medianPct) * 100 : ((medianPct - calc.lanceTotalPct) / medianPct) * 100;
+  return clamp(100 - Math.max(0, extraGapPct) * 5, 0, 100);
 }
 
-function feeScore(value: number, excellent: number, acceptable: number) {
-  if (!value) return 75;
-  if (value <= excellent) return 100;
-  if (value <= acceptable) return 100 - ((value - excellent) / (acceptable - excellent)) * 30;
-  return clamp(70 - ((value - acceptable) / acceptable) * 50, 20, 70);
+function quotaScore(quantidadeCotas: number) {
+  return clamp(100 - Math.max(0, quantidadeCotas - 1) * 6, 0, 100);
+}
+
+function adherenceTotal(score: Omit<RadarScoreBreakdown, "total">) {
+  const taxaFundoScore = (score.taxaAdm + score.fundoReserva) / 2;
+  return (
+    score.parcela * 0.3 +
+    score.credito * 0.3 +
+    score.lance * 0.25 +
+    taxaFundoScore * 0.07 +
+    score.entregas * 0.04 +
+    score.assembleia * 0.02 +
+    score.cotas * 0.02
+  );
 }
 
 export function aggregateCalculation(calc: RadarCalculation, quantidadeCotas: number): RadarCalculation {
@@ -353,44 +371,62 @@ export function aggregateCalculation(calc: RadarCalculation, quantidadeCotas: nu
 export function scoreOffer(calc: RadarCalculation, input: RadarInput, quantidadeCotas = 1, group?: AnyRow | null): RadarScoreBreakdown {
   const desiredPower = onlyNumber(input.creditoLiquido);
   const desiredInstallment = onlyNumber(input.parcelaDesejada);
-  const ownBidAvailable = onlyNumber(input.lanceProprio);
   const power = purchasingPower(calc, input);
 
-  const creditoScore = input.modo === "credito" ? minTargetScore(power, desiredPower) : minTargetScore(calc.creditoLiquido, desiredPower);
-  const parcelaScore = desiredInstallment > 0 ? maxBudgetScore(calc.parcelaEstimada, desiredInstallment) : 85;
-  const lanceScore = ownBidAvailable > 0 ? maxBudgetScore(calc.lanceProprio, ownBidAvailable) : calc.lanceProprio <= 0 ? 100 : 0;
-  const perfilGrupoScore = groupProfileScore(calc, group);
+  const creditoScore = input.modo === "credito" ? creditPowerScore(power, desiredPower) : creditPowerScore(calc.creditoLiquido, desiredPower);
+  const parcelaScore = desiredInstallment > 0 ? postContemplationInstallmentScore(calc.parcelaAposContemplacao, desiredInstallment) : 85;
+  const lanceScore = groupProfileScore(calc, group);
   const entregasScore = deliveryScore(group);
-  const taxaAdmScore = feeScore(calc.taxaAdmPct, 16, 24);
-  const fundoReservaScore = feeScore(calc.fundoReservaPct, 0.5, 3);
+  const taxaAdmScore = 100;
+  const fundoReservaScore = 100;
   const assembleiaScore = nextAssemblyScore(group);
-  const cotasPenalty = Math.max(0, quantidadeCotas - 1) * 6;
+  const cotasScore = quotaScore(quantidadeCotas);
 
-  const weights =
-    input.modo === "parcela"
-      ? { credito: 0.18, parcela: 0.28, lance: 0.16, perfilGrupo: 0.16, entregas: 0.1, taxaAdm: 0.05, fundoReserva: 0.03, assembleia: 0.04 }
-      : { credito: 0.25, parcela: 0.2, lance: 0.15, perfilGrupo: 0.18, entregas: 0.1, taxaAdm: 0.05, fundoReserva: 0.03, assembleia: 0.04 };
-
-  const total =
-    creditoScore * weights.credito +
-    parcelaScore * weights.parcela +
-    lanceScore * weights.lance +
-    perfilGrupoScore * weights.perfilGrupo +
-    entregasScore * weights.entregas +
-    taxaAdmScore * weights.taxaAdm +
-    fundoReservaScore * weights.fundoReserva +
-    assembleiaScore * weights.assembleia -
-    cotasPenalty;
-
-  return {
+  const breakdown = {
     credito: Math.round(creditoScore),
     parcela: Math.round(parcelaScore),
     lance: Math.round(lanceScore),
-    perfilGrupo: Math.round(perfilGrupoScore),
+    perfilGrupo: Math.round(lanceScore),
     entregas: Math.round(entregasScore),
     taxaAdm: Math.round(taxaAdmScore),
     fundoReserva: Math.round(fundoReservaScore),
     assembleia: Math.round(assembleiaScore),
-    total: Math.round(clamp(total, 0, 100)),
+    cotas: Math.round(cotasScore),
   };
+
+  return {
+    ...breakdown,
+    total: Math.round(clamp(adherenceTotal(breakdown), 0, 100)),
+  };
+}
+
+export function applyRelativeFeeScores(offers: RadarOffer[]) {
+  const preliminary = [...offers].sort((a, b) => b.score - a.score || b.probabilidadeContemplacao - a.probabilidadeContemplacao);
+  const bestFee = preliminary[0] ? preliminary[0].taxaAdmPct + preliminary[0].fundoReservaPct : 0;
+
+  return preliminary.map((offer, index) => {
+    const currentFee = offer.taxaAdmPct + offer.fundoReservaPct;
+    const positionBase = 100 - Math.min(index, 30);
+    let taxaFundoScore = positionBase;
+
+    if (!bestFee || currentFee === bestFee) taxaFundoScore = 100;
+    else if (currentFee < bestFee) taxaFundoScore = Math.min(100, positionBase + 2);
+
+    const scoreBreakdown = {
+      ...offer.scoreBreakdown,
+      taxaAdm: Math.round(taxaFundoScore),
+      fundoReserva: Math.round(taxaFundoScore),
+    };
+    const score = Math.round(clamp(adherenceTotal(scoreBreakdown), 0, 100));
+
+    return {
+      ...offer,
+      score,
+      scoreBreakdown: {
+        ...scoreBreakdown,
+        total: score,
+      },
+      scoreLabel: scoreLabel(score),
+    };
+  });
 }

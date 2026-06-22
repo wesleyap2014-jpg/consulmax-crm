@@ -1,4 +1,4 @@
-import { findAdminKey, onlyNumber } from "./common";
+import { applyRelativeFeeScores, findAdminKey, onlyNumber } from "./common";
 import { runBbEngine } from "./engines/bb";
 import { runMaggiEngine } from "./engines/maggi";
 import type { AdminFilter, AdminRow, RadarInput, RadarOffer, RadarSourceData } from "./types";
@@ -46,8 +46,9 @@ export function findBestOffers(input: RadarInput, data: RadarSourceData) {
     offers.push(...runMaggiEngine({ input, admin: findAdmin(data.admins, "maggi") }, data.maggiGroups || []));
   }
 
-  return dedupeOffers(offers)
-    .filter((offer) => offer.probabilidadeContemplacao >= minProbability)
+  const filtered = dedupeOffers(offers).filter((offer) => offer.probabilidadeContemplacao >= minProbability);
+
+  return applyRelativeFeeScores(filtered)
     .sort((a, b) => b.score - a.score || b.probabilidadeContemplacao - a.probabilidadeContemplacao)
     .slice(0, 30);
 }

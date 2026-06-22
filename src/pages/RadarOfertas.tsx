@@ -109,6 +109,32 @@ function brDate(value?: string | null) {
   return date.toLocaleDateString("pt-BR");
 }
 
+function offerForAi(offer: RadarOffer) {
+  return {
+    id: offer.id,
+    admin: offer.admin.name,
+    nomeTabela: offer.nomeTabela,
+    grupoCodigo: offer.grupoCodigo,
+    segmento: offer.segmento,
+    creditoContratado: offer.creditoContratado,
+    creditoLiquido: offer.creditoLiquido,
+    poderCompra: offer.poderCompra,
+    lanceProprio: offer.lanceProprio,
+    lanceEmbutido: offer.lanceEmbutido,
+    lanceTotalPct: offer.lanceTotalPct,
+    parcelaInicial: offer.parcelaInicial,
+    parcelaEstimada: offer.parcelaEstimada,
+    parcelaAposContemplacao: offer.parcelaAposContemplacao,
+    prazoRestante: offer.prazoRestante,
+    probabilidadeContemplacao: offer.probabilidadeContemplacao,
+    score: offer.score,
+    scoreBreakdown: offer.scoreBreakdown,
+    estrategia: offer.estrategia,
+    motivos: offer.motivos,
+    alertas: offer.alertas,
+  };
+}
+
 function commercialProposal(offer: RadarOffer) {
   return {
     admin: offer.admin.name,
@@ -504,7 +530,19 @@ function OfferDetailsDrawer({
   );
 }
 
-function OfferCard({ offer, rank, onOpen, onDetails }: { offer: RadarOffer; rank: number; onOpen: () => void; onDetails: () => void }) {
+function OfferCard({
+  offer,
+  rank,
+  aiReason,
+  onOpen,
+  onDetails,
+}: {
+  offer: RadarOffer;
+  rank: number;
+  aiReason?: string;
+  onOpen: () => void;
+  onDetails: () => void;
+}) {
   const isFeatured = rank === 1;
   const probabilityLabel = offer.probabilidadeContemplacao >= 95 ? "Alta" : offer.probabilidadeContemplacao >= 90 ? "Boa" : "Média";
 
@@ -603,6 +641,11 @@ function OfferCard({ offer, rank, onOpen, onDetails }: { offer: RadarOffer; rank
 
         <div className="mt-5 rounded-2xl border border-dashed border-slate-200 p-3">
           <div className="text-xs font-bold" style={{ color: C.navy }}>Estratégia sugerida</div>
+          {aiReason && (
+            <div className="mb-3 rounded-2xl p-3 text-xs" style={{ background: "rgba(181,165,115,.18)", color: C.navy }}>
+              <b>Análise da IA:</b> {aiReason}
+            </div>
+          )}
           <p className="mt-1 text-xs text-slate-600">{offer.estrategia}</p>
           {offer.motivos[0] && <p className="mt-2 text-xs text-slate-500">{offer.motivos[0]}</p>}
           {offer.alertas[0] && <p className="mt-2 text-xs text-amber-700">{offer.alertas[0]}</p>}
@@ -634,6 +677,11 @@ export default function RadarOfertas() {
   const [input, setInput] = useState<RadarInput>(DEFAULT_INPUT);
   const [searched, setSearched] = useState(false);
   const [detailsOffer, setDetailsOffer] = useState<RadarOffer | null>(null);
+  const [aiRankingLoading, setAiRankingLoading] = useState(false);
+  const [aiRankingError, setAiRankingError] = useState("");
+  const [aiRankingSummary, setAiRankingSummary] = useState("");
+  const [aiReasons, setAiReasons] = useState<Record<string, string>>({});
+  const [aiRankedIds, setAiRankedIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (sharedProposal) {
@@ -668,12 +716,72 @@ export default function RadarOfertas() {
   }, [sharedProposal]);
 
   const offers = useMemo(() => findBestOffers(input, sourceData), [input, sourceData]);
-  const topOffers = offers.slice(0, 3);
-  const otherOffers = offers.slice(3);
+  const displayOffers = useMemo(() => {
+    if (!aiRankedIds.length) return offers;
+    const byId = new Map(offers.map((offer) => [offer.id, offer]));
+    const selected = aiRankedIds.map((id) => byId.get(id)).filter((offer): offer is RadarOffer => Boolean(offer));
+    const selectedIds = new Set(selected.map((offer) => offer.id));
+    return [...selected, ...offers.filter((offer) => !selectedIds.has(offer.id))];
+  }, [aiRankedIds, offers]);
+  const topOffers = displayOffers.slice(0, 3);
+  const otherOffers = displayOffers.slice(3);
+
+  useEffect(() => {
+    if (!searched || !offers.length) {
+      setAiRankingLoading(false);
+      setAiRankingError("");
+      setAiRankingSummary("");
+      setAiReasons({});
+      setAiRankedIds([]);
+      return;
+    }
+
+    let alive = true;
+    setAiRankingLoading(true);
+    setAiRankingError("");
+
+    fetch("/api/radar-ai-rank", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input,
+        offers: offers.slice(0, 30).map(offerForAi),
+      }),
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || "Falha ao consultar IA");
+        return data as { rankedIds?: string[]; summary?: string; reasons?: Record<string, string> };
+      })
+      .then((data) => {
+        if (!alive) return;
+        setAiRankedIds(Array.isArray(data.rankedIds) ? data.rankedIds : []);
+        setAiRankingSummary(String(data.summary || ""));
+        setAiReasons(data.reasons && typeof data.reasons === "object" ? data.reasons : {});
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setAiRankedIds([]);
+        setAiRankingSummary("");
+        setAiReasons({});
+        setAiRankingError(error?.message || "Falha ao consultar IA");
+      })
+      .finally(() => {
+        if (alive) setAiRankingLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [input, offers, searched]);
 
   function update<K extends keyof RadarInput>(key: K, value: RadarInput[K]) {
     setInput((prev) => ({ ...prev, [key]: value }));
     setSearched(false);
+    setAiRankedIds([]);
+    setAiReasons({});
+    setAiRankingSummary("");
+    setAiRankingError("");
   }
 
   function copyOffer(offer: RadarOffer) {
@@ -793,13 +901,20 @@ export default function RadarOfertas() {
                 <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                   <div>
                     <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black text-white" style={{ background: C.ruby }}>
-                      <Trophy className="h-3.5 w-3.5" /> Recomendações principais
+                      <Trophy className="h-3.5 w-3.5" /> Recomendações da IA
                     </div>
                     <h2 className="mt-2 text-2xl font-black" style={{ color: C.navy }}>Top 3 Ofertas</h2>
-                    <p className="text-sm text-slate-600">Prioridade comercial do Radar: maior aderência, probabilidade e melhor combinação de cotas.</p>
+                    <p className="text-sm text-slate-600">
+                      {aiRankingLoading
+                        ? "A IA está analisando as propostas calculadas pelo motor."
+                        : aiRankingSummary || "Ranking comercial gerado com base nas ofertas calculadas pelo motor."}
+                    </p>
+                    {aiRankingError && (
+                      <p className="mt-1 text-xs text-amber-700">IA indisponível: usando ranking técnico do motor. {aiRankingError}</p>
+                    )}
                   </div>
                   <div className="rounded-2xl border bg-white/80 px-4 py-2 text-sm font-black" style={{ color: C.ruby, borderColor: "rgba(161,28,39,.18)" }}>
-                    {topOffers.length} selecionadas
+                    {aiRankingLoading ? "IA analisando..." : aiRankedIds.length ? `${topOffers.length} escolhidas pela IA` : `${topOffers.length} selecionadas`}
                   </div>
                 </div>
                 <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
@@ -808,6 +923,7 @@ export default function RadarOfertas() {
                       key={offer.id}
                       offer={offer}
                       rank={index + 1}
+                      aiReason={aiReasons[offer.id]}
                       onOpen={() => openOfferInSimulator(offer)}
                       onDetails={() => setDetailsOffer(offer)}
                     />

@@ -34,6 +34,51 @@ function dedupeOffers(offers: RadarOffer[]) {
   return [...map.values()];
 }
 
+function groupKey(offer: RadarOffer) {
+  return `${offer.adminKey}-${offer.group?.id || offer.grupoCodigo || offer.table.id}`;
+}
+
+function targetMetrics(input: RadarInput, offer: RadarOffer) {
+  const desiredPower = onlyNumber(input.creditoLiquido);
+  const desiredInstallment = onlyNumber(input.parcelaDesejada);
+  const ownBid = onlyNumber(input.lanceProprio);
+
+  return {
+    creditGap: desiredPower > 0 ? Math.abs(offer.poderCompra - desiredPower) / desiredPower : 0,
+    installmentGap: desiredInstallment > 0 ? Math.abs(offer.parcelaAposContemplacao - desiredInstallment) / desiredInstallment : 0,
+    bidGap: ownBid > 0 ? Math.abs(offer.lanceProprio - ownBid) / ownBid : 0,
+  };
+}
+
+function limitOffersPerGroup(offers: RadarOffer[], input: RadarInput) {
+  const groups = new Map<string, RadarOffer[]>();
+  for (const offer of offers) {
+    const key = groupKey(offer);
+    groups.set(key, [...(groups.get(key) || []), offer]);
+  }
+
+  const selected: RadarOffer[] = [];
+
+  for (const groupOffers of groups.values()) {
+    const ordered = [...groupOffers].sort((a, b) => b.score - a.score || b.probabilidadeContemplacao - a.probabilidadeContemplacao);
+    const bucket = new Map<string, RadarOffer>();
+
+    const byCredit = [...ordered].sort((a, b) => targetMetrics(input, a).creditGap - targetMetrics(input, b).creditGap || b.score - a.score)[0];
+    const byInstallment = [...ordered].sort((a, b) => targetMetrics(input, a).installmentGap - targetMetrics(input, b).installmentGap || b.score - a.score)[0];
+    const byBid = [...ordered].sort((a, b) => targetMetrics(input, a).bidGap - targetMetrics(input, b).bidGap || b.score - a.score)[0];
+
+    for (const offer of [byCredit, byInstallment, byBid, ordered[0]]) {
+      if (!offer || bucket.has(offer.id)) continue;
+      bucket.set(offer.id, offer);
+      if (bucket.size >= 3) break;
+    }
+
+    selected.push(...bucket.values());
+  }
+
+  return selected;
+}
+
 export function findBestOffers(input: RadarInput, data: RadarSourceData) {
   const minProbability = onlyNumber(input.probabilidadeMinima);
   const offers: RadarOffer[] = [];
@@ -48,7 +93,10 @@ export function findBestOffers(input: RadarInput, data: RadarSourceData) {
 
   const filtered = dedupeOffers(offers).filter((offer) => offer.probabilidadeContemplacao >= minProbability);
 
-  return applyRelativeFeeScores(filtered)
+  const scored = applyRelativeFeeScores(filtered)
+    .sort((a, b) => b.score - a.score || b.probabilidadeContemplacao - a.probabilidadeContemplacao);
+
+  return limitOffersPerGroup(scored, input)
     .sort((a, b) => b.score - a.score || b.probabilidadeContemplacao - a.probabilidadeContemplacao)
     .slice(0, 30);
 }

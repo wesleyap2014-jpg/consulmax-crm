@@ -141,7 +141,7 @@ function groupSummariesForReevaluation(offers: RadarOffer[]) {
     const rawRanges = Array.isArray(cfg.creditRanges) ? cfg.creditRanges : [];
     const ranges = rawRanges
       .map((range: any, index: number) => ({
-        id: String(range.id || range.key || range.label || `faixa-${index + 1}`),
+        id: String(range.id || range.key || `faixa-${index + 1}`),
         label: String(range.label || range.nome || range.name || `Faixa ${index + 1}`),
         valor: onlyNumber(range.valor || range.credito || range.valor_credito || range.credit_value),
       }))
@@ -937,6 +937,7 @@ export default function RadarOfertas() {
                             <div className="font-black" style={{ color: C.navy }}>Teste {index + 1} • Grupo {test.groupCode || "N/D"}</div>
                             <div className="mt-1 text-slate-600">Crédito testado: {brMoney(Number(test.requestedCredit || 0))}</div>
                             <div className="text-slate-600">Status: {test.status === "calculated" ? "calculado pelo motor" : "não validado pelo motor"}</div>
+                            {test.matchedCredit && <div className="text-slate-600">Oferta compatível: {brMoney(Number(test.matchedCredit || 0))}</div>}
                             {test.reason && <div className="mt-1 text-slate-500">{test.reason}</div>}
                           </div>
                         ))}

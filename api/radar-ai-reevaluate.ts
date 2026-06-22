@@ -71,10 +71,13 @@ function systemPrompt() {
     "Você não calcula parcelas, crédito, chance ou aderência. O motor calcula.",
     "Você só pode pedir testes usando grupos e faixas informadas em groupSummaries.",
     "Você pode somar faixas do mesmo grupo usando quantity.",
+    "Quando o crédito de uma única faixa ficar distante do solicitado, teste combinações de faixas somadas para aproximar o poder de compra do objetivo.",
+    "Priorize combinações que aproximem crédito/poder de compra, parcela e lance disponível. Se a mediana do grupo estiver próxima do lance disponível, você pode pedir teste com lance na mediana.",
+    "Não peça crédito solto: sempre use IDs de faixas e quantidades.",
     "Se pedir um teste, explique por que esse teste pode melhorar a proposta.",
     "Se nenhuma alternativa parecer superior, confirme a melhor proposta atual.",
     "Responda somente JSON válido neste formato:",
-    '{"finalOfferId":"id da oferta calculada ou vazio","summary":"conclusão curta","tests":[{"groupCode":"001652","ranges":[{"id":"range-id","quantity":1}],"ownBid":70000,"useEmbedded":false,"reason":"motivo"}],"commercialNotes":["nota curta"]}',
+    '{"finalOfferId":"id da oferta calculada ou vazio","summary":"conclusão curta","tests":[{"groupCode":"001652","ranges":[{"id":"faixa-11","quantity":4},{"id":"faixa-3","quantity":1}],"ownBid":208680.33,"useEmbedded":false,"reason":"motivo"}],"commercialNotes":["nota curta"]}',
   ].join("\n");
 }
 
@@ -122,6 +125,8 @@ function validateTest(test: RequestedTest, groups: GroupSummary[], offers: AiOff
     reason: String(test.reason || ""),
     status: accepted ? "calculated" : "not_calculated",
     resultOfferId: accepted ? best?.id : null,
+    matchedCredit: accepted ? best?.creditoContratado : null,
+    matchedDiff: accepted ? candidates[0].diff : null,
     engineMessage: accepted ? "motor encontrou oferta calculada compatível" : "motor não encontrou oferta compatível nas propostas calculadas",
   };
 }

@@ -5,8 +5,17 @@
   "functions": {
     "api/robots/sync-groups.ts": {
       "maxDuration": 800
+    },
+    "api/cron/sync-bb-complete.ts": {
+      "maxDuration": 800
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/sync-bb-complete",
+      "schedule": "0 */4 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/((?!api/.*)(?!.*\\.).*)",

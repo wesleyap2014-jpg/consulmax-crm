@@ -37,7 +37,7 @@ replaceOnce(
 
 function parseBidRulesFromBemHint(value: unknown) {
   const normalized = normalizeText(value);
-  const fixedPcts = Array.from(normalized.matchAll(/LANCE\\s+FIXO\\s*(\\d+(?:[,.]\\d+)?)/g))
+  const fixedPcts = Array.from(normalized.matchAll(/FIXO[^0-9]{0,20}(\\d+(?:[,.]\\d+)?)/g))
     .map((match) => parseNumberBR(match[1]))
     .filter((pct) => pct > 0 && pct <= 100);
 
@@ -47,7 +47,7 @@ function parseBidRulesFromBemHint(value: unknown) {
 
   return {
     lanceFixoPcts: uniqueFixedPcts,
-    permiteLanceEmbutido: normalized.includes("LANCE EMBUTIDO"),
+    permiteLanceEmbutido: normalized.includes("EMBUTIDO"),
   };
 }`,
   "function parseBidRulesFromBemHint"

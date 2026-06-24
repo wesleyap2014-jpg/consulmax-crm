@@ -550,15 +550,17 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
 function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; parcelaContemplacao: number; lanceKey: LanceKey; lanceLivrePct: number; usarEmbutido: boolean; lanceEmbutidoPct: number }) {
   const { group, credito, prazo, parcelaContemplacao, lanceKey, lanceLivrePct, usarEmbutido, lanceEmbutidoPct } = input;
   if (!group) return { result: null as any, error: "Selecione um grupo/tabela BB." };
-  if (!credito) return { result: null as any, error: "Selecione ou informe o crédito desejado." };
+
+  const creditoDesejado = Number(credito || 0);
+  if (!creditoDesejado) return { result: null as any, error: "Selecione ou informe o crédito desejado." };
 
   const cfg = normalizeConfig(group);
   const sortedPrazoRules = [...cfg.prazoRules].sort((a, b) => a.prazo - b.prazo);
-  const exactRule = sortedPrazoRules.find((r) => r.prazo === prazo);
-  const nearestRule = exactRule || sortedPrazoRules.find((r) => r.prazo >= prazo) || sortedPrazoRules[sortedPrazoRules.length - 1];
   const prazoMin = sortedPrazoRules.length ? Math.min(...sortedPrazoRules.map((r) => r.prazo)) : Number(group.prazo_min || 1);
   const prazoMax = sortedPrazoRules.length ? Math.max(...sortedPrazoRules.map((r) => r.prazo)) : Number(group.prazo_max || prazo || 1);
   const prazoFinal = clamp(Math.max(1, prazo || prazoMax), prazoMin || 1, prazoMax || prazo || 1);
+  const exactRule = sortedPrazoRules.find((r) => r.prazo === prazoFinal);
+  const nearestRule = exactRule || sortedPrazoRules.find((r) => r.prazo >= prazoFinal) || sortedPrazoRules[sortedPrazoRules.length - 1];
 
   const taxaAdm = Number(nearestRule?.taxaAdmPct ?? group.taxa_adm_pct ?? 0);
   const fundoReserva = Number(nearestRule?.fundoReservaPct ?? group.fundo_reserva_pct ?? 0);
@@ -566,7 +568,7 @@ function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; 
   const permiteEmbutido = group.permite_lance_embutido !== false;
   const maxEmbutidoPct = permiteEmbutido ? Number(cfg.maxLanceEmbutidoPct || 0) : 0;
 
-  const valorCategoria = credito * (1 + taxaAdm + fundoReserva);
+  const valorCategoria = creditoDesejado * (1 + taxaAdm + fundoReserva);
   const parcelaBase = valorCategoria / prazoFinal;
   const seguroMensal = valorCategoria * seguroPct;
   const parcelaAntes = parcelaBase + seguroMensal;
@@ -578,7 +580,7 @@ function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; 
   const parcelaContempl = clamp(Math.max(1, parcelaContemplacao || 1), 1, prazoFinal);
   const prazoRestanteAposContemplacao = Math.max(1, prazoFinal - parcelaContempl);
   const totalPagoAteContemplacao = parcelaBase * parcelaContempl;
-  const lanceOfertadoValor = credito * lancePct;
+  const lanceOfertadoValor = creditoDesejado * lancePct;
 
   let embutidoPctFinal = 0;
   if (usarEmbutido) {
@@ -587,11 +589,11 @@ function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; 
     if (maxEmbutidoPct > 0 && embutidoPctFinal > maxEmbutidoPct) return { result: null as any, error: `Lance embutido acima do máximo permitido (${pctHuman(maxEmbutidoPct)}).` };
   }
 
-  const lanceEmbutidoValor = credito * embutidoPctFinal;
+  const lanceEmbutidoValor = creditoDesejado * embutidoPctFinal;
   if (lanceEmbutidoValor > lanceOfertadoValor + 0.01) return { result: null as any, error: "O lance embutido não pode ser maior que o lance ofertado." };
 
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
-  const creditoLiquido = Math.max(0, credito - lanceEmbutidoValor);
+  const creditoLiquido = Math.max(0, creditoDesejado - lanceEmbutidoValor);
   const saldoAposPagamentos = Math.max(0, valorCategoria - totalPagoAteContemplacao);
   const saldoAposLance = Math.max(0, saldoAposPagamentos - lanceOfertadoValor);
 
@@ -605,7 +607,7 @@ function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; 
   const investimentoAteContemplacao = parcelaAntes * parcelaContempl + lanceProprioValor;
   return {
     result: {
-      credito,
+      credito: creditoDesejado,
       creditoLiquido,
       prazo: prazoFinal,
       taxaAdm,

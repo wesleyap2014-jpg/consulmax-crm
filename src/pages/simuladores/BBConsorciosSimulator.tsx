@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 
 import {
   AlertTriangle,
+  Bike,
   Building2,
   Calculator,
   Car,
@@ -29,7 +30,7 @@ import {
   X,
 } from "lucide-react";
 
-type SegmentoBB = "auto_ipca" | "auto_fipe" | "pesados" | "imoveis" | "outros_bens";
+type SegmentoBB = "auto_ipca" | "auto_fipe" | "pesados" | "imoveis" | "motocicletas" | "outros_bens";
 type LanceKey = "livre" | "primeiro_fixo" | "segundo_fixo" | "limitado" | "fidelidade";
 type RegraPos = "saldo_devedor_prazo_restante" | "mantem_parcela_reduz_prazo";
 
@@ -53,7 +54,7 @@ type BBConfig = {
 type BBGroup = {
   id: string;
   grupo: string;
-  segmento: SegmentoBB;
+  segmento: string;
   nome_grupo: string | null;
   observacoes: string | null;
   credito_min: number | null;
@@ -116,6 +117,7 @@ const segmentos = [
   { key: "auto_fipe" as const, label: "Auto FIPE", statusLabel: "Automóvel", icon: ShieldCheck },
   { key: "pesados" as const, label: "Pesados", statusLabel: "Pesados", icon: Truck },
   { key: "imoveis" as const, label: "Imóveis", statusLabel: "Imóvel", icon: Home },
+  { key: "motocicletas" as const, label: "Motocicleta", statusLabel: "Moto", icon: Bike },
   { key: "outros_bens" as const, label: "Outros Bens", statusLabel: "Serviços e bens", icon: PackageCheck },
 ];
 
@@ -191,12 +193,20 @@ function buildWhatsappLink(user?: LoggedUserProfile | null) {
   return phone ? `https://wa.me/${phone}` : "";
 }
 
+function normalizeSegmento(segmento?: string | null): SegmentoBB | string {
+  const value = String(segmento || "").trim().toLowerCase();
+  if (["motocicleta", "motocicletas", "moto", "motos"].includes(value)) return "motocicletas";
+  return value || "auto_ipca";
+}
+
 function getSegmentoLabel(segmento?: string | null) {
-  return segmentos.find((s) => s.key === segmento)?.label || segmento || "—";
+  const normalized = normalizeSegmento(segmento);
+  return segmentos.find((s) => s.key === normalized)?.label || segmento || "—";
 }
 
 function getStatusSegmentoLabel(segmento?: string | null) {
-  return segmentos.find((s) => s.key === segmento)?.statusLabel || getSegmentoLabel(segmento);
+  const normalized = normalizeSegmento(segmento);
+  return segmentos.find((s) => s.key === normalized)?.statusLabel || getSegmentoLabel(segmento);
 }
 
 function brDate(value?: string | null) {
@@ -219,47 +229,22 @@ function normalizeConfig(group?: BBGroup | null): BBConfig {
   const max = Number(group?.credito_max || 0);
 
   if (Array.isArray(raw.creditRanges) && raw.creditRanges.length) {
-    legacyRanges.push(
-      ...raw.creditRanges.map((r: any) => ({
-        id: String(r.id || makeId("cred")),
-        label: String(r.label || brMoney(Number(r.valor || 0))),
-        valor: Number(r.valor || 0),
-      }))
-    );
+    legacyRanges.push(...raw.creditRanges.map((r: any) => ({ id: String(r.id || makeId("cred")), label: String(r.label || brMoney(Number(r.valor || 0))), valor: Number(r.valor || 0) })));
   } else {
     if (min > 0) legacyRanges.push({ id: "legacy_min", label: brMoney(min), valor: min });
     if (max > 0 && max !== min) legacyRanges.push({ id: "legacy_max", label: brMoney(max), valor: max });
   }
 
   const prazoRules: PrazoRule[] = Array.isArray(raw.prazoRules) && raw.prazoRules.length
-    ? raw.prazoRules.map((r: any) => ({
-        id: String(r.id || makeId("prazo")),
-        prazo: Number(r.prazo || 1),
-        taxaAdmPct: Number(r.taxaAdmPct ?? group?.taxa_adm_pct ?? 0),
-        fundoReservaPct: Number(r.fundoReservaPct ?? group?.fundo_reserva_pct ?? 0),
-      }))
-    : [
-        {
-          id: "legacy_prazo",
-          prazo: Number(group?.prazo_max || group?.prazo_min || 80),
-          taxaAdmPct: Number(group?.taxa_adm_pct || 0),
-          fundoReservaPct: Number(group?.fundo_reserva_pct || 0),
-        },
-      ];
+    ? raw.prazoRules.map((r: any) => ({ id: String(r.id || makeId("prazo")), prazo: Number(r.prazo || 1), taxaAdmPct: Number(r.taxaAdmPct ?? group?.taxa_adm_pct ?? 0), fundoReservaPct: Number(r.fundoReservaPct ?? group?.fundo_reserva_pct ?? 0) }))
+    : [{ id: "legacy_prazo", prazo: Number(group?.prazo_max || group?.prazo_min || 80), taxaAdmPct: Number(group?.taxa_adm_pct || 0), fundoReservaPct: Number(group?.fundo_reserva_pct || 0) }];
 
   const byKey = new Map<LanceKey, LanceOption>();
   DEFAULT_LANCES.forEach((l) => byKey.set(l.key, { ...l }));
 
   if (Array.isArray(raw.lanceOptions)) {
     raw.lanceOptions.forEach((l: any) => {
-      if (l?.key && byKey.has(l.key)) {
-        byKey.set(l.key, {
-          key: l.key,
-          enabled: l.enabled !== false,
-          nomeComercial: String(l.nomeComercial || LANCE_LABELS[l.key as LanceKey]),
-          pct: Number(l.pct || 0),
-        });
-      }
+      if (l?.key && byKey.has(l.key)) byKey.set(l.key, { key: l.key, enabled: l.enabled !== false, nomeComercial: String(l.nomeComercial || LANCE_LABELS[l.key as LanceKey]), pct: Number(l.pct || 0) });
     });
   } else {
     byKey.set("livre", { key: "livre", enabled: group?.permite_lance_livre !== false, nomeComercial: "Lance Livre", pct: 0 });
@@ -284,17 +269,7 @@ function normalizeConfig(group?: BBGroup | null): BBConfig {
 function groupNextAssembly(group?: BBGroup | null) {
   const cfg = normalizeConfig(group);
   const assembly = cfg.assemblyResult && typeof cfg.assemblyResult === "object" ? cfg.assemblyResult : {};
-  const raw =
-    group?.proxima_assembleia ||
-    group?.data_proxima_assembleia ||
-    group?.next_assembly_date ||
-    group?.nextAssemblyDate ||
-    cfg.proximaAssembleia ||
-    cfg.nextAssemblyDate ||
-    cfg.next_assembly_date ||
-    assembly.proximaAssembleia ||
-    assembly.nextAssemblyDate ||
-    assembly.next_assembly_date;
+  const raw = group?.proxima_assembleia || group?.data_proxima_assembleia || group?.next_assembly_date || group?.nextAssemblyDate || cfg.proximaAssembleia || cfg.nextAssemblyDate || cfg.next_assembly_date || assembly.proximaAssembleia || assembly.nextAssemblyDate || assembly.next_assembly_date;
   if (raw) return String(raw);
   const text = `${group?.observacoes || ""} ${cfg.observacoesRegra || ""}`;
   const match = text.match(/(?:prox\.?|proxima|próxima)\s*(?:assem\.?|assembleia)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
@@ -321,9 +296,10 @@ function defaultForm(segmento: SegmentoBB): GroupForm {
 
 function formFromGroup(group: BBGroup): GroupForm {
   const cfg = normalizeConfig(group);
+  const normalizedSegment = normalizeSegmento(group.segmento);
   return {
     grupo: group.grupo || "",
-    segmento: group.segmento || "auto_ipca",
+    segmento: segmentos.some((s) => s.key === normalizedSegment) ? (normalizedSegment as SegmentoBB) : "auto_ipca",
     nome_grupo: group.nome_grupo || "",
     observacoes: group.observacoes || "",
     seguro_pct: formatPercentInput(group.seguro_pct),
@@ -331,27 +307,16 @@ function formFromGroup(group: BBGroup): GroupForm {
     observacoesRegra: cfg.observacoesRegra || "",
     is_active: group.is_active !== false,
     permite_lance_embutido: group.permite_lance_embutido === true,
-    creditRanges: cfg.creditRanges.length
-      ? cfg.creditRanges.map((r) => ({ id: r.id, label: r.label, valor: formatMoneyInput(r.valor) }))
-      : [{ id: makeId("cred"), label: "Faixa 1", valor: formatMoneyInput(0) }],
-    prazoRules: cfg.prazoRules.length
-      ? cfg.prazoRules.map((r) => ({ id: r.id, prazo: String(r.prazo || 1), taxaAdmPct: formatPercentInput(r.taxaAdmPct), fundoReservaPct: formatPercentInput(r.fundoReservaPct) }))
-      : [{ id: makeId("prazo"), prazo: "80", taxaAdmPct: "0,0000", fundoReservaPct: "0,0000" }],
+    creditRanges: cfg.creditRanges.length ? cfg.creditRanges.map((r) => ({ id: r.id, label: r.label, valor: formatMoneyInput(r.valor) })) : [{ id: makeId("cred"), label: "Faixa 1", valor: formatMoneyInput(0) }],
+    prazoRules: cfg.prazoRules.length ? cfg.prazoRules.map((r) => ({ id: r.id, prazo: String(r.prazo || 1), taxaAdmPct: formatPercentInput(r.taxaAdmPct), fundoReservaPct: formatPercentInput(r.fundoReservaPct) })) : [{ id: makeId("prazo"), prazo: "80", taxaAdmPct: "0,0000", fundoReservaPct: "0,0000" }],
     lanceOptions: cfg.lanceOptions.map((l) => ({ key: l.key, enabled: l.enabled !== false, nomeComercial: l.nomeComercial || LANCE_LABELS[l.key], pct: formatPercentInput(l.pct) })),
     maxLanceEmbutidoPct: formatPercentInput(cfg.maxLanceEmbutidoPct),
   };
 }
 
 function payloadFromForm(form: GroupForm) {
-  const creditRanges = form.creditRanges
-    .map((r) => ({ id: r.id || makeId("cred"), label: r.label.trim() || formatMoneyInput(parseMoney(r.valor)), valor: parseMoney(r.valor) }))
-    .filter((r) => r.valor > 0);
-
-  const prazoRules = form.prazoRules
-    .map((r) => ({ id: r.id || makeId("prazo"), prazo: Math.max(1, numberFrom(r.prazo)), taxaAdmPct: parsePercent(r.taxaAdmPct), fundoReservaPct: parsePercent(r.fundoReservaPct) }))
-    .filter((r) => r.prazo > 0)
-    .sort((a, b) => a.prazo - b.prazo);
-
+  const creditRanges = form.creditRanges.map((r) => ({ id: r.id || makeId("cred"), label: r.label.trim() || formatMoneyInput(parseMoney(r.valor)), valor: parseMoney(r.valor) })).filter((r) => r.valor > 0);
+  const prazoRules = form.prazoRules.map((r) => ({ id: r.id || makeId("prazo"), prazo: Math.max(1, numberFrom(r.prazo)), taxaAdmPct: parsePercent(r.taxaAdmPct), fundoReservaPct: parsePercent(r.fundoReservaPct) })).filter((r) => r.prazo > 0).sort((a, b) => a.prazo - b.prazo);
   const lanceOptions = form.lanceOptions.map((l) => ({ key: l.key, enabled: l.enabled, nomeComercial: l.nomeComercial.trim() || LANCE_LABELS[l.key], pct: parsePercent(l.pct) }));
   const valores = creditRanges.map((r) => r.valor);
   const prazos = prazoRules.map((r) => r.prazo);
@@ -378,14 +343,7 @@ function payloadFromForm(form: GroupForm) {
     lance_embutido_max_pct: permiteLanceEmbutido ? parsePercent(form.maxLanceEmbutidoPct) : 0,
     permite_fixo_25: primeiroFixo?.enabled ?? false,
     permite_fixo_50: segundoFixo?.enabled ?? false,
-    config: {
-      creditRanges,
-      prazoRules,
-      lanceOptions,
-      maxLanceEmbutidoPct: permiteLanceEmbutido ? parsePercent(form.maxLanceEmbutidoPct) : 0,
-      regraPosContemplacao: form.regra_pos_contemplacao,
-      observacoesRegra: form.observacoesRegra.trim(),
-    } as BBConfig,
+    config: { creditRanges, prazoRules, lanceOptions, maxLanceEmbutidoPct: permiteLanceEmbutido ? parsePercent(form.maxLanceEmbutidoPct) : 0, regraPosContemplacao: form.regra_pos_contemplacao, observacoesRegra: form.observacoesRegra.trim() } as BBConfig,
     is_active: form.is_active,
   };
 }
@@ -426,13 +384,7 @@ on public.sim_bb_groups(is_active);`;
 }
 
 function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="rounded-[22px] border bg-white/75 p-4 shadow-sm backdrop-blur">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-xl font-black" style={{ color: C.navy }}>{value}</div>
-      {hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}
-    </div>
-  );
+  return <div className="rounded-[22px] border bg-white/75 p-4 shadow-sm backdrop-blur"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div><div className="mt-1 text-xl font-black" style={{ color: C.navy }}>{value}</div>{hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}</div>;
 }
 
 function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; parcelaContemplacao: number; lanceKey: LanceKey; lanceLivrePct: number; usarEmbutido: boolean; lanceEmbutidoPct: number }) {
@@ -454,9 +406,6 @@ function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; 
   const seguroPct = Number(group.seguro_pct || 0);
   const permiteEmbutido = group.permite_lance_embutido !== false;
   const maxEmbutidoPct = permiteEmbutido ? Number(cfg.maxLanceEmbutidoPct || 0) : 0;
-
-  // Regra BB: a parcela antes da contemplação nasce sempre do crédito digitado,
-  // não da maior faixa cadastrada do grupo. Valor de categoria = crédito + adm + FR.
   const valorCategoria = creditoDigitado * (1 + taxaAdm + fundoReserva);
   const parcelaBase = valorCategoria / prazoFinal;
   const seguroMensal = valorCategoria * seguroPct;
@@ -494,31 +443,7 @@ function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; 
   }
 
   const investimentoAteContemplacao = parcelaAntes * parcelaContempl + lanceProprioValor;
-  return {
-    result: {
-      credito: creditoDigitado,
-      creditoLiquido,
-      prazo: prazoFinal,
-      taxaAdm,
-      fundoReserva,
-      seguroPct,
-      valorCategoria,
-      parcelaAntes,
-      parcelaApos,
-      parcelaBase,
-      seguroMensal,
-      parcelaContemplacao: parcelaContempl,
-      prazoRestanteAposContemplacao: prazoRestanteFinal,
-      lancePct,
-      lanceNome: lanceOption.nomeComercial,
-      lanceOfertadoValor,
-      lanceEmbutidoValor,
-      lanceProprioValor,
-      saldoAposLance,
-      investimentoAteContemplacao,
-    },
-    error: "",
-  };
+  return { result: { credito: creditoDigitado, creditoLiquido, prazo: prazoFinal, taxaAdm, fundoReserva, seguroPct, valorCategoria, parcelaAntes, parcelaApos, parcelaBase, seguroMensal, parcelaContemplacao: parcelaContempl, prazoRestanteAposContemplacao: prazoRestanteFinal, lancePct, lanceNome: lanceOption.nomeComercial, lanceOfertadoValor, lanceEmbutidoValor, lanceProprioValor, saldoAposLance, investimentoAteContemplacao }, error: "" };
 }
 
 function drawRoundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -583,22 +508,14 @@ function statusRows(group: BBGroup) {
   const lancePct = marketingLancePct(cfg);
   return cfg.creditRanges.slice(0, 9).map((range) => {
     const valorCategoria = range.valor * (1 + Number(basePrazo.taxaAdmPct || 0) + Number(basePrazo.fundoReservaPct || 0));
-    return {
-      credito: brMoney(range.valor),
-      parcela: brMoney(basePrazo.prazo > 0 ? valorCategoria / basePrazo.prazo : 0),
-      prazo: `${basePrazo.prazo}x`,
-      lance: lancePct > 0 ? pctHuman(lancePct, 0) : "Livre",
-    };
+    return { credito: brMoney(range.valor), parcela: brMoney(basePrazo.prazo > 0 ? valorCategoria / basePrazo.prazo : 0), prazo: `${basePrazo.prazo}x`, lance: lancePct > 0 ? pctHuman(lancePct, 0) : "Livre" };
   });
 }
 
 async function saveStatusImage(group: BBGroup) {
   const cfg = normalizeConfig(group);
   const rows = statusRows(group);
-  if (!rows.length) {
-    alert("Este grupo não possui faixas de crédito para gerar a imagem.");
-    return;
-  }
+  if (!rows.length) return alert("Este grupo não possui faixas de crédito para gerar a imagem.");
 
   const canvas = document.createElement("canvas");
   canvas.width = 1080;
@@ -625,8 +542,7 @@ async function saveStatusImage(group: BBGroup) {
 
   const logo = await loadLogo();
   if (logo) {
-    const maxW = 360;
-    const ratio = Math.min(maxW / logo.width, 110 / logo.height);
+    const ratio = Math.min(360 / logo.width, 110 / logo.height);
     ctx.drawImage(logo, 80, 70, logo.width * ratio, logo.height * ratio);
   } else {
     ctx.fillStyle = "#FFFFFF";
@@ -644,11 +560,8 @@ async function saveStatusImage(group: BBGroup) {
   ctx.fillStyle = "#FFFFFF";
   ctx.font = "800 38px Arial";
   ctx.fillText("Vagas limitadas", 118, 326);
-
-  ctx.fillStyle = "#FFFFFF";
   ctx.font = "900 66px Arial";
   wrapText(ctx, "Tire seus sonhos do papel com a Consulmax", 80, 475, 880, 76);
-
   ctx.fillStyle = C.lightGold;
   ctx.font = "800 30px Arial";
   ctx.fillText(`Categoria: ${getStatusSegmentoLabel(group.segmento)}`, 82, 655);
@@ -721,10 +634,7 @@ function ConfigOverlay({ open, onClose, initialSegmento, editing, groups, onEdit
   if (!open) return null;
 
   function addCreditRange() {
-    setForm((f) => {
-      const nextIndex = f.creditRanges.length + 1;
-      return { ...f, creditRanges: [...f.creditRanges, { id: makeId("cred"), label: `Faixa ${nextIndex}`, valor: formatMoneyInput(0) }] };
-    });
+    setForm((f) => ({ ...f, creditRanges: [...f.creditRanges, { id: makeId("cred"), label: `Faixa ${f.creditRanges.length + 1}`, valor: formatMoneyInput(0) }] }));
   }
 
   function addPrazoRule() {
@@ -785,19 +695,14 @@ function GrupoTabela({ group, onSelectCredit }: { group: BBGroup | null; onSelec
   const prazos = [...cfg.prazoRules].sort((a, b) => a.prazo - b.prazo);
   return (
     <Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur">
-      <CardHeader>
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <CardTitle style={{ color: C.navy }}>Tabela do grupo selecionado</CardTitle>
-          <Button type="button" variant="secondary" className="rounded-2xl" onClick={() => saveStatusImage(group)}><Download className="mr-2 h-4 w-4" />Salvar imagem</Button>
-        </div>
-      </CardHeader>
+      <CardHeader><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><CardTitle style={{ color: C.navy }}>Tabela do grupo selecionado</CardTitle><Button type="button" variant="secondary" className="rounded-2xl" onClick={() => saveStatusImage(group)}><Download className="mr-2 h-4 w-4" />Salvar imagem</Button></div></CardHeader>
       <CardContent>
         <div className="overflow-auto rounded-2xl border">
-          <table className="w-full min-w-[720px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-3">Faixa</th><th className="p-3">Crédito</th><th className="p-3">Prazo</th><th className="p-3">Taxa adm</th><th className="p-3">Fundo reserva</th><th className="p-3">Parcela portal</th></tr></thead>
-            <tbody>{cfg.creditRanges.flatMap((range) => prazos.map((prazo) => { const valorCategoria = range.valor * (1 + prazo.taxaAdmPct + prazo.fundoReservaPct); const parcela = prazo.prazo > 0 ? valorCategoria / prazo.prazo : 0; return <tr key={`${range.id}_${prazo.id}`} className="border-t cursor-pointer transition hover:bg-slate-50" title="Clique para usar este crédito na simulação" onClick={() => onSelectCredit?.(range.valor)}><td className="p-3 font-semibold text-slate-700">{range.label || brMoney(range.valor)}</td><td className="p-3">{brMoney(range.valor)}</td><td className="p-3">{prazo.prazo} meses</td><td className="p-3">{pctHuman(prazo.taxaAdmPct)}</td><td className="p-3">{pctHuman(prazo.fundoReservaPct)}</td><td className="p-3 font-semibold">{brMoney(parcela)}</td></tr>; }))}</tbody>
+          <table className="w-full min-w-[820px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-3">Faixa</th><th className="p-3">Crédito</th><th className="p-3">Prazo</th><th className="p-3">Taxa adm</th><th className="p-3">Fundo reserva</th><th className="p-3">Parcela portal</th><th className="p-3">Ação</th></tr></thead>
+            <tbody>{cfg.creditRanges.flatMap((range) => prazos.map((prazo) => { const valorCategoria = range.valor * (1 + prazo.taxaAdmPct + prazo.fundoReservaPct); const parcela = prazo.prazo > 0 ? valorCategoria / prazo.prazo : 0; return <tr key={`${range.id}_${prazo.id}`} className="border-t cursor-pointer transition hover:bg-slate-50" title="Clique para usar este crédito na simulação" onClick={() => onSelectCredit?.(range.valor)}><td className="p-3 font-semibold text-slate-700">{range.label || brMoney(range.valor)}</td><td className="p-3">{brMoney(range.valor)}</td><td className="p-3">{prazo.prazo} meses</td><td className="p-3">{pctHuman(prazo.taxaAdmPct)}</td><td className="p-3">{pctHuman(prazo.fundoReservaPct)}</td><td className="p-3 font-semibold">{brMoney(parcela)}</td><td className="p-3"><Button type="button" variant="secondary" className="h-8 rounded-xl px-3 text-xs" onClick={(e) => { e.stopPropagation(); onSelectCredit?.(range.valor); }}>Usar crédito</Button></td></tr>; }))}</tbody>
           </table>
-        </div><div className="mt-2 text-xs text-slate-500">Clique em uma faixa para preencher automaticamente o campo Crédito desejado. A tabela é apenas referência dos créditos disponíveis; a simulação calcula a parcela antes com base no crédito digitado.</div>
+        </div><div className="mt-2 text-xs text-slate-500">Clique na linha ou no botão Usar crédito para preencher automaticamente o campo Crédito desejado. A tabela é apenas referência dos créditos disponíveis; a simulação calcula a parcela antes com base no crédito digitado.</div>
       </CardContent>
     </Card>
   );
@@ -849,7 +754,7 @@ export default function BBConsorciosSimulator() {
 
   useEffect(() => { load(); }, []);
   const activeGroups = useMemo(() => groups.filter((g) => g.is_active !== false), [groups]);
-  const segmentGroups = useMemo(() => activeGroups.filter((g) => g.segmento === segmento), [activeGroups, segmento]);
+  const segmentGroups = useMemo(() => activeGroups.filter((g) => normalizeSegmento(g.segmento) === normalizeSegmento(segmento)), [activeGroups, segmento]);
   useEffect(() => { if (!segmentGroups.length) return setGroupId(""); if (!segmentGroups.some((g) => g.id === groupId)) setGroupId(segmentGroups[0].id); }, [segmentGroups, groupId]);
 
   const selectedGroup = useMemo(() => groups.find((g) => g.id === groupId) || null, [groups, groupId]);
@@ -957,7 +862,7 @@ ${wa}`;
     <div className="p-4 md:p-6 space-y-6">
       <section className="relative overflow-hidden rounded-[28px] border p-6 md:p-8 shadow-sm" style={{ background: "linear-gradient(135deg, rgba(30,41,63,.98), rgba(161,28,39,.94))", borderColor: "rgba(255,255,255,.22)" }}><div className="absolute -right-16 -top-16 h-52 w-52 rounded-full blur-3xl" style={{ background: "rgba(181,165,115,.28)" }} /><div className="relative z-[1] flex flex-col gap-5 md:flex-row md:items-end md:justify-between"><div className="max-w-3xl text-white"><div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur"><Calculator className="h-3.5 w-3.5" /> Simulador BB Consórcios</div><h1 className="text-2xl md:text-4xl font-black tracking-tight">Configure a estratégia de crédito e lance</h1><p className="mt-3 text-sm md:text-base text-white/82">Simulação por grupo/tabela, com faixas de crédito, prazos, taxas e lances permitidos.</p></div>{isAdmin && <Button type="button" onClick={() => { setEditingGroup(null); setConfigOpen(true); }} className="h-11 shrink-0 rounded-2xl bg-white px-4 font-semibold text-slate-900 hover:bg-white/90"><Settings className="mr-2 h-4 w-4" /> Configurar grupos</Button>}</div></section>
       {tableMissing && <Card className="rounded-[28px] border border-amber-200 bg-amber-50/80 shadow-sm"><CardContent className="space-y-4 p-5"><div className="flex items-center gap-2 font-bold text-amber-800"><AlertTriangle className="h-5 w-5" /> Tabela sim_bb_groups ainda não existe</div><p className="text-sm text-amber-800">Rode este SQL no Supabase para habilitar o simulador BB:</p><pre className="max-h-[320px] overflow-auto rounded-2xl bg-slate-950 p-4 text-xs text-white">{sqlForSetup()}</pre></CardContent></Card>}
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><div className="space-y-4"><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><UserRound className="h-5 w-5" /> Cliente e segmento</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Selecionar lead</Label><select className="h-10 w-full rounded-md border px-3" value={leadId} onChange={(e) => setLeadId(e.target.value)}><option value="">Sem lead vinculado</option>{leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.nome} {lead.telefone ? `• ${lead.telefone}` : lead.email ? `• ${lead.email}` : ""}</option>)}</select></div><div className="md:col-span-2 grid gap-3 md:grid-cols-5">{segmentos.map((s) => { const Icon = s.icon; const active = segmento === s.key; return <button key={s.key} type="button" onClick={() => setSegmento(s.key)} className="rounded-[22px] border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md" style={{ borderColor: active ? C.ruby : "rgba(30,41,63,.12)", background: active ? "rgba(161,28,39,.08)" : "white" }}><Icon className="mb-2 h-5 w-5" style={{ color: active ? C.ruby : C.navy }} /><div className="text-sm font-black" style={{ color: C.navy }}>{s.label}</div></button>; })}</div></CardContent></Card><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><Building2 className="h-5 w-5" /> Tabela e plano</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Grupo/Tabela BB</Label><select className="h-10 w-full rounded-md border px-3" value={groupId} onChange={(e) => setGroupId(e.target.value)}>{!segmentGroups.length && <option value="">Nenhum grupo cadastrado para este segmento</option>}{segmentGroups.map((g) => { const cfg = normalizeConfig(g); const min = cfg.creditRanges.length ? Math.min(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_min || 0); const max = cfg.creditRanges.length ? Math.max(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_max || 0); return <option key={g.id} value={g.id}>{g.nome_grupo || g.grupo} • {brMoney(min)} a {brMoney(max)}</option>; })}</select></div><div><Label>Crédito desejado</Label><Input value={creditoInput} onChange={(e) => { setCreditoInput(formatMoneyInput(parseMoney(e.target.value))); setSimCode(null); }} placeholder="Digite o valor do crédito" />{selectedConfig.creditRanges.length > 0 && credito > 0 && <p className="mt-1 text-xs text-slate-500">Faixa cadastrada do grupo: {brMoney(Math.min(...selectedConfig.creditRanges.map((r) => r.valor)))} a {brMoney(Math.max(...selectedConfig.creditRanges.map((r) => r.valor)))}. Valores acima podem ser simulados com junção de cotas.</p>}</div><div><Label>Prazo</Label><select className="h-10 w-full rounded-md border px-3" value={prazoInput} onChange={(e) => setPrazoInput(e.target.value)}>{availablePrazos.map((p) => <option key={p.id} value={p.prazo}>{p.prazo} meses • Adm {pctHuman(p.taxaAdmPct)} • FR {pctHuman(p.fundoReservaPct)}</option>)}</select></div><div><Label>Contemplação estimada na parcela</Label><Input value={parcelaContemplacaoInput} onChange={(e) => setParcelaContemplacaoInput(e.target.value)} /></div><div><Label>Estratégia de lance</Label><select className="h-10 w-full rounded-md border px-3" value={lanceKey} onChange={(e) => setLanceKey(e.target.value as LanceKey)}>{availableLances.map((l) => <option key={l.key} value={l.key}>{l.nomeComercial}{l.key !== "livre" ? ` • ${pctHuman(l.pct)}` : ""}</option>)}</select></div>{lanceKey === "livre" && <div><Label>Percentual do lance livre</Label><Input value={lanceLivrePct} onChange={(e) => setLanceLivrePct(e.target.value)} placeholder="Ex.: 30,0000" /></div>}{grupoPermiteEmbutido ? <div className="rounded-2xl border bg-slate-50/70 p-3"><label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={usarEmbutido} onChange={(e) => setUsarEmbutido(e.target.checked)} />Usar lance embutido</label><div className="mt-1 text-xs text-slate-500">Máximo do grupo: {pctHuman(selectedConfig.maxLanceEmbutidoPct)}</div></div> : <div className="rounded-2xl border bg-slate-50/70 p-3 text-sm font-semibold text-slate-500">Este grupo não permite lance embutido.</div>}{grupoPermiteEmbutido && usarEmbutido && <div><Label>Percentual do lance embutido</Label><Input value={lanceEmbutidoPct} onChange={(e) => setLanceEmbutidoPct(e.target.value)} placeholder="Ex.: 25,0000" /></div>}</CardContent></Card></div><div className="space-y-4">{calculation.error && <Card className="rounded-[28px] border border-red-200 bg-red-50/80 shadow-sm"><CardContent className="flex items-center gap-2 p-4 text-sm font-semibold text-red-700"><AlertTriangle className="h-5 w-5" /> {calculation.error}</CardContent></Card>}{result && <><div className="grid gap-3 md:grid-cols-2"><Metric label="Crédito contratado" value={brMoney(result.credito)} hint={`Líquido estimado: ${brMoney(result.creditoLiquido)}`} /><Metric label="Parcela antes" value={brMoney(result.parcelaAntes)} hint={`Categoria: ${brMoney(result.valorCategoria)} ÷ ${result.prazo} meses`} /><Metric label="Lance ofertado" value={brMoney(result.lanceOfertadoValor)} hint={`${result.lanceNome} • ${pctHuman(result.lancePct)} sobre o crédito`} /><Metric label="Lance próprio" value={brMoney(result.lanceProprioValor)} hint={`Embutido: ${brMoney(result.lanceEmbutidoValor)}`} /><Metric label="Parcela pós-contemplação" value={brMoney(result.parcelaApos)} hint={`${result.prazoRestanteAposContemplacao} parcelas restantes`} /><Metric label="Investimento até contemplação" value={brMoney(result.investimentoAteContemplacao)} hint={`Até a parcela ${result.parcelaContemplacao}`} /></div><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><CheckCircle2 className="h-5 w-5" /> Resumo para WhatsApp</CardTitle></CardHeader><CardContent className="space-y-3"><textarea className="min-h-[260px] w-full rounded-2xl border bg-slate-50 p-3 text-sm" readOnly value={resumoTexto} /><div className="flex flex-wrap items-center gap-2"><Button onClick={copyResumo} className="rounded-2xl"><Copy className="mr-2 h-4 w-4" /> {copied ? "Copiado!" : "Copiar resumo"}</Button><Button onClick={salvarSimulacao} disabled={salvando} className="rounded-2xl" variant="secondary">{salvando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Salvar simulação</Button>{simCode && <span className="rounded-full border bg-white px-3 py-2 text-xs font-bold" style={{ color: C.ruby }}>Simulação Nº {simCode}</span>}{buildWhatsappLink(userProfile) && <Button variant="secondary" className="rounded-2xl" onClick={() => window.open(buildWhatsappLink(userProfile), "_blank")}>Abrir WhatsApp</Button>}</div></CardContent></Card></>}</div></div>
+      <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><div className="space-y-4"><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><UserRound className="h-5 w-5" /> Cliente e segmento</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Selecionar lead</Label><select className="h-10 w-full rounded-md border px-3" value={leadId} onChange={(e) => setLeadId(e.target.value)}><option value="">Sem lead vinculado</option>{leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.nome} {lead.telefone ? `• ${lead.telefone}` : lead.email ? `• ${lead.email}` : ""}</option>)}</select></div><div className="md:col-span-2 grid gap-3 md:grid-cols-6">{segmentos.map((s) => { const Icon = s.icon; const active = normalizeSegmento(segmento) === s.key; return <button key={s.key} type="button" onClick={() => setSegmento(s.key)} className="rounded-[22px] border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md" style={{ borderColor: active ? C.ruby : "rgba(30,41,63,.12)", background: active ? "rgba(161,28,39,.08)" : "white" }}><Icon className="mb-2 h-5 w-5" style={{ color: active ? C.ruby : C.navy }} /><div className="text-sm font-black" style={{ color: C.navy }}>{s.label}</div></button>; })}</div></CardContent></Card><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><Building2 className="h-5 w-5" /> Tabela e plano</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Grupo/Tabela BB</Label><select className="h-10 w-full rounded-md border px-3" value={groupId} onChange={(e) => setGroupId(e.target.value)}>{!segmentGroups.length && <option value="">Nenhum grupo cadastrado para este segmento</option>}{segmentGroups.map((g) => { const cfg = normalizeConfig(g); const min = cfg.creditRanges.length ? Math.min(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_min || 0); const max = cfg.creditRanges.length ? Math.max(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_max || 0); return <option key={g.id} value={g.id}>{g.nome_grupo || g.grupo} • {brMoney(min)} a {brMoney(max)}</option>; })}</select></div><div><Label>Crédito desejado</Label><Input value={creditoInput} onChange={(e) => { setCreditoInput(formatMoneyInput(parseMoney(e.target.value))); setSimCode(null); }} placeholder="Digite o valor do crédito" />{selectedConfig.creditRanges.length > 0 && credito > 0 && <p className="mt-1 text-xs text-slate-500">Faixa cadastrada do grupo: {brMoney(Math.min(...selectedConfig.creditRanges.map((r) => r.valor)))} a {brMoney(Math.max(...selectedConfig.creditRanges.map((r) => r.valor)))}. Valores acima podem ser simulados com junção de cotas.</p>}</div><div><Label>Prazo</Label><select className="h-10 w-full rounded-md border px-3" value={prazoInput} onChange={(e) => setPrazoInput(e.target.value)}>{availablePrazos.map((p) => <option key={p.id} value={p.prazo}>{p.prazo} meses • Adm {pctHuman(p.taxaAdmPct)} • FR {pctHuman(p.fundoReservaPct)}</option>)}</select></div><div><Label>Contemplação estimada na parcela</Label><Input value={parcelaContemplacaoInput} onChange={(e) => setParcelaContemplacaoInput(e.target.value)} /></div><div><Label>Estratégia de lance</Label><select className="h-10 w-full rounded-md border px-3" value={lanceKey} onChange={(e) => setLanceKey(e.target.value as LanceKey)}>{availableLances.map((l) => <option key={l.key} value={l.key}>{l.nomeComercial}{l.key !== "livre" ? ` • ${pctHuman(l.pct)}` : ""}</option>)}</select></div>{lanceKey === "livre" && <div><Label>Percentual do lance livre</Label><Input value={lanceLivrePct} onChange={(e) => setLanceLivrePct(e.target.value)} placeholder="Ex.: 30,0000" /></div>}{grupoPermiteEmbutido ? <div className="rounded-2xl border bg-slate-50/70 p-3"><label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={usarEmbutido} onChange={(e) => setUsarEmbutido(e.target.checked)} />Usar lance embutido</label><div className="mt-1 text-xs text-slate-500">Máximo do grupo: {pctHuman(selectedConfig.maxLanceEmbutidoPct)}</div></div> : <div className="rounded-2xl border bg-slate-50/70 p-3 text-sm font-semibold text-slate-500">Este grupo não permite lance embutido.</div>}{grupoPermiteEmbutido && usarEmbutido && <div><Label>Percentual do lance embutido</Label><Input value={lanceEmbutidoPct} onChange={(e) => setLanceEmbutidoPct(e.target.value)} placeholder="Ex.: 25,0000" /></div>}</CardContent></Card></div><div className="space-y-4">{calculation.error && <Card className="rounded-[28px] border border-red-200 bg-red-50/80 shadow-sm"><CardContent className="flex items-center gap-2 p-4 text-sm font-semibold text-red-700"><AlertTriangle className="h-5 w-5" /> {calculation.error}</CardContent></Card>}{result && <><div className="grid gap-3 md:grid-cols-2"><Metric label="Crédito contratado" value={brMoney(result.credito)} hint={`Líquido estimado: ${brMoney(result.creditoLiquido)}`} /><Metric label="Parcela antes" value={brMoney(result.parcelaAntes)} hint={`Categoria: ${brMoney(result.valorCategoria)} ÷ ${result.prazo} meses`} /><Metric label="Lance ofertado" value={brMoney(result.lanceOfertadoValor)} hint={`${result.lanceNome} • ${pctHuman(result.lancePct)} sobre o crédito`} /><Metric label="Lance próprio" value={brMoney(result.lanceProprioValor)} hint={`Embutido: ${brMoney(result.lanceEmbutidoValor)}`} /><Metric label="Parcela pós-contemplação" value={brMoney(result.parcelaApos)} hint={`${result.prazoRestanteAposContemplacao} parcelas restantes`} /><Metric label="Investimento até contemplação" value={brMoney(result.investimentoAteContemplacao)} hint={`Até a parcela ${result.parcelaContemplacao}`} /></div><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><CheckCircle2 className="h-5 w-5" /> Resumo para WhatsApp</CardTitle></CardHeader><CardContent className="space-y-3"><textarea className="min-h-[260px] w-full rounded-2xl border bg-slate-50 p-3 text-sm" readOnly value={resumoTexto} /><div className="flex flex-wrap items-center gap-2"><Button onClick={copyResumo} className="rounded-2xl"><Copy className="mr-2 h-4 w-4" /> {copied ? "Copiado!" : "Copiar resumo"}</Button><Button onClick={salvarSimulacao} disabled={salvando} className="rounded-2xl" variant="secondary">{salvando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Salvar simulação</Button>{simCode && <span className="rounded-full border bg-white px-3 py-2 text-xs font-bold" style={{ color: C.ruby }}>Simulação Nº {simCode}</span>}{buildWhatsappLink(userProfile) && <Button variant="secondary" className="rounded-2xl" onClick={() => window.open(buildWhatsappLink(userProfile), "_blank")}>Abrir WhatsApp</Button>}</div></CardContent></Card></>}</div></div>
       <GrupoTabela group={selectedGroup} onSelectCredit={(valor) => { setCreditoInput(formatMoneyInput(valor)); setSimCode(null); }} />
       <ConfigOverlay open={configOpen} onClose={() => setConfigOpen(false)} initialSegmento={segmento} editing={editingGroup} groups={groups} onEditGroup={setEditingGroup} onDeleteGroup={deleteGroup} onSaved={load} />
     </div>

@@ -1,5 +1,5 @@
 // src/pages/simuladores/BBConsorciosSimulator.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,12 +69,15 @@ type BBGroup = {
   lance_embutido_max_pct: number | null;
   permite_fixo_25: boolean | null;
   permite_fixo_50: boolean | null;
-  config: BBConfig | Record<string, any> | null;
+  config: BBConfig | Record<string, any> | string | null;
   is_active: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
   proxima_assembleia?: string | null;
   data_proxima_assembleia?: string | null;
+  proximaAssembleia?: string | null;
+  prox_assembleia?: string | null;
+  proxAssembleia?: string | null;
   next_assembly_date?: string | null;
   nextAssemblyDate?: string | null;
   [key: string]: any;
@@ -137,12 +140,69 @@ const DEFAULT_LANCES: LanceOption[] = [
   { key: "fidelidade", enabled: false, nomeComercial: "Lance Fidelidade", pct: 0 },
 ];
 
+const MEDIAN_KEYS = [
+  "mediana_pct_contemplado",
+  "mediana_pct_lance_livre",
+  "mediana_lance_livre",
+  "mediana_lance",
+  "median_lance",
+  "media_lance_livre",
+  "media_lance",
+  "avg_lance",
+  "lance_medio",
+  "median",
+  "mediana",
+  "medianaLance",
+  "medianaLancePct",
+  "mediaLance",
+  "mediaLancePct",
+  "lanceMedio",
+  "lanceMedioPct",
+  "averageBidPct",
+  "avgBidPct",
+  "medianBidPct",
+];
+
+const BID_KEYS = [
+  "percentual_lance",
+  "lance_pct",
+  "lance_percentual",
+  "percentual",
+  "pct",
+  "bidPct",
+  "bid_percent",
+  "valor_lance_percentual",
+  "lancePct",
+  "lancePercentual",
+  "percentualLance",
+  "bid",
+];
+
 function makeId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function brMoney(v: number) {
   return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
+}
+
+function toNumber(value: any) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (value === null || value === undefined) return 0;
+  const raw = String(value).trim();
+  if (!raw) return 0;
+  const cleaned = raw.replace(/R\$/gi, "").replace(/%/g, "").replace(/\s/g, "").replace(/[^0-9,.-]/g, "");
+  if (!cleaned) return 0;
+  const hasComma = cleaned.includes(",");
+  const normalized = hasComma ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function storedPercent(value: any) {
+  const n = toNumber(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n > 1 ? n / 100 : n;
 }
 
 function parseMoney(value: string) {
@@ -222,29 +282,44 @@ function brDate(value?: string | null) {
   return raw;
 }
 
+function rawConfig(group?: BBGroup | null) {
+  const cfg = group?.config;
+  if (typeof cfg === "string") {
+    try {
+      return JSON.parse(cfg) as Partial<BBConfig> & Record<string, any>;
+    } catch {
+      return {} as Partial<BBConfig> & Record<string, any>;
+    }
+  }
+  return (cfg || {}) as Partial<BBConfig> & Record<string, any>;
+}
+
 function normalizeConfig(group?: BBGroup | null): BBConfig {
-  const raw = (group?.config || {}) as Partial<BBConfig> & Record<string, any>;
+  const raw = rawConfig(group);
   const legacyRanges: CreditRange[] = [];
-  const min = Number(group?.credito_min || 0);
-  const max = Number(group?.credito_max || 0);
+  const min = toNumber(group?.credito_min);
+  const max = toNumber(group?.credito_max);
 
   if (Array.isArray(raw.creditRanges) && raw.creditRanges.length) {
-    legacyRanges.push(...raw.creditRanges.map((r: any) => ({ id: String(r.id || makeId("cred")), label: String(r.label || brMoney(Number(r.valor || 0))), valor: Number(r.valor || 0) })));
+    legacyRanges.push(...raw.creditRanges.map((r: any) => {
+      const valor = toNumber(r.valor ?? r.credito ?? r.value);
+      return { id: String(r.id || makeId("cred")), label: String(r.label || brMoney(valor)), valor };
+    }));
   } else {
     if (min > 0) legacyRanges.push({ id: "legacy_min", label: brMoney(min), valor: min });
     if (max > 0 && max !== min) legacyRanges.push({ id: "legacy_max", label: brMoney(max), valor: max });
   }
 
   const prazoRules: PrazoRule[] = Array.isArray(raw.prazoRules) && raw.prazoRules.length
-    ? raw.prazoRules.map((r: any) => ({ id: String(r.id || makeId("prazo")), prazo: Number(r.prazo || 1), taxaAdmPct: Number(r.taxaAdmPct ?? group?.taxa_adm_pct ?? 0), fundoReservaPct: Number(r.fundoReservaPct ?? group?.fundo_reserva_pct ?? 0) }))
-    : [{ id: "legacy_prazo", prazo: Number(group?.prazo_max || group?.prazo_min || 80), taxaAdmPct: Number(group?.taxa_adm_pct || 0), fundoReservaPct: Number(group?.fundo_reserva_pct || 0) }];
+    ? raw.prazoRules.map((r: any) => ({ id: String(r.id || makeId("prazo")), prazo: toNumber(r.prazo || 1), taxaAdmPct: storedPercent(r.taxaAdmPct ?? group?.taxa_adm_pct ?? 0), fundoReservaPct: storedPercent(r.fundoReservaPct ?? group?.fundo_reserva_pct ?? 0) }))
+    : [{ id: "legacy_prazo", prazo: toNumber(group?.prazo_max || group?.prazo_min || 80), taxaAdmPct: storedPercent(group?.taxa_adm_pct), fundoReservaPct: storedPercent(group?.fundo_reserva_pct) }];
 
   const byKey = new Map<LanceKey, LanceOption>();
   DEFAULT_LANCES.forEach((l) => byKey.set(l.key, { ...l }));
 
   if (Array.isArray(raw.lanceOptions)) {
     raw.lanceOptions.forEach((l: any) => {
-      if (l?.key && byKey.has(l.key)) byKey.set(l.key, { key: l.key, enabled: l.enabled !== false, nomeComercial: String(l.nomeComercial || LANCE_LABELS[l.key as LanceKey]), pct: Number(l.pct || 0) });
+      if (l?.key && byKey.has(l.key)) byKey.set(l.key, { key: l.key, enabled: l.enabled !== false, nomeComercial: String(l.nomeComercial || LANCE_LABELS[l.key as LanceKey]), pct: storedPercent(l.pct) });
     });
   } else {
     byKey.set("livre", { key: "livre", enabled: group?.permite_lance_livre !== false, nomeComercial: "Lance Livre", pct: 0 });
@@ -253,27 +328,30 @@ function normalizeConfig(group?: BBGroup | null): BBConfig {
   }
 
   return {
-    creditRanges: legacyRanges.filter((r) => Number(r.valor || 0) > 0),
-    prazoRules: prazoRules.filter((r) => Number(r.prazo || 0) > 0),
+    creditRanges: legacyRanges.filter((r) => toNumber(r.valor) > 0),
+    prazoRules: prazoRules.filter((r) => toNumber(r.prazo) > 0),
     lanceOptions: Array.from(byKey.values()),
-    maxLanceEmbutidoPct: Number(raw.maxLanceEmbutidoPct ?? group?.lance_embutido_max_pct ?? 0.25),
+    maxLanceEmbutidoPct: storedPercent(raw.maxLanceEmbutidoPct ?? group?.lance_embutido_max_pct ?? 0.25),
     regraPosContemplacao: (raw.regraPosContemplacao as RegraPos) || "saldo_devedor_prazo_restante",
     observacoesRegra: String(raw.observacoesRegra || ""),
     proximaAssembleia: raw.proximaAssembleia || null,
     nextAssemblyDate: raw.nextAssemblyDate || null,
     next_assembly_date: raw.next_assembly_date || null,
-    assemblyResult: raw.assemblyResult || null,
+    assemblyResult: raw.assemblyResult || raw.assembly_result || null,
   };
 }
 
 function groupNextAssembly(group?: BBGroup | null) {
   const cfg = normalizeConfig(group);
+  const raw = rawConfig(group);
   const assembly = cfg.assemblyResult && typeof cfg.assemblyResult === "object" ? cfg.assemblyResult : {};
-  const raw = group?.proxima_assembleia || group?.data_proxima_assembleia || group?.next_assembly_date || group?.nextAssemblyDate || cfg.proximaAssembleia || cfg.nextAssemblyDate || cfg.next_assembly_date || assembly.proximaAssembleia || assembly.nextAssemblyDate || assembly.next_assembly_date;
-  if (raw) return String(raw);
-  const text = `${group?.observacoes || ""} ${cfg.observacoesRegra || ""}`;
-  const match = text.match(/(?:prox\.?|proxima|próxima)\s*(?:assem\.?|assembleia)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
-  return match?.[1] || null;
+  const direct = group?.proxima_assembleia || group?.data_proxima_assembleia || group?.proximaAssembleia || group?.prox_assembleia || group?.proxAssembleia || group?.next_assembly_date || group?.nextAssemblyDate || raw.proxima_assembleia || raw.data_proxima_assembleia || raw.proximaAssembleia || raw.prox_assembleia || raw.proxAssembleia || cfg.proximaAssembleia || cfg.nextAssemblyDate || cfg.next_assembly_date || assembly.proxima_assembleia || assembly.data_proxima_assembleia || assembly.proximaAssembleia || assembly.prox_assembleia || assembly.proxAssembleia || assembly.nextAssemblyDate || assembly.next_assembly_date;
+  if (direct) return String(direct);
+  const text = `${group?.observacoes || ""} ${cfg.observacoesRegra || ""} ${raw.observacoes || ""} ${JSON.stringify(assembly)}`;
+  const prefixed = text.match(/(?:pr[oó]x\.?|proxima|próxima)\s*(?:assem\.?|assembleia)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  if (prefixed?.[1]) return prefixed[1];
+  const anyDate = text.match(/(\d{2}\/\d{2}\/\d{4})/);
+  return anyDate?.[1] || null;
 }
 
 function defaultForm(segmento: SegmentoBB): GroupForm {
@@ -309,7 +387,7 @@ function formFromGroup(group: BBGroup): GroupForm {
     permite_lance_embutido: group.permite_lance_embutido === true,
     creditRanges: cfg.creditRanges.length ? cfg.creditRanges.map((r) => ({ id: r.id, label: r.label, valor: formatMoneyInput(r.valor) })) : [{ id: makeId("cred"), label: "Faixa 1", valor: formatMoneyInput(0) }],
     prazoRules: cfg.prazoRules.length ? cfg.prazoRules.map((r) => ({ id: r.id, prazo: String(r.prazo || 1), taxaAdmPct: formatPercentInput(r.taxaAdmPct), fundoReservaPct: formatPercentInput(r.fundoReservaPct) })) : [{ id: makeId("prazo"), prazo: "80", taxaAdmPct: "0,0000", fundoReservaPct: "0,0000" }],
-    lanceOptions: cfg.lanceOptions.map((l) => ({ key: l.key, enabled: l.enabled !== false, nomeComercial: l.nomeComercial || LANCE_LABELS[l.key], pct: formatPercentInput(l.pct) })),
+    lanceOptions: cfg.lanceOptions.map((l) => ({ key: l.key, enabled: l.enabled, nomeComercial: l.nomeComercial || LANCE_LABELS[l.key], pct: formatPercentInput(l.pct) })),
     maxLanceEmbutidoPct: formatPercentInput(cfg.maxLanceEmbutidoPct),
   };
 }
@@ -403,7 +481,7 @@ function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; 
 
   const taxaAdm = Number(nearestRule?.taxaAdmPct ?? group.taxa_adm_pct ?? 0);
   const fundoReserva = Number(nearestRule?.fundoReservaPct ?? group.fundo_reserva_pct ?? 0);
-  const seguroPct = Number(group.seguro_pct || 0);
+  const seguroPct = storedPercent(group.seguro_pct);
   const permiteEmbutido = group.permite_lance_embutido !== false;
   const maxEmbutidoPct = permiteEmbutido ? Number(cfg.maxLanceEmbutidoPct || 0) : 0;
   const valorCategoria = creditoDigitado * (1 + taxaAdm + fundoReserva);
@@ -453,7 +531,7 @@ function drawRoundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: n
   ctx.arcTo(x + w, y, x + w, y + h, radius);
   ctx.arcTo(x + w, y + h, x, y + h, radius);
   ctx.arcTo(x, y + h, x, y, radius);
-  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.arcTo(x, y, x + radius, y, radius);
   ctx.closePath();
 }
 
@@ -496,19 +574,92 @@ async function loadLogo() {
   return null;
 }
 
-function marketingLancePct(cfg: BBConfig) {
+function extractRows(value: any): any[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "object") return [];
+  const nested = ["rows", "data", "resultados", "results", "contemplados", "lances", "assemblyRows", "assembly_rows"];
+  for (const key of nested) {
+    if (Array.isArray(value[key])) return value[key];
+  }
+  return Object.values(value).filter((v) => v && typeof v === "object" && !Array.isArray(v));
+}
+
+function pickPercentFromObject(obj: any, keys: string[]) {
+  if (!obj || typeof obj !== "object") return 0;
+  for (const key of keys) {
+    if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") {
+      const pct = storedPercent(obj[key]);
+      if (pct > 0) return pct;
+    }
+  }
+  return 0;
+}
+
+function median(values: number[]) {
+  const nums = values.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  if (!nums.length) return 0;
+  const middle = Math.floor(nums.length / 2);
+  return nums.length % 2 ? nums[middle] : (nums[middle - 1] + nums[middle]) / 2;
+}
+
+function marketingConfiguredLancePct(cfg: BBConfig) {
   const preferred = cfg.lanceOptions.find((l) => l.enabled && l.pct > 0) || cfg.lanceOptions.find((l) => l.enabled);
   return Number(preferred?.pct || 0);
+}
+
+function marketingMedianLancePct(group: BBGroup) {
+  const cfg = normalizeConfig(group);
+  const raw = rawConfig(group);
+  const assembly = cfg.assemblyResult && typeof cfg.assemblyResult === "object" ? cfg.assemblyResult : {};
+  const direct = pickPercentFromObject(assembly, MEDIAN_KEYS) || pickPercentFromObject(raw, MEDIAN_KEYS) || pickPercentFromObject(group, MEDIAN_KEYS);
+  if (direct > 0) return direct;
+  const rows = [...extractRows(assembly), ...extractRows(raw.assemblyResult), ...extractRows(raw.assembly_result)];
+  const bids = rows.map((row) => pickPercentFromObject(row, BID_KEYS)).filter((pct) => pct > 0);
+  const med = median(bids);
+  return med > 0 ? med : marketingConfiguredLancePct(cfg);
+}
+
+function drawSegmentIllustration(ctx: CanvasRenderingContext2D, segmento?: string | null, x = 0, y = 0) {
+  const s = normalizeSegmento(segmento);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = C.lightGold;
+  ctx.fillStyle = "rgba(224,206,140,0.16)";
+  ctx.lineWidth = 10;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  if (s === "pesados") {
+    ctx.strokeRect(20, 70, 155, 70);
+    ctx.strokeRect(175, 92, 70, 48);
+    ctx.beginPath(); ctx.arc(70, 156, 26, 0, Math.PI * 2); ctx.arc(205, 156, 26, 0, Math.PI * 2); ctx.stroke();
+  } else if (s === "imoveis") {
+    ctx.beginPath(); ctx.moveTo(30, 120); ctx.lineTo(135, 35); ctx.lineTo(240, 120); ctx.stroke();
+    ctx.strokeRect(62, 120, 146, 98);
+    ctx.strokeRect(122, 158, 36, 60);
+  } else if (s === "motocicletas") {
+    ctx.beginPath(); ctx.arc(58, 165, 34, 0, Math.PI * 2); ctx.arc(210, 165, 34, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(58, 165); ctx.lineTo(112, 104); ctx.lineTo(158, 165); ctx.lineTo(210, 165); ctx.moveTo(112, 104); ctx.lineTo(176, 104); ctx.lineTo(214, 72); ctx.stroke();
+  } else if (s === "outros_bens") {
+    ctx.strokeRect(58, 45, 155, 190);
+    ctx.beginPath(); ctx.moveTo(88, 105); ctx.lineTo(118, 135); ctx.lineTo(180, 75); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(90, 172); ctx.lineTo(180, 172); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(35, 130); ctx.lineTo(65, 84); ctx.lineTo(190, 84); ctx.lineTo(230, 130); ctx.closePath(); ctx.stroke();
+    ctx.strokeRect(55, 130, 160, 48);
+    ctx.beginPath(); ctx.arc(82, 186, 24, 0, Math.PI * 2); ctx.arc(190, 186, 24, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function statusRows(group: BBGroup) {
   const cfg = normalizeConfig(group);
   const prazos = [...cfg.prazoRules].sort((a, b) => b.prazo - a.prazo);
-  const basePrazo = prazos[0] || { id: "prazo", prazo: Number(group.prazo_max || 1), taxaAdmPct: Number(group.taxa_adm_pct || 0), fundoReservaPct: Number(group.fundo_reserva_pct || 0) };
-  const lancePct = marketingLancePct(cfg);
+  const basePrazo = prazos[0] || { id: "prazo", prazo: Number(group.prazo_max || 1), taxaAdmPct: storedPercent(group.taxa_adm_pct), fundoReservaPct: storedPercent(group.fundo_reserva_pct) };
+  const lancePct = marketingMedianLancePct(group);
   return cfg.creditRanges.slice(0, 9).map((range) => {
-    const valorCategoria = range.valor * (1 + Number(basePrazo.taxaAdmPct || 0) + Number(basePrazo.fundoReservaPct || 0));
-    return { credito: brMoney(range.valor), parcela: brMoney(basePrazo.prazo > 0 ? valorCategoria / basePrazo.prazo : 0), prazo: `${basePrazo.prazo}x`, lance: lancePct > 0 ? pctHuman(lancePct, 0) : "Livre" };
+    const valorCategoria = toNumber(range.valor) * (1 + Number(basePrazo.taxaAdmPct || 0) + Number(basePrazo.fundoReservaPct || 0));
+    return { credito: brMoney(range.valor), parcela: brMoney(basePrazo.prazo > 0 ? valorCategoria / basePrazo.prazo : 0), prazo: `${basePrazo.prazo}x`, lance: lancePct > 0 ? pctHuman(lancePct, 1) : "Livre" };
   });
 }
 
@@ -540,51 +691,57 @@ async function saveStatusImage(group: BBGroup) {
   ctx.fill();
   ctx.globalAlpha = 1;
 
+  fillRoundRect(ctx, 64, 56, 552, 168, 32, "rgba(255,255,255,0.97)");
   const logo = await loadLogo();
   if (logo) {
-    const ratio = Math.min(360 / logo.width, 110 / logo.height);
-    ctx.drawImage(logo, 80, 70, logo.width * ratio, logo.height * ratio);
+    const ratio = Math.min(455 / logo.width, 108 / logo.height);
+    const w = logo.width * ratio;
+    const h = logo.height * ratio;
+    ctx.drawImage(logo, 112, 86 + (108 - h) / 2, w, h);
   } else {
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = "800 54px Arial";
-    ctx.fillText("CONSULMAX", 80, 135);
-    ctx.fillStyle = C.lightGold;
-    ctx.font = "700 20px Arial";
-    ctx.fillText("CONSÓRCIOS", 82, 166);
+    ctx.fillStyle = C.navy;
+    ctx.font = "900 76px Arial";
+    ctx.fillText("CONSULMAX", 104, 145);
+    ctx.fillStyle = C.ruby;
+    ctx.font = "800 28px Arial";
+    ctx.fillText("CONSÓRCIOS", 108, 184);
   }
 
-  fillRoundRect(ctx, 80, 225, 920, 126, 32, "rgba(255,255,255,0.12)");
+  fillRoundRect(ctx, 674, 56, 342, 224, 34, "rgba(255,255,255,0.13)");
+  drawSegmentIllustration(ctx, group.segmento, 708, 70);
+
+  fillRoundRect(ctx, 80, 315, 920, 126, 32, "rgba(255,255,255,0.12)");
   ctx.fillStyle = C.lightGold;
   ctx.font = "800 30px Arial";
-  ctx.fillText(`Próxima assembleia: ${brDate(groupNextAssembly(group))}`, 118, 278);
+  ctx.fillText(`Próxima assembleia: ${brDate(groupNextAssembly(group))}`, 118, 368);
   ctx.fillStyle = "#FFFFFF";
   ctx.font = "800 38px Arial";
-  ctx.fillText("Vagas limitadas", 118, 326);
+  ctx.fillText("Vagas limitadas", 118, 416);
   ctx.font = "900 66px Arial";
-  wrapText(ctx, "Tire seus sonhos do papel com a Consulmax", 80, 475, 880, 76);
+  wrapText(ctx, "Tire seus sonhos do papel com a Consulmax", 80, 570, 880, 76);
   ctx.fillStyle = C.lightGold;
   ctx.font = "800 30px Arial";
-  ctx.fillText(`Categoria: ${getStatusSegmentoLabel(group.segmento)}`, 82, 655);
+  ctx.fillText(`Categoria: ${getStatusSegmentoLabel(group.segmento)}`, 82, 745);
 
-  fillRoundRect(ctx, 60, 720, 960, 760, 34, "#FFFFFF");
+  fillRoundRect(ctx, 60, 800, 960, 680, 34, "#FFFFFF");
   ctx.fillStyle = C.navy;
   ctx.font = "900 28px Arial";
-  ctx.fillText("Crédito", 105, 785);
-  ctx.fillText("Parcela", 370, 785);
-  ctx.fillText("Prazo", 655, 785);
-  ctx.fillText("% Lance", 795, 785);
+  ctx.fillText("Crédito", 105, 865);
+  ctx.fillText("Parcela", 370, 865);
+  ctx.fillText("Prazo", 655, 865);
+  ctx.fillText("% Lance", 795, 865);
   ctx.strokeStyle = "rgba(30,41,63,0.14)";
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(95, 815);
-  ctx.lineTo(985, 815);
+  ctx.moveTo(95, 895);
+  ctx.lineTo(985, 895);
   ctx.stroke();
 
   rows.forEach((row, index) => {
-    const y = 875 + index * 66;
-    if (index % 2 === 0) fillRoundRect(ctx, 88, y - 42, 900, 56, 18, "#F7F8FB");
+    const y = 955 + index * 58;
+    if (index % 2 === 0) fillRoundRect(ctx, 88, y - 40, 900, 52, 18, "#F7F8FB");
     ctx.fillStyle = C.navy;
-    ctx.font = "800 26px Arial";
+    ctx.font = "800 25px Arial";
     ctx.fillText(row.credito, 105, y);
     ctx.fillText(row.parcela, 370, y);
     ctx.fillText(row.prazo, 655, y);
@@ -700,7 +857,7 @@ function GrupoTabela({ group, onSelectCredit }: { group: BBGroup | null; onSelec
         <div className="overflow-auto rounded-2xl border">
           <table className="w-full min-w-[820px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-3">Faixa</th><th className="p-3">Crédito</th><th className="p-3">Prazo</th><th className="p-3">Taxa adm</th><th className="p-3">Fundo reserva</th><th className="p-3">Parcela portal</th><th className="p-3">Ação</th></tr></thead>
-            <tbody>{cfg.creditRanges.flatMap((range) => prazos.map((prazo) => { const valorCategoria = range.valor * (1 + prazo.taxaAdmPct + prazo.fundoReservaPct); const parcela = prazo.prazo > 0 ? valorCategoria / prazo.prazo : 0; return <tr key={`${range.id}_${prazo.id}`} className="border-t cursor-pointer transition hover:bg-slate-50" title="Clique para usar este crédito na simulação" onClick={() => onSelectCredit?.(range.valor)}><td className="p-3 font-semibold text-slate-700">{range.label || brMoney(range.valor)}</td><td className="p-3">{brMoney(range.valor)}</td><td className="p-3">{prazo.prazo} meses</td><td className="p-3">{pctHuman(prazo.taxaAdmPct)}</td><td className="p-3">{pctHuman(prazo.fundoReservaPct)}</td><td className="p-3 font-semibold">{brMoney(parcela)}</td><td className="p-3"><Button type="button" variant="secondary" className="h-8 rounded-xl px-3 text-xs" onClick={(e) => { e.stopPropagation(); onSelectCredit?.(range.valor); }}>Usar crédito</Button></td></tr>; }))}</tbody>
+            <tbody>{cfg.creditRanges.flatMap((range) => prazos.map((prazo) => { const creditoFaixa = toNumber(range.valor); const valorCategoria = creditoFaixa * (1 + prazo.taxaAdmPct + prazo.fundoReservaPct); const parcela = prazo.prazo > 0 ? valorCategoria / prazo.prazo : 0; return <tr key={`${range.id}_${prazo.id}`} className="border-t cursor-pointer transition hover:bg-slate-50" title="Clique para usar este crédito na simulação" onClick={() => onSelectCredit?.(creditoFaixa)}><td className="p-3 font-semibold text-slate-700">{range.label || brMoney(creditoFaixa)}</td><td className="p-3">{brMoney(creditoFaixa)}</td><td className="p-3">{prazo.prazo} meses</td><td className="p-3">{pctHuman(prazo.taxaAdmPct)}</td><td className="p-3">{pctHuman(prazo.fundoReservaPct)}</td><td className="p-3 font-semibold">{brMoney(parcela)}</td><td className="p-3"><Button type="button" variant="secondary" className="h-8 rounded-xl px-3 text-xs" onClick={(e) => { e.stopPropagation(); onSelectCredit?.(creditoFaixa); }}>Usar crédito</Button></td></tr>; }))}</tbody>
           </table>
         </div><div className="mt-2 text-xs text-slate-500">Clique na linha ou no botão Usar crédito para preencher automaticamente o campo Crédito desejado. A tabela é apenas referência dos créditos disponíveis; a simulação calcula a parcela antes com base no crédito digitado.</div>
       </CardContent>
@@ -709,6 +866,7 @@ function GrupoTabela({ group, onSelectCredit }: { group: BBGroup | null; onSelec
 }
 
 export default function BBConsorciosSimulator() {
+  const creditoInputRef = useRef<HTMLInputElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [tableMissing, setTableMissing] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -775,6 +933,17 @@ export default function BBConsorciosSimulator() {
     setLanceLivrePct(formatPercentInput(livre?.pct || 0));
     setSimCode(null);
   }, [selectedGroup?.id]);
+
+  function selecionarCredito(valor: number) {
+    const creditoSelecionado = toNumber(valor);
+    if (!creditoSelecionado) return;
+    setCreditoInput(formatMoneyInput(creditoSelecionado));
+    setSimCode(null);
+    requestAnimationFrame(() => {
+      creditoInputRef.current?.focus();
+      creditoInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
 
   const credito = parseMoney(creditoInput);
   const prazo = numberFrom(prazoInput);
@@ -862,8 +1031,8 @@ ${wa}`;
     <div className="p-4 md:p-6 space-y-6">
       <section className="relative overflow-hidden rounded-[28px] border p-6 md:p-8 shadow-sm" style={{ background: "linear-gradient(135deg, rgba(30,41,63,.98), rgba(161,28,39,.94))", borderColor: "rgba(255,255,255,.22)" }}><div className="absolute -right-16 -top-16 h-52 w-52 rounded-full blur-3xl" style={{ background: "rgba(181,165,115,.28)" }} /><div className="relative z-[1] flex flex-col gap-5 md:flex-row md:items-end md:justify-between"><div className="max-w-3xl text-white"><div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur"><Calculator className="h-3.5 w-3.5" /> Simulador BB Consórcios</div><h1 className="text-2xl md:text-4xl font-black tracking-tight">Configure a estratégia de crédito e lance</h1><p className="mt-3 text-sm md:text-base text-white/82">Simulação por grupo/tabela, com faixas de crédito, prazos, taxas e lances permitidos.</p></div>{isAdmin && <Button type="button" onClick={() => { setEditingGroup(null); setConfigOpen(true); }} className="h-11 shrink-0 rounded-2xl bg-white px-4 font-semibold text-slate-900 hover:bg-white/90"><Settings className="mr-2 h-4 w-4" /> Configurar grupos</Button>}</div></section>
       {tableMissing && <Card className="rounded-[28px] border border-amber-200 bg-amber-50/80 shadow-sm"><CardContent className="space-y-4 p-5"><div className="flex items-center gap-2 font-bold text-amber-800"><AlertTriangle className="h-5 w-5" /> Tabela sim_bb_groups ainda não existe</div><p className="text-sm text-amber-800">Rode este SQL no Supabase para habilitar o simulador BB:</p><pre className="max-h-[320px] overflow-auto rounded-2xl bg-slate-950 p-4 text-xs text-white">{sqlForSetup()}</pre></CardContent></Card>}
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><div className="space-y-4"><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><UserRound className="h-5 w-5" /> Cliente e segmento</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Selecionar lead</Label><select className="h-10 w-full rounded-md border px-3" value={leadId} onChange={(e) => setLeadId(e.target.value)}><option value="">Sem lead vinculado</option>{leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.nome} {lead.telefone ? `• ${lead.telefone}` : lead.email ? `• ${lead.email}` : ""}</option>)}</select></div><div className="md:col-span-2 grid gap-3 md:grid-cols-6">{segmentos.map((s) => { const Icon = s.icon; const active = normalizeSegmento(segmento) === s.key; return <button key={s.key} type="button" onClick={() => setSegmento(s.key)} className="rounded-[22px] border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md" style={{ borderColor: active ? C.ruby : "rgba(30,41,63,.12)", background: active ? "rgba(161,28,39,.08)" : "white" }}><Icon className="mb-2 h-5 w-5" style={{ color: active ? C.ruby : C.navy }} /><div className="text-sm font-black" style={{ color: C.navy }}>{s.label}</div></button>; })}</div></CardContent></Card><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><Building2 className="h-5 w-5" /> Tabela e plano</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Grupo/Tabela BB</Label><select className="h-10 w-full rounded-md border px-3" value={groupId} onChange={(e) => setGroupId(e.target.value)}>{!segmentGroups.length && <option value="">Nenhum grupo cadastrado para este segmento</option>}{segmentGroups.map((g) => { const cfg = normalizeConfig(g); const min = cfg.creditRanges.length ? Math.min(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_min || 0); const max = cfg.creditRanges.length ? Math.max(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_max || 0); return <option key={g.id} value={g.id}>{g.nome_grupo || g.grupo} • {brMoney(min)} a {brMoney(max)}</option>; })}</select></div><div><Label>Crédito desejado</Label><Input value={creditoInput} onChange={(e) => { setCreditoInput(formatMoneyInput(parseMoney(e.target.value))); setSimCode(null); }} placeholder="Digite o valor do crédito" />{selectedConfig.creditRanges.length > 0 && credito > 0 && <p className="mt-1 text-xs text-slate-500">Faixa cadastrada do grupo: {brMoney(Math.min(...selectedConfig.creditRanges.map((r) => r.valor)))} a {brMoney(Math.max(...selectedConfig.creditRanges.map((r) => r.valor)))}. Valores acima podem ser simulados com junção de cotas.</p>}</div><div><Label>Prazo</Label><select className="h-10 w-full rounded-md border px-3" value={prazoInput} onChange={(e) => setPrazoInput(e.target.value)}>{availablePrazos.map((p) => <option key={p.id} value={p.prazo}>{p.prazo} meses • Adm {pctHuman(p.taxaAdmPct)} • FR {pctHuman(p.fundoReservaPct)}</option>)}</select></div><div><Label>Contemplação estimada na parcela</Label><Input value={parcelaContemplacaoInput} onChange={(e) => setParcelaContemplacaoInput(e.target.value)} /></div><div><Label>Estratégia de lance</Label><select className="h-10 w-full rounded-md border px-3" value={lanceKey} onChange={(e) => setLanceKey(e.target.value as LanceKey)}>{availableLances.map((l) => <option key={l.key} value={l.key}>{l.nomeComercial}{l.key !== "livre" ? ` • ${pctHuman(l.pct)}` : ""}</option>)}</select></div>{lanceKey === "livre" && <div><Label>Percentual do lance livre</Label><Input value={lanceLivrePct} onChange={(e) => setLanceLivrePct(e.target.value)} placeholder="Ex.: 30,0000" /></div>}{grupoPermiteEmbutido ? <div className="rounded-2xl border bg-slate-50/70 p-3"><label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={usarEmbutido} onChange={(e) => setUsarEmbutido(e.target.checked)} />Usar lance embutido</label><div className="mt-1 text-xs text-slate-500">Máximo do grupo: {pctHuman(selectedConfig.maxLanceEmbutidoPct)}</div></div> : <div className="rounded-2xl border bg-slate-50/70 p-3 text-sm font-semibold text-slate-500">Este grupo não permite lance embutido.</div>}{grupoPermiteEmbutido && usarEmbutido && <div><Label>Percentual do lance embutido</Label><Input value={lanceEmbutidoPct} onChange={(e) => setLanceEmbutidoPct(e.target.value)} placeholder="Ex.: 25,0000" /></div>}</CardContent></Card></div><div className="space-y-4">{calculation.error && <Card className="rounded-[28px] border border-red-200 bg-red-50/80 shadow-sm"><CardContent className="flex items-center gap-2 p-4 text-sm font-semibold text-red-700"><AlertTriangle className="h-5 w-5" /> {calculation.error}</CardContent></Card>}{result && <><div className="grid gap-3 md:grid-cols-2"><Metric label="Crédito contratado" value={brMoney(result.credito)} hint={`Líquido estimado: ${brMoney(result.creditoLiquido)}`} /><Metric label="Parcela antes" value={brMoney(result.parcelaAntes)} hint={`Categoria: ${brMoney(result.valorCategoria)} ÷ ${result.prazo} meses`} /><Metric label="Lance ofertado" value={brMoney(result.lanceOfertadoValor)} hint={`${result.lanceNome} • ${pctHuman(result.lancePct)} sobre o crédito`} /><Metric label="Lance próprio" value={brMoney(result.lanceProprioValor)} hint={`Embutido: ${brMoney(result.lanceEmbutidoValor)}`} /><Metric label="Parcela pós-contemplação" value={brMoney(result.parcelaApos)} hint={`${result.prazoRestanteAposContemplacao} parcelas restantes`} /><Metric label="Investimento até contemplação" value={brMoney(result.investimentoAteContemplacao)} hint={`Até a parcela ${result.parcelaContemplacao}`} /></div><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><CheckCircle2 className="h-5 w-5" /> Resumo para WhatsApp</CardTitle></CardHeader><CardContent className="space-y-3"><textarea className="min-h-[260px] w-full rounded-2xl border bg-slate-50 p-3 text-sm" readOnly value={resumoTexto} /><div className="flex flex-wrap items-center gap-2"><Button onClick={copyResumo} className="rounded-2xl"><Copy className="mr-2 h-4 w-4" /> {copied ? "Copiado!" : "Copiar resumo"}</Button><Button onClick={salvarSimulacao} disabled={salvando} className="rounded-2xl" variant="secondary">{salvando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Salvar simulação</Button>{simCode && <span className="rounded-full border bg-white px-3 py-2 text-xs font-bold" style={{ color: C.ruby }}>Simulação Nº {simCode}</span>}{buildWhatsappLink(userProfile) && <Button variant="secondary" className="rounded-2xl" onClick={() => window.open(buildWhatsappLink(userProfile), "_blank")}>Abrir WhatsApp</Button>}</div></CardContent></Card></>}</div></div>
-      <GrupoTabela group={selectedGroup} onSelectCredit={(valor) => { setCreditoInput(formatMoneyInput(valor)); setSimCode(null); }} />
+      <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><div className="space-y-4"><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><UserRound className="h-5 w-5" /> Cliente e segmento</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Selecionar lead</Label><select className="h-10 w-full rounded-md border px-3" value={leadId} onChange={(e) => setLeadId(e.target.value)}><option value="">Sem lead vinculado</option>{leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.nome} {lead.telefone ? `• ${lead.telefone}` : lead.email ? `• ${lead.email}` : ""}</option>)}</select></div><div className="md:col-span-2 grid gap-3 md:grid-cols-6">{segmentos.map((s) => { const Icon = s.icon; const active = normalizeSegmento(segmento) === s.key; return <button key={s.key} type="button" onClick={() => setSegmento(s.key)} className="rounded-[22px] border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md" style={{ borderColor: active ? C.ruby : "rgba(30,41,63,.12)", background: active ? "rgba(161,28,39,.08)" : "white" }}><Icon className="mb-2 h-5 w-5" style={{ color: active ? C.ruby : C.navy }} /><div className="text-sm font-black" style={{ color: C.navy }}>{s.label}</div></button>; })}</div></CardContent></Card><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><Building2 className="h-5 w-5" /> Tabela e plano</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="md:col-span-2"><Label>Grupo/Tabela BB</Label><select className="h-10 w-full rounded-md border px-3" value={groupId} onChange={(e) => setGroupId(e.target.value)}>{!segmentGroups.length && <option value="">Nenhum grupo cadastrado para este segmento</option>}{segmentGroups.map((g) => { const cfg = normalizeConfig(g); const min = cfg.creditRanges.length ? Math.min(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_min || 0); const max = cfg.creditRanges.length ? Math.max(...cfg.creditRanges.map((r) => r.valor)) : Number(g.credito_max || 0); return <option key={g.id} value={g.id}>{g.nome_grupo || g.grupo} • {brMoney(min)} a {brMoney(max)}</option>; })}</select></div><div><Label>Crédito desejado</Label><Input ref={creditoInputRef} value={creditoInput} onChange={(e) => { setCreditoInput(formatMoneyInput(parseMoney(e.target.value))); setSimCode(null); }} placeholder="Digite o valor do crédito" />{selectedConfig.creditRanges.length > 0 && credito > 0 && <p className="mt-1 text-xs text-slate-500">Faixa cadastrada do grupo: {brMoney(Math.min(...selectedConfig.creditRanges.map((r) => r.valor)))} a {brMoney(Math.max(...selectedConfig.creditRanges.map((r) => r.valor)))}. Valores acima podem ser simulados com junção de cotas.</p>}</div><div><Label>Prazo</Label><select className="h-10 w-full rounded-md border px-3" value={prazoInput} onChange={(e) => setPrazoInput(e.target.value)}>{availablePrazos.map((p) => <option key={p.id} value={p.prazo}>{p.prazo} meses • Adm {pctHuman(p.taxaAdmPct)} • FR {pctHuman(p.fundoReservaPct)}</option>)}</select></div><div><Label>Contemplação estimada na parcela</Label><Input value={parcelaContemplacaoInput} onChange={(e) => setParcelaContemplacaoInput(e.target.value)} /></div><div><Label>Estratégia de lance</Label><select className="h-10 w-full rounded-md border px-3" value={lanceKey} onChange={(e) => setLanceKey(e.target.value as LanceKey)}>{availableLances.map((l) => <option key={l.key} value={l.key}>{l.nomeComercial}{l.key !== "livre" ? ` • ${pctHuman(l.pct)}` : ""}</option>)}</select></div>{lanceKey === "livre" && <div><Label>Percentual do lance livre</Label><Input value={lanceLivrePct} onChange={(e) => setLanceLivrePct(e.target.value)} placeholder="Ex.: 30,0000" /></div>}{grupoPermiteEmbutido ? <div className="rounded-2xl border bg-slate-50/70 p-3"><label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={usarEmbutido} onChange={(e) => setUsarEmbutido(e.target.checked)} />Usar lance embutido</label><div className="mt-1 text-xs text-slate-500">Máximo do grupo: {pctHuman(selectedConfig.maxLanceEmbutidoPct)}</div></div> : <div className="rounded-2xl border bg-slate-50/70 p-3 text-sm font-semibold text-slate-500">Este grupo não permite lance embutido.</div>}{grupoPermiteEmbutido && usarEmbutido && <div><Label>Percentual do lance embutido</Label><Input value={lanceEmbutidoPct} onChange={(e) => setLanceEmbutidoPct(e.target.value)} placeholder="Ex.: 25,0000" /></div>}</CardContent></Card></div><div className="space-y-4">{calculation.error && <Card className="rounded-[28px] border border-red-200 bg-red-50/80 shadow-sm"><CardContent className="flex items-center gap-2 p-4 text-sm font-semibold text-red-700"><AlertTriangle className="h-5 w-5" /> {calculation.error}</CardContent></Card>}{result && <><div className="grid gap-3 md:grid-cols-2"><Metric label="Crédito contratado" value={brMoney(result.credito)} hint={`Líquido estimado: ${brMoney(result.creditoLiquido)}`} /><Metric label="Parcela antes" value={brMoney(result.parcelaAntes)} hint={`Categoria: ${brMoney(result.valorCategoria)} ÷ ${result.prazo} meses`} /><Metric label="Lance ofertado" value={brMoney(result.lanceOfertadoValor)} hint={`${result.lanceNome} • ${pctHuman(result.lancePct)} sobre o crédito`} /><Metric label="Lance próprio" value={brMoney(result.lanceProprioValor)} hint={`Embutido: ${brMoney(result.lanceEmbutidoValor)}`} /><Metric label="Parcela pós-contemplação" value={brMoney(result.parcelaApos)} hint={`${result.prazoRestanteAposContemplacao} parcelas restantes`} /><Metric label="Investimento até contemplação" value={brMoney(result.investimentoAteContemplacao)} hint={`Até a parcela ${result.parcelaContemplacao}`} /></div><Card className="rounded-[28px] border bg-white/78 shadow-sm backdrop-blur"><CardHeader><CardTitle className="flex items-center gap-2" style={{ color: C.navy }}><CheckCircle2 className="h-5 w-5" /> Resumo para WhatsApp</CardTitle></CardHeader><CardContent className="space-y-3"><textarea className="min-h-[260px] w-full rounded-2xl border bg-slate-50 p-3 text-sm" readOnly value={resumoTexto} /><div className="flex flex-wrap items-center gap-2"><Button onClick={copyResumo} className="rounded-2xl"><Copy className="mr-2 h-4 w-4" /> {copied ? "Copiado!" : "Copiar resumo"}</Button><Button onClick={salvarSimulacao} disabled={salvando} className="rounded-2xl" variant="secondary">{salvando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Salvar simulação</Button>{simCode && <span className="rounded-full border bg-white px-3 py-2 text-xs font-bold" style={{ color: C.ruby }}>Simulação Nº {simCode}</span>}{buildWhatsappLink(userProfile) && <Button variant="secondary" className="rounded-2xl" onClick={() => window.open(buildWhatsappLink(userProfile), "_blank")}>Abrir WhatsApp</Button>}</div></CardContent></Card></>}</div></div>
+      <GrupoTabela group={selectedGroup} onSelectCredit={selecionarCredito} />
       <ConfigOverlay open={configOpen} onClose={() => setConfigOpen(false)} initialSegmento={segmento} editing={editingGroup} groups={groups} onEditGroup={setEditingGroup} onDeleteGroup={deleteGroup} onSaved={load} />
     </div>
   );

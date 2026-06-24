@@ -18,6 +18,14 @@ type WorkerResult = {
   deactivated?: number
   message?: string
   error?: string
+  attempts?: number
+  attemptHistory?: Array<{
+    attempt: number
+    ok: boolean
+    status?: string
+    error?: string
+    worker_status?: number
+  }>
   details?: Record<string, any>
 }
 
@@ -34,6 +42,9 @@ const DEFAULT_SEGMENTS: SegmentKey[] = [
   'imoveis',
 ]
 
+const MAX_ATTEMPTS = Number(process.env.BB_CRON_RETRY_ATTEMPTS || 3)
+const RETRY_DELAY_MS = Number(process.env.BB_CRON_RETRY_DELAY_MS || 8000)
+
 function normalizeWorkerUrl(url: string) {
   return url.replace(/\/+$/, '')
 }
@@ -48,6 +59,10 @@ function parseSegments(value: string | undefined): SegmentKey[] {
     .filter((item) => allowed.has(item))
 
   return parsed.length ? parsed : DEFAULT_SEGMENTS
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function assertCronAuthorized(req: VercelRequest) {
@@ -138,6 +153,43 @@ async function callWorker(segmento: SegmentKey): Promise<WorkerResult> {
   }
 }
 
+async function callWorkerWithRetry(segmento: SegmentKey): Promise<WorkerResult> {
+  const attempts = Math.max(1, Math.min(5, MAX_ATTEMPTS || 3))
+  const history: WorkerResult['attemptHistory'] = []
+  let lastResult: WorkerResult | null = null
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const result = await callWorker(segmento)
+    lastResult = result
+
+    history.push({
+      attempt,
+      ok: result.ok,
+      status: result.status,
+      error: result.error,
+      worker_status: Number(result.details?.worker_status || 0) || undefined,
+    })
+
+    if (result.ok) {
+      return {
+        ...result,
+        attempts: attempt,
+        attemptHistory: history,
+      }
+    }
+
+    if (attempt < attempts) {
+      await sleep(RETRY_DELAY_MS)
+    }
+  }
+
+  return {
+    ...(lastResult as WorkerResult),
+    attempts,
+    attemptHistory: history,
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
 
@@ -153,7 +205,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const results: WorkerResult[] = []
 
     for (const segmento of segments) {
-      const result = await callWorker(segmento)
+      const result = await callWorkerWithRetry(segmento)
       results.push(result)
     }
 
@@ -164,8 +216,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         created: acc.created + Number(item.created || 0),
         updated: acc.updated + Number(item.updated || 0),
         deactivated: acc.deactivated + Number(item.deactivated || 0),
+        attempts: acc.attempts + Number(item.attempts || 1),
+        retriedSegments: acc.retriedSegments + (Number(item.attempts || 1) > 1 ? 1 : 0),
       }),
-      { found: 0, created: 0, updated: 0, deactivated: 0 }
+      { found: 0, created: 0, updated: 0, deactivated: 0, attempts: 0, retriedSegments: 0 }
     )
 
     return res.status(failed.length ? 207 : 200).json({
@@ -175,6 +229,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       startedAt,
       finishedAt: new Date().toISOString(),
       segments,
+      retry: {
+        maxAttempts: Math.max(1, Math.min(5, MAX_ATTEMPTS || 3)),
+        delayMs: RETRY_DELAY_MS,
+      },
       summary,
       results,
     })

@@ -17,7 +17,7 @@ type RobotResult = {
 }
 
 export const config = {
-  maxDuration: 60,
+  maxDuration: 800,
 }
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
@@ -90,7 +90,7 @@ function normalizeWorkerUrl(url: string) {
   return url.replace(/\/+$/, '')
 }
 
-async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<RobotResult> {
+function workerConfigMissing() {
   const workerUrl = process.env.BB_GROUPS_WORKER_URL || ''
   const secret = process.env.ROBOT_API_SECRET || ''
   const missing = [
@@ -99,6 +99,12 @@ async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<Ro
   ]
     .filter(([, value]) => !value)
     .map(([key]) => key)
+
+  return { workerUrl, secret, missing }
+}
+
+async function callBBWorker(path: string, body: Record<string, any>, fallbackMessage: string): Promise<RobotResult> {
+  const { workerUrl, secret, missing } = workerConfigMissing()
 
   if (missing.length) {
     return {
@@ -112,8 +118,7 @@ async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<Ro
     }
   }
 
-  const segmento = options.segmento || options.bbSegmento || 'auto_fipe'
-  const endpoint = `${normalizeWorkerUrl(workerUrl)}/sync/bb/groups`
+  const endpoint = `${normalizeWorkerUrl(workerUrl)}${path}`
 
   try {
     const response = await fetch(endpoint, {
@@ -122,7 +127,7 @@ async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<Ro
         'Content-Type': 'application/json',
         Authorization: `Bearer ${secret}`,
       },
-      body: JSON.stringify({ segmento }),
+      body: JSON.stringify(body),
     })
 
     const text = await response.text()
@@ -151,7 +156,7 @@ async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<Ro
       ok: Boolean(data?.ok ?? true),
       status: data?.status || 'synced',
       administradora: 'bb',
-      message: data?.message || `Sincronização BB concluída pelo worker externo para o segmento ${segmento}.`,
+      message: data?.message || fallbackMessage,
       found: data?.found,
       created: data?.created,
       updated: data?.updated,
@@ -171,15 +176,42 @@ async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<Ro
   }
 }
 
-async function loadBBAssemblyRobot() {
-  const mod: any = await import('./bb-assemblies-rpa.cjs')
-  return mod.default || mod
+async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<RobotResult> {
+  const segmento = options.segmento || options.bbSegmento || 'auto_fipe'
+  return await callBBWorker(
+    '/sync/bb/groups',
+    { segmento },
+    `Sincronização BB concluída pelo worker externo para o segmento ${segmento}.`
+  )
+}
+
+async function callBBAssemblyWorker(options: Record<string, any> = {}): Promise<RobotResult> {
+  const grupo = options.grupo || options.group
+
+  if (!grupo) {
+    return {
+      ok: false,
+      status: 'error',
+      administradora: 'bb',
+      message: 'Informe o número do grupo para buscar resultado de assembleia.',
+    }
+  }
+
+  return await callBBWorker(
+    '/sync/bb/assembly-result',
+    { grupo },
+    `Resultado de assembleia BB atualizado pelo worker externo para o grupo ${grupo}.`
+  )
 }
 
 async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}): Promise<RobotResult> {
   if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
 
-  if (administradora === 'bb' && !isBBAssemblyRequest(options)) {
+  if (administradora === 'bb') {
+    if (isBBAssemblyRequest(options)) {
+      return await callBBAssemblyWorker(options)
+    }
+
     return await callBBGroupsWorker(options)
   }
 
@@ -193,27 +225,8 @@ async function syncByRpa(administradora: AdminKey, options: Record<string, any> 
       administradora,
       message: `Robô ${administradora.toUpperCase()} criado, mas ainda faltam variáveis seguras na Vercel: ${missing.join(', ')}.`,
       details: {
-        required_envs: administradora === 'bb'
-          ? ['BB_ROBOT_PORTAL_URL', 'BB_ROBOT_USERNAME', 'BB_ROBOT_PASSWORD']
-          : ['MAGGI_ROBOT_PORTAL_URL', 'MAGGI_ROBOT_USERNAME', 'MAGGI_ROBOT_PASSWORD'],
+        required_envs: ['MAGGI_ROBOT_PORTAL_URL', 'MAGGI_ROBOT_USERNAME', 'MAGGI_ROBOT_PASSWORD'],
       },
-    }
-  }
-
-  if (administradora === 'bb') {
-    try {
-      const grupo = options.grupo || options.group
-      if (!grupo) throw new Error('Informe o número do grupo para buscar resultado de assembleia.')
-      const mod = await loadBBAssemblyRobot()
-      return await mod.syncBBAssemblyResultRpa(env, admin, { grupo })
-    } catch (err: any) {
-      return {
-        ok: false,
-        status: 'error',
-        administradora,
-        message: `Falha ao executar robô BB: ${err?.message || String(err)}`,
-        details: { name: err?.name || null },
-      }
     }
   }
 

@@ -882,6 +882,11 @@ export default function BBConsorciosSimulator() {
   const selectedGroup = useMemo(() => groups.find((g) => g.id === groupId) || null, [groups, groupId]);
   const selectedConfig = useMemo(() => normalizeConfig(selectedGroup), [selectedGroup]);
   const selectedLead = useMemo(() => leads.find((l) => l.id === leadId) || null, [leads, leadId]);
+  const selectedRange = useMemo(() => {
+    const creditoAtual = parseMoney(creditoInput);
+    const faixa = selectedConfig.creditRanges.find((range) => Math.round(Number(range.valor || 0) * 100) === Math.round(creditoAtual * 100));
+    return faixa || { id: "credito_desejado", label: "Crédito desejado", valor: creditoAtual };
+  }, [selectedConfig, creditoInput]);
   const availableLances = useMemo(() => selectedConfig.lanceOptions.filter((l) => l.enabled), [selectedConfig]);
   const availablePrazos = useMemo(() => [...selectedConfig.prazoRules].sort((a, b) => a.prazo - b.prazo), [selectedConfig]);
   const grupoPermiteEmbutido = selectedGroup?.permite_lance_embutido !== false;
@@ -898,7 +903,7 @@ export default function BBConsorciosSimulator() {
     setSimCode(null);
   }, [selectedGroup?.id]);
 
-  const credito = parseMoney(creditoInput);
+  const credito = Number(selectedRange.valor || 0);
   const prazo = numberFrom(prazoInput);
   const parcelaContemplacao = numberFrom(parcelaContemplacaoInput);
   const calculation = calcBB({ group: selectedGroup, credito, prazo, parcelaContemplacao, lanceKey, lanceLivrePct: parsePercent(lanceLivrePct), usarEmbutido: grupoPermiteEmbutido && usarEmbutido, lanceEmbutidoPct: parsePercent(lanceEmbutidoPct) });

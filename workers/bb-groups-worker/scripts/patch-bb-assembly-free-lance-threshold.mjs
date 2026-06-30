@@ -18,15 +18,15 @@ function replaceRegex(regex, replacement, marker) {
 }
 
 replaceRegex(
-  /function shouldRefineAssemblyWithDetails\(result: any, fixedPcts: number\[\]\) \{[\s\S]*?\n\}/,
+  /function shouldRefineAssemblyWithDetails\([^)]*\) \{[\s\S]*?\n\}/,
   [
     "function shouldRefineAssemblyWithDetails(_result: any, fixedPcts: number[]) {",
     "  // Sempre que o grupo tiver lance fixo, abre os detalhes da assembleia.",
-    "  // O menor lance livre correto será o menor percentual imediatamente acima do fixo usado como referência.",
+    "  // O menor lance livre correto será o menor percentual imediatamente acima do MAIOR fixo do grupo.",
     "  return fixedPcts.length > 0;",
     "}",
   ].join("\n"),
-  "Sempre que o grupo tiver lance fixo"
+  "imediatamente acima do MAIOR fixo do grupo"
 );
 
 const refinedFunction = [
@@ -48,21 +48,7 @@ const refinedFunction = [
   "    .filter((pct) => pct > 0 && pct <= 1);",
   "",
   "  const sortedFixedPcts = uniqueDecimalPcts(fixedPcts);",
-  "  const resultMenorPct = Number(result?.menorPct || 0);",
-  "  const matchingFixedPct = sortedFixedPcts.find((pct) => pctAlmostEqual(resultMenorPct, pct));",
-  "  const fixedBelowResumo = resultMenorPct",
-  "    ? sortedFixedPcts.filter((pct) => pct <= resultMenorPct || pctAlmostEqual(pct, resultMenorPct))",
-  "    : [];",
-  "  const fixedWithCandidate = [...sortedFixedPcts]",
-  "    .reverse()",
-  "    .find((fixedPct) => allPcts.some((pct) => pct > fixedPct && !pctAlmostEqual(pct, fixedPct)));",
-  "",
-  "  const fixedReferencePct =",
-  "    matchingFixedPct ||",
-  "    (fixedBelowResumo.length ? fixedBelowResumo[fixedBelowResumo.length - 1] : 0) ||",
-  "    fixedWithCandidate ||",
-  "    sortedFixedPcts[sortedFixedPcts.length - 1] ||",
-  "    0;",
+  "  const fixedReferencePct = sortedFixedPcts[sortedFixedPcts.length - 1] || 0;",
   "",
   "  const freePcts = allPcts",
   "    .filter((pct) => pct > fixedReferencePct && !pctAlmostEqual(pct, fixedReferencePct))",
@@ -76,7 +62,7 @@ const refinedFunction = [
   "      fixedLancePcts: sortedFixedPcts,",
   "      fixedReferencePct,",
   "      detailRows,",
-  "      detailReason: \"Nenhum lance livre imediatamente maior que o lance fixo \" + (fixedReferencePct * 100).toFixed(4) + \"% encontrado.\",",
+  "      detailReason: \"Nenhum lance livre imediatamente maior que o maior lance fixo \" + (fixedReferencePct * 100).toFixed(4) + \"% encontrado.\",",
   "    };",
   "  }",
   "",
@@ -84,7 +70,7 @@ const refinedFunction = [
   "  const menorPct = freePcts[0];",
   "  const medianaPct = maiorPct && menorPct ? (maiorPct + menorPct) / 2 : 0;",
   "",
-  "  log(\"resultado de assembleia refinado por lances livres acima do fixo\", {",
+  "  log(\"resultado de assembleia refinado por menor lance livre acima do maior fixo\", {",
   "    grupo: result.grupo,",
   "    assembleia: result.assembleia,",
   "    resumoMaiorPct: result.maiorPct,",
@@ -119,7 +105,7 @@ const refinedFunction = [
 replaceRegex(
   /async function refineAssemblyResultWithFreeLanceDetails\(page: Page, result: any\) \{[\s\S]*?\n\}\n\nasync function readLatestAssembly/,
   refinedFunction,
-  "fixedReferencePct"
+  "resultado de assembleia refinado por menor lance livre acima do maior fixo"
 );
 
 if (changed) {

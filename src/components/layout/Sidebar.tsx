@@ -4,35 +4,32 @@ import { useMemo, useState, useEffect, type CSSProperties, type FC } from "react
 import { supabase } from "@/lib/supabaseClient";
 import type { LucideIcon } from "lucide-react";
 import {
+  BadgeCheck,
+  BarChart3,
   Briefcase,
   Calculator,
-  FileText,
-  Wallet,
-  Layers,
-  UserCog,
-  SlidersHorizontal,
-  BarChart3,
-  ChevronsLeft,
-  ChevronsRight,
-  Trophy,
-  CalendarClock,
-  LineChart,
-  ClipboardList,
-  BadgeCheck,
   Calendar,
-  MessageCircle,
-  Link as LinkIcon,
+  CalendarClock,
   ChevronDown,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  ClipboardList,
+  Database,
+  FileText,
+  FolderKanban,
+  Layers,
+  LineChart,
+  Link as LinkIcon,
+  MessageCircle,
+  SlidersHorizontal,
+  Trophy,
+  UserCog,
+  Wallet,
   X,
 } from "lucide-react";
 
 type SidebarProps = { onNavigate?: () => void };
-
-const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
-
-const LOGO_URL = "/logo-consulmax.png?v=3";
-const FALLBACK_URL = "/favicon.ico?v=3";
 
 type NavAlerts = {
   oportunidades: boolean;
@@ -41,15 +38,28 @@ type NavAlerts = {
   agenda: boolean;
 };
 
-/** ====== Liquid Glass ====== */
-const glassSidebarBase: CSSProperties = {
-  position: "relative",
-  background: "rgba(255,255,255,.55)",
-  borderRight: "1px solid rgba(255,255,255,.35)",
-  backdropFilter: "saturate(160%) blur(10px)",
-  WebkitBackdropFilter: "saturate(160%) blur(10px)",
-  boxShadow: "inset -8px 0 30px rgba(181,165,115,.10)",
+type FlatItem = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  onlyForWesley?: boolean;
+  showDot?: boolean;
+  end?: boolean;
+  activeMatch?: (pathname: string) => boolean;
 };
+
+type GroupKey = "vendas" | "pos" | "admin" | "fin" | "max";
+
+type NavGroup = {
+  title: string;
+  icon: LucideIcon;
+  items: FlatItem[];
+};
+
+const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
+
+const LOGO_URL = "/logo-consulmax.png?v=3";
+const FALLBACK_URL = "/favicon.ico?v=3";
 
 const activePillStyle: CSSProperties = {
   background: "linear-gradient(180deg, rgba(161,28,39,1) 0%, rgba(161,28,39,.96) 100%)",
@@ -65,14 +75,14 @@ const glassHoverPill: CSSProperties = {
   WebkitBackdropFilter: "blur(6px)",
 };
 
-const SidebarLiquidBG: FC = () => (
-  <div style={sbLiquidCanvas} aria-hidden>
-    <style>{sbLiquidKeyframes}</style>
-    <span style={{ ...sbBlob, ...sbBlob1 }} />
-    <span style={{ ...sbBlob, ...sbBlob2 }} />
-    <span style={{ ...sbGoldGlow }} />
-  </div>
-);
+const glassSidebarBase: CSSProperties = {
+  position: "relative",
+  background: "rgba(255,255,255,.55)",
+  borderRight: "1px solid rgba(255,255,255,.35)",
+  backdropFilter: "saturate(160%) blur(10px)",
+  WebkitBackdropFilter: "saturate(160%) blur(10px)",
+  boxShadow: "inset -8px 0 30px rgba(181,165,115,.10)",
+};
 
 const sbLiquidCanvas: CSSProperties = {
   position: "absolute",
@@ -122,7 +132,22 @@ const sbLiquidKeyframes = `
 @keyframes sbFloat2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-16px,-10px) scale(1.05)} 100%{transform:translate(0,0) scale(1)} }
 `;
 
-/** ====== Helpers de data / alertas ====== */
+const SidebarLiquidBG: FC = () => (
+  <div style={sbLiquidCanvas} aria-hidden>
+    <style>{sbLiquidKeyframes}</style>
+    <span style={{ ...sbBlob, ...sbBlob1 }} />
+    <span style={{ ...sbBlob, ...sbBlob2 }} />
+    <span style={{ ...sbGoldGlow }} />
+  </div>
+);
+
+const AlertDot: FC = () => (
+  <span
+    className="ml-2 h-2.5 w-2.5 rounded-full bg-[#A11C27] animate-pulse shadow-[0_0_0_4px_rgba(161,28,39,0.25)]"
+    aria-label="Há pendências para hoje"
+  />
+);
+
 function todayDateStr() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -153,8 +178,8 @@ async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
     }
 
     return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkOpportunitiesAlert:", e);
+  } catch (error) {
+    console.error("Erro inesperado em checkOpportunitiesAlert:", error);
     return false;
   }
 }
@@ -175,8 +200,8 @@ async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
     }
 
     return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkCashFlowAlert:", e);
+  } catch (error) {
+    console.error("Erro inesperado em checkCashFlowAlert:", error);
     return false;
   }
 }
@@ -195,8 +220,8 @@ async function checkGroupsAlert(todayStr: string): Promise<boolean> {
     }
 
     return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkGroupsAlert:", e);
+  } catch (error) {
+    console.error("Erro inesperado em checkGroupsAlert:", error);
     return false;
   }
 }
@@ -216,29 +241,11 @@ async function checkAgendaAlert(startIso: string, endIso: string): Promise<boole
     }
 
     return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkAgendaAlert:", e);
+  } catch (error) {
+    console.error("Erro inesperado em checkAgendaAlert:", error);
     return false;
   }
 }
-
-const AlertDot: FC = () => (
-  <span
-    className="ml-2 h-2.5 w-2.5 rounded-full bg-[#A11C27] animate-pulse shadow-[0_0_0_4px_rgba(161,28,39,0.25)]"
-    aria-label="Há pendências para hoje"
-  />
-);
-
-type FlatItem = {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-  onlyForWesley?: boolean;
-  showDot?: boolean;
-  end?: boolean;
-};
-
-type GroupKey = "vendas" | "pos" | "admin" | "fin" | "max";
 
 function isAnyPathActive(pathname: string, prefixes: string[]) {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p));
@@ -255,6 +262,8 @@ function groupForPath(pathname: string): GroupKey {
       "/atendimento",
       "/agenda",
       "/simuladores",
+      "/central-grupos",
+      "/grupos-disponiveis",
       "/propostas",
       "/ranking",
       "/estoque-contempladas",
@@ -271,14 +280,17 @@ function groupForPath(pathname: string): GroupKey {
     return "admin";
   }
 
-  if (isAnyPathActive(pathname, ["/links", "/procedimentos"])) {
+  if (isAnyPathActive(pathname, ["/central-projetos", "/gestao-de-projetos", "/projetos", "/links", "/procedimentos"])) {
     return "max";
   }
 
   return "fin";
 }
 
-/** ====== Componente ====== */
+function itemIsVisible(item: FlatItem, authUserId: string | null) {
+  return !item.onlyForWesley || !authUserId || authUserId === WESLEY_ID;
+}
+
 export default function Sidebar({ onNavigate }: SidebarProps) {
   const location = useLocation();
   const pathname = location.pathname;
@@ -287,6 +299,26 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 767px)").matches;
   });
+
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [navAlerts, setNavAlerts] = useState<NavAlerts>({
+    oportunidades: false,
+    fluxoCaixa: false,
+    gestaoGrupos: false,
+    agenda: false,
+  });
+
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("@consulmax:sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
+  const [openGroup, setOpenGroup] = useState<GroupKey | null>(currentGroup);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -305,16 +337,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     };
   }, []);
 
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("@consulmax:sidebar-collapsed") === "1";
-    } catch {
-      return false;
-    }
-  });
-
   useEffect(() => {
     if (isSmall && collapsed) setCollapsed(false);
   }, [isSmall, collapsed]);
@@ -326,6 +348,10 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   }, [collapsed]);
 
   useEffect(() => {
+    if (!collapsed) setOpenGroup(currentGroup);
+  }, [currentGroup, collapsed]);
+
+  useEffect(() => {
     if (isSmall) setMobileOpen(false);
     onNavigate?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -334,32 +360,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   useEffect(() => {
     if (!isSmall) return;
 
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = mobileOpen ? "hidden" : prev || "";
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = mobileOpen ? "hidden" : previousOverflow || "";
 
     return () => {
-      document.body.style.overflow = prev || "";
+      document.body.style.overflow = previousOverflow || "";
     };
   }, [mobileOpen, isSmall]);
-
-  const handleNav = () => {
-    if (isSmall) setMobileOpen(false);
-    onNavigate?.();
-  };
-
-  const simuladoresActive = useMemo(() => pathname.startsWith("/simuladores"), [pathname]);
-
-  const whatsappActive = useMemo(
-    () =>
-      pathname === "/atendimento-whatsapp" ||
-      pathname.startsWith("/atendimento-whatsapp") ||
-      pathname === "/whatsapp" ||
-      pathname === "/central-whatsapp" ||
-      pathname === "/atendimento",
-    [pathname]
-  );
-
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -367,11 +374,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     (async () => {
       try {
         const { data, error } = await supabase.auth.getUser();
-
         if (!alive) return;
-
-        if (error || !data?.user) setAuthUserId(null);
-        else setAuthUserId(data.user.id);
+        setAuthUserId(error || !data?.user ? null : data.user.id);
       } catch {
         if (!alive) return;
         setAuthUserId(null);
@@ -382,13 +386,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       alive = false;
     };
   }, []);
-
-  const [navAlerts, setNavAlerts] = useState<NavAlerts>({
-    oportunidades: false,
-    fluxoCaixa: false,
-    gestaoGrupos: false,
-    agenda: false,
-  });
 
   useEffect(() => {
     let alive = true;
@@ -405,21 +402,19 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         ]);
 
         if (!alive) return;
-
         setNavAlerts({
           oportunidades: hasOpp,
           fluxoCaixa: hasCash,
           gestaoGrupos: hasGroups,
           agenda: hasAgenda,
         });
-      } catch (e) {
+      } catch (error) {
         if (!alive) return;
-        console.error("Erro ao carregar alertas de navegação:", e);
+        console.error("Erro ao carregar alertas de navegação:", error);
       }
     };
 
     loadAlerts();
-
     const interval = window.setInterval(loadAlerts, 5 * 60 * 1000);
 
     return () => {
@@ -428,80 +423,97 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     };
   }, []);
 
+  const navGroups = useMemo<Record<GroupKey, NavGroup>>(
+    () => ({
+      vendas: {
+        title: "Vendas",
+        icon: Briefcase,
+        items: [
+          { to: "/planejamento", label: "Sala de Guerra", icon: ClipboardList, end: true },
+          { to: "/oportunidades", label: "Oportunidades", icon: Briefcase, showDot: navAlerts.oportunidades, end: true },
+          {
+            to: "/atendimento-whatsapp",
+            label: "WhatsApp",
+            icon: MessageCircle,
+            end: true,
+            activeMatch: (p) => p === "/atendimento-whatsapp" || p.startsWith("/atendimento-whatsapp") || p === "/whatsapp" || p === "/central-whatsapp" || p === "/atendimento",
+          },
+          { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
+          {
+            to: "/simuladores",
+            label: "Simuladores",
+            icon: Calculator,
+            end: false,
+            activeMatch: (p) => p.startsWith("/simuladores"),
+          },
+          { to: "/central-grupos", label: "Central de Grupos", icon: Database, end: true },
+          { to: "/propostas", label: "Propostas", icon: FileText, end: true },
+          { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
+          { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
+        ],
+      },
+      pos: {
+        title: "Pós-venda",
+        icon: Wallet,
+        items: [
+          { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
+          { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
+          { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
+        ],
+      },
+      admin: {
+        title: "Administrativo",
+        icon: SlidersHorizontal,
+        items: [
+          { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
+          { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
+          { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
+          { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
+          { to: "/processos", label: "Processos", icon: ClipboardList, end: true },
+          { to: "/rh", label: "RH", icon: ClipboardList, end: true },
+        ],
+      },
+      fin: {
+        title: "Financeiro",
+        icon: LineChart,
+        items: [
+          { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
+          { to: "/fluxo-de-caixa", label: "Fluxo de Caixa", icon: LineChart, onlyForWesley: true, showDot: navAlerts.fluxoCaixa, end: true },
+        ],
+      },
+      max: {
+        title: "Maximize-se",
+        icon: Trophy,
+        items: [
+          { to: "/central-projetos", label: "Central de Projetos", icon: FolderKanban, end: true },
+          { to: "/procedimentos", label: "Procedimentos", icon: ClipboardList, end: true },
+          { to: "/links", label: "Links Úteis", icon: LinkIcon, end: true },
+        ],
+      },
+    }),
+    [navAlerts]
+  );
+
   const widthClass = useMemo(() => {
     if (isSmall) return "w-[92vw] max-w-[360px]";
     return collapsed ? "md:w-20" : "md:w-64";
   }, [isSmall, collapsed]);
 
-  const textHidden = collapsed
-    ? "md:opacity-0 md:pointer-events-none md:select-none md:w-0 opacity-100"
-    : "opacity-100";
-
+  const textHidden = collapsed ? "md:opacity-0 md:pointer-events-none md:select-none md:w-0 opacity-100" : "opacity-100";
   const pillPadding = collapsed ? "md:px-2.5 px-3" : "px-3";
-
-  const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
-  const [openGroup, setOpenGroup] = useState<GroupKey | null>(currentGroup);
-
-  useEffect(() => {
-    if (!collapsed) setOpenGroup(currentGroup);
-  }, [currentGroup, collapsed]);
-
-  const flatItems: FlatItem[] = useMemo(
-    () => [
-      { to: "/planejamento", label: "Sala de Guerra", icon: ClipboardList, end: true },
-      {
-        to: "/oportunidades",
-        label: "Oportunidades",
-        icon: Briefcase,
-        showDot: navAlerts.oportunidades,
-        end: true,
-      },
-      {
-        to: "/atendimento-whatsapp",
-        label: "WhatsApp",
-        icon: MessageCircle,
-        end: true,
-      },
-      { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
-      { to: "/simuladores", label: "Simuladores", icon: Calculator, end: false },
-      { to: "/propostas", label: "Propostas", icon: FileText, end: true },
-      { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
-      { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
-
-      { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
-      { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
-      {
-        to: "/gestao-de-grupos",
-        label: "Gestão de Grupos",
-        icon: Layers,
-        showDot: navAlerts.gestaoGrupos,
-        end: true,
-      },
-
-      { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
-      { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
-      { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
-      { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
-      { to: "/processos", label: "Processos", icon: ClipboardList, end: true },
-      { to: "/rh", label: "RH", icon: ClipboardList, end: true },
-
-      { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
-      {
-        to: "/fluxo-de-caixa",
-        label: "Fluxo de Caixa",
-        icon: LineChart,
-        onlyForWesley: true,
-        showDot: navAlerts.fluxoCaixa,
-        end: true,
-      },
-
-      { to: "/procedimentos", label: "Procedimentos", icon: ClipboardList, end: true },
-      { to: "/links", label: "Links Úteis", icon: LinkIcon, end: true },
-    ],
-    [navAlerts]
-  );
-
   const mobileTapFx = "active:scale-[0.99] active:opacity-90";
+
+  const flatItems = useMemo(() => {
+    const groupOrder: GroupKey[] = ["vendas", "pos", "admin", "fin", "max"];
+    return groupOrder.flatMap((key) => navGroups[key].items);
+  }, [navGroups]);
+
+  const handleNav = () => {
+    if (isSmall) setMobileOpen(false);
+    onNavigate?.();
+  };
+
+  const isItemActive = (item: FlatItem) => Boolean(item.activeMatch?.(pathname));
 
   const pillClass = (isActive: boolean) =>
     `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
@@ -509,7 +521,36 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
      ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`;
 
-  const renderSectionPill = (key: GroupKey, title: string, Icon: LucideIcon) => {
+  const renderNavItem = (item: FlatItem, compact = false) => {
+    if (!itemIsVisible(item, authUserId)) return null;
+
+    const Icon = item.icon;
+
+    return (
+      <NavLink
+        key={`${item.to}-${item.label}`}
+        to={item.to}
+        className={({ isActive }) => `${pillClass(isActive || isItemActive(item))} ${compact ? "justify-center" : ""}`}
+        style={({ isActive }) => (isActive || isItemActive(item) ? activePillStyle : glassHoverPill)}
+        onClick={handleNav}
+        title={item.label}
+        end={item.end}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        {!compact && (
+          <span className="flex w-full min-w-0 items-center justify-between">
+            <span className="truncate">{item.label}</span>
+            {item.showDot && <AlertDot />}
+          </span>
+        )}
+        {compact && item.showDot && <AlertDot />}
+      </NavLink>
+    );
+  };
+
+  const renderSectionPill = (key: GroupKey) => {
+    const group = navGroups[key];
+    const Icon = group.icon;
     const isOpen = openGroup === key;
     const isActive = currentGroup === key;
 
@@ -525,13 +566,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
         style={isActive ? activePillStyle : glassHoverPill}
         aria-expanded={isOpen}
-        title={title}
+        title={group.title}
       >
         <span className="flex items-center gap-2">
           <Icon className="h-4 w-4" />
-          <span className="font-semibold">{title}</span>
+          <span className="font-semibold">{group.title}</span>
         </span>
-
         <span className="opacity-90" aria-hidden>
           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </span>
@@ -589,8 +629,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             height={40}
             loading="eager"
             className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = FALLBACK_URL;
+            onError={(event) => {
+              (event.currentTarget as HTMLImageElement).src = FALLBACK_URL;
             }}
           />
 
@@ -603,7 +643,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         <div className="relative z-[1]">
           <button
             type="button"
-            onClick={() => setCollapsed((v) => !v)}
+            onClick={() => setCollapsed((value) => !value)}
             className={`hidden md:inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60
                         ${mobileTapFx}
                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
@@ -618,319 +658,20 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       </div>
 
       <nav className="relative z-[1] grid gap-2 mt-3">
-        {collapsed && !isSmall && (
-          <>
-            {flatItems
-              .filter((i) => !i.onlyForWesley || authUserId === WESLEY_ID)
-              .map((i) => (
-                <NavLink
-                  key={`${i.to}-${i.label}`}
-                  to={i.to}
-                  className={({ isActive }) => `${pillClass(isActive)} justify-center`}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title={i.label}
-                  end={i.end}
-                >
-                  <i.icon className="h-4 w-4" />
-                  {i.showDot && <AlertDot />}
-                </NavLink>
-              ))}
-          </>
-        )}
+        {collapsed && !isSmall && flatItems.map((item) => renderNavItem(item, true))}
 
         {(!collapsed || isSmall) && (
           <>
-            {renderSectionPill("vendas", "Vendas", Briefcase)}
-            {openGroup === "vendas" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/planejamento"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Sala de Guerra Comercial"
-                  end
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  Sala de Guerra
-                </NavLink>
-
-                <NavLink
-                  to="/oportunidades"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Oportunidades"
-                  end
-                >
-                  <Briefcase className="h-4 w-4" />
-                  <span className="flex items-center justify-between w-full">
-                    <span>Oportunidades</span>
-                    {navAlerts.oportunidades && <AlertDot />}
-                  </span>
-                </NavLink>
-
-                <NavLink
-                  to="/atendimento-whatsapp"
-                  className={({ isActive }) => pillClass(isActive || whatsappActive)}
-                  style={({ isActive }) => (isActive || whatsappActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Central WhatsApp"
-                  end
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  WhatsApp
-                </NavLink>
-
-                <NavLink
-                  to="/agenda"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Agenda"
-                  end
-                >
-                  <Calendar className="h-4 w-4" />
-                  <span className="flex items-center justify-between w-full">
-                    <span>Agenda</span>
-                    {navAlerts.agenda && <AlertDot />}
-                  </span>
-                </NavLink>
-
-                <NavLink
-                  to="/simuladores"
-                  className={({ isActive }) => pillClass(isActive || simuladoresActive)}
-                  style={({ isActive }) => (isActive || simuladoresActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Simuladores"
-                  end
-                >
-                  <Calculator className="h-4 w-4" />
-                  Simuladores
-                </NavLink>
-
-                <NavLink
-                  to="/propostas"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Propostas"
-                  end
-                >
-                  <FileText className="h-4 w-4" />
-                  Propostas
-                </NavLink>
-
-                <NavLink
-                  to="/ranking"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Ranking"
-                  end
-                >
-                  <Trophy className="h-4 w-4" />
-                  Ranking
-                </NavLink>
-
-                <NavLink
-                  to="/estoque-contempladas"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Contempladas"
-                  end
-                >
-                  <BadgeCheck className="h-4 w-4" />
-                  Contempladas
-                </NavLink>
-              </div>
-            )}
-
-            {renderSectionPill("pos", "Pós-venda", Wallet)}
-            {openGroup === "pos" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/carteira"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Carteira"
-                  end
-                >
-                  <Wallet className="h-4 w-4" />
-                  Carteira
-                </NavLink>
-
-                <NavLink
-                  to="/giro-de-carteira"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Giro de Carteira"
-                  end
-                >
-                  <CalendarClock className="h-4 w-4" />
-                  Giro de Carteira
-                </NavLink>
-
-                <NavLink
-                  to="/gestao-de-grupos"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Gestão de Grupos"
-                  end
-                >
-                  <Layers className="h-4 w-4" />
-                  <span className="flex items-center justify-between w-full">
-                    <span>Gestão de Grupos</span>
-                    {navAlerts.gestaoGrupos && <AlertDot />}
-                  </span>
-                </NavLink>
-              </div>
-            )}
-
-            {renderSectionPill("admin", "Administrativo", SlidersHorizontal)}
-            {openGroup === "admin" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/relatorios"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Relatórios"
-                  end
-                >
-                  <BarChart3 className="h-4 w-4" />
-                  Relatórios
-                </NavLink>
-
-                <NavLink
-                  to="/usuarios"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Usuários"
-                  end
-                >
-                  <UserCog className="h-4 w-4" />
-                  Usuários
-                </NavLink>
-
-                <NavLink
-                  to="/parametros"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Parâmetros"
-                  end
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                  Parâmetros
-                </NavLink>
-
-                <NavLink
-                  to="/clientes"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Clientes"
-                  end
-                >
-                  <UserCog className="h-4 w-4" />
-                  Clientes
-                </NavLink>
-
-                <NavLink
-                  to="/processos"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Processos"
-                  end
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  Processos
-                </NavLink>
-
-                <NavLink
-                  to="/rh"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="RH"
-                  end
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  RH
-                </NavLink>
-              </div>
-            )}
-
-            {renderSectionPill("fin", "Financeiro", LineChart)}
-            {openGroup === "fin" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/comissoes"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Comissões"
-                  end
-                >
-                  <BarChart3 className="h-4 w-4" />
-                  Comissões
-                </NavLink>
-
-                {(!authUserId || authUserId === WESLEY_ID) && (
-                  <NavLink
-                    to="/fluxo-de-caixa"
-                    className={({ isActive }) => pillClass(isActive)}
-                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                    onClick={handleNav}
-                    title="Fluxo de Caixa"
-                    end
-                  >
-                    <LineChart className="h-4 w-4" />
-                    <span className="flex items-center justify-between w-full">
-                      <span>Fluxo de Caixa</span>
-                      {navAlerts.fluxoCaixa && <AlertDot />}
-                    </span>
-                  </NavLink>
+            {(["vendas", "pos", "admin", "fin", "max"] as GroupKey[]).map((key) => (
+              <div key={key} className="grid gap-2">
+                {renderSectionPill(key)}
+                {openGroup === key && (
+                  <div className="ml-4 grid gap-2">
+                    {navGroups[key].items.map((item) => renderNavItem(item))}
+                  </div>
                 )}
               </div>
-            )}
-
-            {renderSectionPill("max", "Maximize-se", Trophy)}
-            {openGroup === "max" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/procedimentos"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Procedimentos"
-                  end
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  Procedimentos
-                </NavLink>
-
-                <NavLink
-                  to="/links"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Links Úteis"
-                  end
-                >
-                  <LinkIcon className="h-4 w-4" />
-                  Links Úteis
-                </NavLink>
-              </div>
-            )}
+            ))}
           </>
         )}
       </nav>
@@ -953,9 +694,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
       {isSmall ? (
         <>
-          {mobileOpen && (
-            <div className="fixed inset-0 z-[50] bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden />
-          )}
+          {mobileOpen && <div className="fixed inset-0 z-[50] bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden />}
 
           <div
             className={`fixed left-0 top-0 z-[55] h-dvh transform transition-transform duration-200 ${

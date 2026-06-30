@@ -27,24 +27,48 @@ const helperReplacement = `${helperNeedle}
 async function maggiHasLoginInputs(page: Page) {
   const inputCount = await page.locator('input, ion-input input, textarea').count().catch(() => 0);
   const hasLoginText = await page.getByText(/Bem-vindo|Código do vendedor|Codigo do vendedor|Senha/i).first().isVisible().catch(() => false);
-  return inputCount > 0 && hasLoginText;
+  return inputCount >= 2 && hasLoginText;
+}
+
+async function maggiClickSouVendedor(deps: RegisterDeps, page: Page) {
+  const clickedByText = await clickText(page, "SOU VENDEDOR", true).catch(() => false);
+  if (clickedByText) return true;
+
+  const clickedBySelector = await clickFirstVisibleSafe(deps, page, [
+    'button:has-text("SOU VENDEDOR")',
+    'ion-button:has-text("SOU VENDEDOR")',
+    '[role="button"]:has-text("SOU VENDEDOR")',
+    'a:has-text("SOU VENDEDOR")',
+    'div:has-text("SOU VENDEDOR")',
+  ]);
+  if (clickedBySelector) return true;
+
+  const buttonBox = await page.getByText(/SOU\s+VENDEDOR/i).first().boundingBox().catch(() => null);
+  if (buttonBox) {
+    await page.mouse.click(buttonBox.x + buttonBox.width / 2, buttonBox.y + buttonBox.height / 2);
+    return true;
+  }
+
+  const viewport = page.viewportSize() || { width: 1366, height: 900 };
+  await page.mouse.click(viewport.width / 2, Math.max(50, viewport.height - 55));
+  return true;
 }
 
 async function ensureMaggiLoginForm(deps: RegisterDeps, page: Page) {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     if (await maggiHasLoginInputs(page)) return;
 
-    await clickText(page, "SOU VENDEDOR", true).catch(() => false);
-    await waitSettled(deps, page, 10000);
+    await maggiClickSouVendedor(deps, page).catch(() => false);
+    await waitSettled(deps, page, 12000);
+    await page.waitForTimeout(1000);
     if (await maggiHasLoginInputs(page)) return;
 
-    await page.goto(appUrl(deps.requiredEnv, "/vendedor/login"), {
+    await page.goto(appUrl(deps.requiredEnv, "/home"), {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
     await waitSettled(deps, page, 15000);
-    await page.waitForTimeout(1200);
-    if (await maggiHasLoginInputs(page)) return;
+    await page.waitForTimeout(1500);
   }
 
   const url = page.url();
@@ -61,11 +85,23 @@ async function ensureMaggiLoginForm(deps: RegisterDeps, page: Page) {
 replaceOnce(helperNeedle, helperReplacement, "async function ensureMaggiLoginForm");
 
 replaceOnce(
+`  await page.goto(deps.requiredEnv("MAGGI_AVAILABLE_GROUPS_PORTAL_URL"), {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });`,
+`  await page.goto(appUrl(deps.requiredEnv, "/home"), {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });`,
+"page.goto(appUrl(deps.requiredEnv, \"/home\")"
+);
+
+replaceOnce(
 `  await clickText(page, "SOU VENDEDOR", true).catch(() => false);
   await waitSettled(deps, page, 12000);
 
   await fillFirstVisibleSafe(`,
-`  await clickText(page, "SOU VENDEDOR", true).catch(() => false);
+`  await maggiClickSouVendedor(deps, page).catch(() => false);
   await waitSettled(deps, page, 12000);
   await ensureMaggiLoginForm(deps, page);
 

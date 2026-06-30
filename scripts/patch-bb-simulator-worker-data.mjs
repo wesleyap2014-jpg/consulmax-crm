@@ -17,6 +17,13 @@ function replaceOnce(needle, replacement, marker = replacement) {
   }
 }
 
+function replaceRegex(regex, replacement, marker) {
+  if (!src.includes(marker) && regex.test(src)) {
+    src = src.replace(regex, replacement);
+    changed = true;
+  }
+}
+
 replaceOnce(
   'type SegmentoBB = "auto_ipca" | "auto_fipe" | "pesados" | "imoveis" | "outros_bens";',
   'type SegmentoBB = "auto_ipca" | "auto_fipe" | "pesados" | "imoveis" | "outros_bens" | "motocicleta";',
@@ -136,6 +143,150 @@ replaceOnce(
   '<GrupoTabela group={selectedGroup} onSelectCredit={(valor) => { setCreditoInput(formatMoneyInput(valor)); setSimCode(null); }} />',
   '<GrupoTabela group={selectedGroup} onSelectRange={(range) => { setCreditoInput(formatMoneyInput(range.valor)); if (range.prazo) setPrazoInput(String(range.prazo)); if (range.minContemplacaoPct) setLanceLivrePct(formatPercentInput(range.minContemplacaoPct)); setSimCode(null); }} />',
   'onSelectRange={(range) => { setCreditoInput'
+);
+
+replaceRegex(
+  /function groupNextAssembly\(group\?: BBGroup \| null\) \{[\s\S]*?\n\}\n\nfunction groupMedianLancePercent/,
+  `function groupNextAssembly(group?: BBGroup | null) {
+  const cfg = rawConfig(group);
+  const assembly = assemblyRow(group);
+  const ranges = Array.isArray(cfg.creditRanges) ? cfg.creditRanges : [];
+  const rangeDate = ranges
+    .map((range: AnyRow) =>
+      range?.proximaAssembleia ||
+      range?.data_proxima_assembleia ||
+      range?.nextAssemblyDate ||
+      range?.next_assembly_date ||
+      range?.assembleia ||
+      range?.vencimento
+    )
+    .find(Boolean);
+  const direct =
+    group?.proxima_assembleia ||
+    group?.data_proxima_assembleia ||
+    group?.next_assembly_date ||
+    group?.nextAssemblyDate ||
+    cfg.proximaAssembleia ||
+    cfg.nextAssemblyDate ||
+    cfg.next_assembly_date ||
+    assembly.proximaAssembleia ||
+    assembly.nextAssemblyDate ||
+    assembly.next_assembly_date ||
+    assembly.proxima_assembleia ||
+    assembly.data_proxima_assembleia;
+  if (direct) return String(direct);
+  if (rangeDate) return String(rangeDate);
+  const text = \`\${group?.observacoes || ""} \${cfg.observacoesRegra || ""}\`;
+  return text.match(/(?:pr[oó]x\.?|proxima|próxima)\s*(?:assem\.?|assembleia)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i)?.[1] || null;
+}
+
+function groupMedianLancePercent`,
+  'range?.nextAssemblyDate ||'
+);
+
+const groupSummaryHelpers = `function pctPercentOrDash(percent?: number | null, digits = 1) {
+  return percent && percent > 0 ? (percent.toLocaleString("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits }) + "%") : "—";
+}
+
+function pctDecimalSmart(decimal?: number | null) {
+  const percent = Number(decimal || 0) * 100;
+  if (!percent || !Number.isFinite(percent)) return "";
+  const hasDecimals = Math.abs(percent - Math.round(percent)) > 0.001;
+  return percent.toLocaleString("pt-BR", { minimumFractionDigits: hasDecimals ? 2 : 0, maximumFractionDigits: hasDecimals ? 2 : 0 }) + "%";
+}
+
+function groupPercentFromAssembly(group: BBGroup | null | undefined, keys: string[]) {
+  const cfg = rawConfig(group);
+  const assembly = assemblyRow(group);
+  return pickPercent(assembly, keys) || pickPercent(group, keys) || pickPercent(cfg, keys);
+}
+
+function groupLastAssemblyText(group?: BBGroup | null) {
+  const assembly = assemblyRow(group);
+  const numero = String(assembly.assembleia || assembly.ultimaAssembleia || assembly.lastAssembly || "").trim();
+  const dataRaw = assembly.dataAssembleia || assembly.data_assembleia || assembly.dataUltimaAssembleia || assembly.lastAssemblyDate || assembly.data;
+  const data = dataRaw ? brDate(String(dataRaw)) : "";
+  if (numero && data) return numero + " - " + data;
+  return numero || data || "—";
+}
+
+function groupFixedLanceText(group?: BBGroup | null) {
+  const cfg = rawConfig(group);
+  const values: number[] = [];
+  if (group?.permite_fixo_25 === true) values.push(0.25);
+  if (group?.permite_fixo_50 === true) values.push(0.5);
+
+  const directArrays = [cfg.fixedLancePcts, cfg.lancesFixosPcts, cfg.lanceFixoPcts, cfg.lances_fixos_pcts];
+  directArrays.forEach((items) => {
+    if (Array.isArray(items)) items.forEach((value) => {
+      const pct = pctToDecimal(value);
+      if (pct > 0) values.push(pct);
+    });
+  });
+
+  const options = Array.isArray(cfg.lanceOptions) ? cfg.lanceOptions : [];
+  options.forEach((option: AnyRow) => {
+    const text = String(option?.key || "") + " " + String(option?.nomeComercial || option?.nome || "");
+    if (option?.enabled !== false && /fixo/i.test(text)) {
+      const pct = pctToDecimal(option?.pct);
+      if (pct > 0) values.push(pct);
+    }
+  });
+
+  const unique = Array.from(new Set(values.filter((value) => value > 0).map((value) => Number(value.toFixed(6))))).sort((a, b) => a - b);
+  return unique.length ? "Lance Fixo " + unique.map((value) => pctDecimalSmart(value)).join(" / ") : "";
+}
+
+function groupEmbeddedLanceText(group?: BBGroup | null) {
+  if (group?.permite_lance_embutido === false) return "";
+  const cfg = rawConfig(group);
+  const explicit = cfg.maxLanceEmbutidoPct ?? cfg.max_lance_embutido_pct ?? group?.lance_embutido_max_pct;
+  const pct = pctToDecimal(explicit);
+  return pct > 0 ? "Lance Embutido " + pctDecimalSmart(pct) : "";
+}
+
+function GroupAssemblySummary({ group }: { group: BBGroup | null }) {
+  if (!group) return null;
+  const maior = groupPercentFromAssembly(group, MAX_KEYS);
+  const menor = groupPercentFromAssembly(group, MIN_KEYS);
+  const mediana = groupMedianLancePercent(group);
+  const proxima = groupNextAssembly(group);
+  const grupoInfos = [groupFixedLanceText(group), groupEmbeddedLanceText(group)].filter(Boolean);
+
+  return (
+    <div className="mt-2 rounded-2xl border bg-slate-50 px-3 py-3 text-sm text-slate-700">
+      <div className="grid gap-2 md:grid-cols-2">
+        <div><strong>Última Assembleia:</strong> {groupLastAssemblyText(group)}</div>
+        <div><strong>Maior Lance:</strong> {pctPercentOrDash(maior, 1)}</div>
+        <div><strong>Menor Lance:</strong> {pctPercentOrDash(menor, 1)}</div>
+        <div><strong>Mediana:</strong> {pctPercentOrDash(mediana, 1)}</div>
+        <div className="md:col-span-2"><strong>Próxima Assembleia:</strong> {proxima ? brDate(proxima) : "—"}</div>
+      </div>
+      {grupoInfos.length > 0 && (
+        <div className="mt-3 border-t border-slate-200 pt-2 text-xs text-slate-600">
+          <strong>Informações do Grupo:</strong> {grupoInfos.join(" | ")}
+        </div>
+      )}
+    </div>
+  );
+}`;
+
+replaceOnce(
+  'function calcBB(input: { group: BBGroup | null; credito: number; prazo: number; parcelaContemplacao: number; lanceKey: LanceKey; lanceLivrePct: number; usarEmbutido: boolean; lanceEmbutidoPct: number }) {',
+  `${groupSummaryHelpers}\n\nfunction calcBB(input: { group: BBGroup | null; credito: number; prazo: number; parcelaContemplacao: number; lanceKey: LanceKey; lanceLivrePct: number; usarEmbutido: boolean; lanceEmbutidoPct: number }) {`,
+  'function GroupAssemblySummary'
+);
+
+replaceOnce(
+  '    if (range.minContemplacaoPct) setLanceLivrePct(formatPercentInput(range.minContemplacaoPct));',
+  '    const medianaPct = groupMedianLancePercent(selectedGroup);\n    if (medianaPct) setLanceLivrePct(formatPercentInput(medianaPct / 100));\n    else if (range.minContemplacaoPct) setLanceLivrePct(formatPercentInput(range.minContemplacaoPct));',
+  'const medianaPct = groupMedianLancePercent(selectedGroup);'
+);
+
+replaceRegex(
+  /\{selectedGroup && <div className="mt-2 rounded-2xl border bg-slate-50 px-3 py-2 text-sm text-slate-700"><strong>Próxima assembleia:<\/strong>[\s\S]*?<strong>Mediana lance:<\/strong>[\s\S]*?<\/div>\}<\/div><div><Label>Crédito desejado<\/Label>/,
+  '{selectedGroup && <GroupAssemblySummary group={selectedGroup} />}</div><div><Label>Crédito desejado</Label>',
+  '<GroupAssemblySummary group={selectedGroup} />'
 );
 
 if (changed) {

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "node scripts/patch-portal-popups.mjs && node scripts/patch-stable-table-read.mjs && node scripts/patch-bid-rules-from-bem-tooltip.mjs && node scripts/patch-deactivate-stale-groups.mjs && node scripts/patch-bb-assembly-result-worker.mjs && node scripts/patch-bb-assembly-menu-fallback.mjs && node scripts/patch-bb-assembly-free-lance-details.mjs && node scripts/patch-bb-assembly-free-lance-threshold.mjs && node scripts/patch-maggi-available-groups-worker.mjs && tsc -p tsconfig.json",
+    "build": "node scripts/patch-portal-popups.mjs && node scripts/patch-stable-table-read.mjs && node scripts/patch-bid-rules-from-bem-tooltip.mjs && node scripts/patch-deactivate-stale-groups.mjs && node scripts/patch-bb-assembly-result-worker.mjs && node scripts/patch-bb-assembly-menu-fallback.mjs && node scripts/patch-bb-assembly-free-lance-details.mjs && node scripts/patch-bb-assembly-free-lance-threshold.mjs && node scripts/patch-maggi-available-groups-worker.mjs && node scripts/patch-maggi-available-groups-click-results.mjs && tsc -p tsconfig.json",
     "start": "node dist/index.js"
   },
   "dependencies": {

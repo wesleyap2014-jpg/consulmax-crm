@@ -10,7 +10,8 @@ if (!fs.existsSync(file)) {
 let src = fs.readFileSync(file, "utf8");
 let changed = false;
 
-const fixedRegexLine = String.raw`  return text.match(/(?:pr[oó]x\.?|proxima|próxima)\s*(?:assem\.?|assembleia)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i)?.[1] || null;`;
+const fixedRegexLine = String.raw`  return text.match(/(?:pr[oó]x\.?|proxima|próxima)\s*(?:assem\.?|assembleia)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i)?.[1] || null;`
+  .replaceAll("\\\\", "\\");
 
 src = src
   .split("\n")

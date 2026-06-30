@@ -15,7 +15,7 @@ if (src.includes(marker)) {
   process.exit(0);
 }
 
-const injection = `
+const injection = String.raw`
 ${marker}
 type MaggiAvailableSegmentKey = "automoveis" | "imoveis";
 

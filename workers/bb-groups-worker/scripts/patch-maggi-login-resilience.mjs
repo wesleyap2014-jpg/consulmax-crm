@@ -24,6 +24,47 @@ const helperNeedle = `async function fillFirstVisibleSafe(deps: RegisterDeps, pa
 `;
 
 const helperReplacement = `${helperNeedle}
+function maggiEntryUrls(deps: RegisterDeps) {
+  const configured = deps.requiredEnv("MAGGI_AVAILABLE_GROUPS_PORTAL_URL").replace(/\\/+$/, "");
+  const base = appBaseUrl(deps.requiredEnv).replace(/\\/+$/, "");
+  const candidates = [
+    configured,
+    base,
+    base + "/",
+    base + "/home",
+    base + "/index.html",
+  ];
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+async function maggiLooksLike404(page: Page) {
+  const bodyText = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
+  return /Server Error 404|File or directory not found|resource you are looking for/i.test(bodyText);
+}
+
+async function maggiGotoEntry(deps: RegisterDeps, page: Page) {
+  let lastUrl = "";
+  let lastText = "";
+
+  for (const url of maggiEntryUrls(deps)) {
+    lastUrl = url;
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => null);
+    await waitSettled(deps, page, 15000);
+    await page.waitForTimeout(1500);
+
+    lastText = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
+    if (await maggiHasLoginInputs(page)) return true;
+    if (/SOU\\s+VENDEDOR|CONS[ÓO]RCIO\\s+MAGGI|MAGGI/i.test(lastText) && !(await maggiLooksLike404(page))) return true;
+  }
+
+  throw new Error(
+    "Não foi possível carregar a entrada do app Maggi. Última URL testada: " +
+      lastUrl +
+      ". Texto visível: " +
+      lastText.replace(/\\s+/g, " ").slice(0, 300)
+  );
+}
+
 async function maggiHasLoginInputs(page: Page) {
   const inputCount = await page.locator('input, ion-input input, textarea').count().catch(() => 0);
   const hasLoginText = await page.getByText(/Bem-vindo|Código do vendedor|Codigo do vendedor|Senha/i).first().isVisible().catch(() => false);
@@ -43,7 +84,7 @@ async function maggiClickSouVendedor(deps: RegisterDeps, page: Page) {
   ]);
   if (clickedBySelector) return true;
 
-  const buttonBox = await page.getByText(/SOU\s+VENDEDOR/i).first().boundingBox().catch(() => null);
+  const buttonBox = await page.getByText(/SOU\\s+VENDEDOR/i).first().boundingBox().catch(() => null);
   if (buttonBox) {
     await page.mouse.click(buttonBox.x + buttonBox.width / 2, buttonBox.y + buttonBox.height / 2);
     return true;
@@ -63,12 +104,7 @@ async function ensureMaggiLoginForm(deps: RegisterDeps, page: Page) {
     await page.waitForTimeout(1000);
     if (await maggiHasLoginInputs(page)) return;
 
-    await page.goto(appUrl(deps.requiredEnv, "/home"), {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
-    });
-    await waitSettled(deps, page, 15000);
-    await page.waitForTimeout(1500);
+    await maggiGotoEntry(deps, page);
   }
 
   const url = page.url();
@@ -82,18 +118,24 @@ async function ensureMaggiLoginForm(deps: RegisterDeps, page: Page) {
 }
 `;
 
-replaceOnce(helperNeedle, helperReplacement, "async function ensureMaggiLoginForm");
+replaceOnce(helperNeedle, helperReplacement, "async function maggiGotoEntry");
 
 replaceOnce(
 `  await page.goto(deps.requiredEnv("MAGGI_AVAILABLE_GROUPS_PORTAL_URL"), {
     waitUntil: "domcontentloaded",
     timeout: 60000,
   });`,
+`  await maggiGotoEntry(deps, page);`,
+"await maggiGotoEntry(deps, page);"
+);
+
+replaceOnce(
 `  await page.goto(appUrl(deps.requiredEnv, "/home"), {
     waitUntil: "domcontentloaded",
     timeout: 60000,
   });`,
-"page.goto(appUrl(deps.requiredEnv, \"/home\")"
+`  await maggiGotoEntry(deps, page);`,
+"await maggiGotoEntry(deps, page);"
 );
 
 replaceOnce(

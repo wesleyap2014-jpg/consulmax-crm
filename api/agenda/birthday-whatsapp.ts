@@ -9,6 +9,7 @@ const WABA_ID = process.env["META" + "_WHATSAPP" + "_WABA" + "_ID"] || process.e
 const GRAPH_BASE = "https://graph.facebook.com/v21.0";
 const TEMPLATE_NAME = "felicitacao_aniversario_cliente";
 const TEMPLATE_LANGUAGE = "pt_BR";
+const BIRTHDAY_IMAGE_URL = process.env.WHATSAPP_BIRTHDAY_IMAGE_URL || process.env.VITE_WHATSAPP_BIRTHDAY_IMAGE_URL || "";
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -64,6 +65,28 @@ async function getTemplateDefinition() {
 function bodyText(templateDefinition: any) {
   const body = (templateDefinition?.components || []).find((c: any) => String(c?.type || "").toUpperCase() === "BODY");
   return String(body?.text || "");
+}
+
+function headerFormat(templateDefinition: any) {
+  const header = (templateDefinition?.components || []).find((c: any) => String(c?.type || "").toUpperCase() === "HEADER");
+  return String(header?.format || "").toUpperCase();
+}
+
+function buildHeaderComponent(templateDefinition: any) {
+  const format = headerFormat(templateDefinition);
+  if (!BIRTHDAY_IMAGE_URL) return null;
+  if (format !== "IMAGE") return null;
+  return {
+    type: "header",
+    parameters: [
+      {
+        type: "image",
+        image: {
+          link: BIRTHDAY_IMAGE_URL,
+        },
+      },
+    ],
+  };
 }
 
 function variableNames(text?: string | null) {
@@ -152,7 +175,12 @@ async function alreadySent(automationKey: string) {
   return !!data?.length;
 }
 
-async function sendTemplate(to: string, params: any[]) {
+async function sendTemplate(to: string, params: any[], templateDefinition: any) {
+  const components: any[] = [];
+  const header = buildHeaderComponent(templateDefinition);
+  if (header) components.push(header);
+  if (params.length) components.push({ type: "body", parameters: params });
+
   const payload: any = {
     messaging_product: "whatsapp",
     to,
@@ -160,7 +188,7 @@ async function sendTemplate(to: string, params: any[]) {
     template: {
       name: TEMPLATE_NAME,
       language: { code: TEMPLATE_LANGUAGE },
-      components: params.length ? [{ type: "body", parameters: params }] : undefined,
+      components: components.length ? components : undefined,
     },
   };
 
@@ -170,7 +198,7 @@ async function sendTemplate(to: string, params: any[]) {
     body: JSON.stringify(payload),
   });
   const data = await readJson(response);
-  return { ok: response.ok, status: response.status, data, payload };
+  return { ok: response.ok, status: response.status, data, payload, media: header ? { type: "image", link: BIRTHDAY_IMAGE_URL } : null };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -187,6 +215,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!templateDefinition) {
       return res.status(400).json({ ok: false, error: `Modelo ${TEMPLATE_NAME} não encontrado/aprovado na Meta.` });
+    }
+
+    if (headerFormat(templateDefinition) === "IMAGE" && !BIRTHDAY_IMAGE_URL) {
+      return res.status(400).json({ ok: false, error: "O modelo possui cabeçalho de imagem, mas a variável WHATSAPP_BIRTHDAY_IMAGE_URL não está configurada na Vercel." });
     }
 
     const { data: rows, error } = await supabaseAdmin
@@ -225,12 +257,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const renderedBody = renderTemplateBody(templateDefinition, params);
 
       if (dryRun) {
-        results.push({ event_id: ev.id, nome, phone, status: "dry_run", body: renderedBody });
+        results.push({ event_id: ev.id, nome, phone, status: "dry_run", body: renderedBody, image: BIRTHDAY_IMAGE_URL || null });
         continue;
       }
 
       const conversationId = await ensureConversation(phone, nome, ev.cliente_id, ev.lead_id);
-      const sent = await sendTemplate(phone, params);
+      const sent = await sendTemplate(phone, params, templateDefinition);
 
       if (!sent.ok) {
         results.push({ event_id: ev.id, nome, phone, status: "error", error: sent.data });
@@ -247,6 +279,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         template_language: TEMPLATE_LANGUAGE,
         template_rendered_body: renderedBody,
         template_components: sent.payload?.template?.components || [],
+        template_header_media: sent.media,
       };
 
       await supabaseAdmin.from("whatsapp_messages").insert({
@@ -254,10 +287,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         direction: "outbound",
         sender_type: "automacao",
         user_id: null,
-        message_type: "template",
+        message_type: sent.media?.type || "template",
         body: renderedBody,
         meta_message_id: metaMessageId,
         raw_payload: rawPayload,
+        media_mime_type: sent.media?.type === "image" ? "image/*" : null,
       });
 
       await supabaseAdmin
@@ -265,10 +299,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .update({ last_message: renderedBody, last_message_at: new Date().toISOString(), unread_count: 0, status: "humano", updated_at: new Date().toISOString() })
         .eq("id", conversationId);
 
-      results.push({ event_id: ev.id, nome, phone, conversation_id: conversationId, status: "sent", meta_message_id: metaMessageId });
+      results.push({ event_id: ev.id, nome, phone, conversation_id: conversationId, status: "sent", meta_message_id: metaMessageId, image: sent.media?.link || null });
     }
 
-    return res.status(200).json({ ok: true, date, template: TEMPLATE_NAME, dry_run: dryRun, total: results.length, sent: results.filter((r) => r.status === "sent").length, skipped: results.filter((r) => r.status === "skipped").length, results });
+    return res.status(200).json({ ok: true, date, template: TEMPLATE_NAME, dry_run: dryRun, image_configured: !!BIRTHDAY_IMAGE_URL, total: results.length, sent: results.filter((r) => r.status === "sent").length, skipped: results.filter((r) => r.status === "skipped").length, results });
   } catch (error: any) {
     console.error("AGENDA_BIRTHDAY_WHATSAPP_ERROR", error);
     return res.status(500).json({ ok: false, error: error?.message || "Erro ao enviar aniversários pelo WhatsApp." });

@@ -11,7 +11,9 @@ function replaceOnce(from, to, label) {
 }
 
 // Reduce overlay width after the wide-report patch.
-src = src.split('w-full max-w-[98vw] rounded-2xl bg-white shadow-xl max-h-[92vh] flex flex-col').join('w-full max-w-[92vw] rounded-2xl bg-white shadow-xl max-h-[90vh] flex flex-col');
+src = src
+  .split('w-full max-w-[98vw] rounded-2xl bg-white shadow-xl max-h-[92vh] flex flex-col')
+  .join('w-full max-w-[88vw] rounded-2xl bg-white shadow-xl max-h-[90vh] flex flex-col');
 
 const stateAnchor = lines([
   '  const [dataAsm, setDataAsm] = useState<string>("");',

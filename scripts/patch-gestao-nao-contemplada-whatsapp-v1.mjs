@@ -6,13 +6,6 @@ let src = fs.readFileSync(file, 'utf8');
 const helper = `
 
   async function dispararNaoContempladasWhatsApp() {
-    const tipoLance = window.prompt(
-      "Estratégia/lance ofertado para enviar aos clientes não contemplados desta assembleia:",
-      "Acompanhamento estratégico"
-    );
-    if (tipoLance == null) return null;
-    const estrategia = tipoLance.trim() || "Acompanhamento estratégico";
-
     try {
       const response = await fetch("/api/gestao-grupos/nao-contemplada-whatsapp", {
         method: "POST",
@@ -20,7 +13,6 @@ const helper = `
         body: JSON.stringify({
           date,
           group_ids: linhas.map((l) => l.group_id),
-          tipo_lance: estrategia,
         }),
       });
       const data = await response.json().catch(() => null);
@@ -49,6 +41,20 @@ if (!src.includes('async function dispararNaoContempladasWhatsApp')) {
   if (!src.includes(anchor)) throw new Error('patch-gestao-nao-contemplada-whatsapp-v1: podeSalvar anchor not found');
   src = src.replace(anchor, anchor + helper);
 }
+
+const oldPromptBlock = `    const tipoLance = window.prompt(
+      "Estratégia/lance ofertado para enviar aos clientes não contemplados desta assembleia:",
+      "Acompanhamento estratégico"
+    );
+    if (tipoLance == null) return null;
+    const estrategia = tipoLance.trim() || "Acompanhamento estratégico";
+
+`;
+if (src.includes(oldPromptBlock)) src = src.replace(oldPromptBlock, "");
+
+const oldTipoLanceLine = `          tipo_lance: estrategia,
+`;
+if (src.includes(oldTipoLanceLine)) src = src.replace(oldTipoLanceLine, "");
 
 const oldBlock = `      await onSaved();
       alert("Resultados salvos com sucesso!");

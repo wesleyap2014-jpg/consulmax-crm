@@ -29,12 +29,15 @@ const helper = `
         throw new Error(String(msg));
       }
       alert(
-        `WhatsApp de não contemplados processado.\\nEnviadas: ${data?.sent ?? 0}\\nIgnoradas: ${data?.skipped ?? 0}\\nErros: ${data?.errors ?? 0}`
+        "WhatsApp de não contemplados processado.\\n" +
+          "Enviadas: " + (data?.sent ?? 0) + "\\n" +
+          "Ignoradas: " + (data?.skipped ?? 0) + "\\n" +
+          "Erros: " + (data?.errors ?? 0)
       );
       return data;
     } catch (error) {
       console.warn("Erro ao enviar WhatsApp de não contemplados", error);
-      alert(`Resultados salvos, mas não foi possível enviar o WhatsApp automático: ${error?.message || error}`);
+      alert("Resultados salvos, mas não foi possível enviar o WhatsApp automático: " + (error?.message || error));
       return null;
     }
   }

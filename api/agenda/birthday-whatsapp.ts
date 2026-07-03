@@ -10,6 +10,7 @@ const GRAPH_BASE = "https://graph.facebook.com/v21.0";
 const TEMPLATE_NAME = "felicitacao_aniversario_cliente";
 const TEMPLATE_LANGUAGE = "pt_BR";
 const BIRTHDAY_IMAGE_URL = process.env.WHATSAPP_BIRTHDAY_IMAGE_URL || process.env.VITE_WHATSAPP_BIRTHDAY_IMAGE_URL || "";
+const CRM_TIMEZONE = process.env.CRM_TIMEZONE || process.env.VITE_CRM_TIMEZONE || "America/Porto_Velho";
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -18,11 +19,14 @@ function onlyDigits(value?: string | null) {
 }
 
 function todayKeyBR() {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: CRM_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const pick = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
 }
 
 function utcDayRange(dateStr: string) {
@@ -302,7 +306,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       results.push({ event_id: ev.id, nome, phone, conversation_id: conversationId, status: "sent", meta_message_id: metaMessageId, image: sent.media?.link || null });
     }
 
-    return res.status(200).json({ ok: true, date, template: TEMPLATE_NAME, dry_run: dryRun, image_configured: !!BIRTHDAY_IMAGE_URL, total: results.length, sent: results.filter((r) => r.status === "sent").length, skipped: results.filter((r) => r.status === "skipped").length, results });
+    return res.status(200).json({ ok: true, date, timezone: CRM_TIMEZONE, template: TEMPLATE_NAME, dry_run: dryRun, image_configured: !!BIRTHDAY_IMAGE_URL, total: results.length, sent: results.filter((r) => r.status === "sent").length, skipped: results.filter((r) => r.status === "skipped").length, results });
   } catch (error: any) {
     console.error("AGENDA_BIRTHDAY_WHATSAPP_ERROR", error);
     return res.status(500).json({ ok: false, error: error?.message || "Erro ao enviar aniversários pelo WhatsApp." });

@@ -30,7 +30,7 @@ const stateAnchor = `  const [form, setForm] = useState<Partial<Venda>>({
   });
 `;
 
-const stateInsert = `${stateAnchor}
+const stateInsert = stateAnchor + `
 
   const emptyLanceStrategy = () => ({
     livre: false,
@@ -52,7 +52,7 @@ if (!src.includes('const [lanceStrategy, setLanceStrategy]')) {
 const helperAnchor = `  const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
 `;
 
-const helperInsert = `${helperAnchor}
+const helperInsert = helperAnchor + `
 
   const normalizedAdminForLance = (raw?: string | null) => {
     const s = (raw || "")
@@ -133,15 +133,15 @@ const helperInsert = `${helperAnchor}
     const selected = selectedLanceOptions(config);
 
     if (config.required && selected.length === 0) {
-      throw new Error(`Selecione pelo menos uma estratégia de lance para ${config.adm}.`);
+      throw new Error("Selecione pelo menos uma estratégia de lance para " + config.adm + ".");
     }
 
     if (config.single && selected.length !== 1) {
-      throw new Error(`Selecione apenas uma estratégia de lance para ${config.adm}.`);
+      throw new Error("Selecione apenas uma estratégia de lance para " + config.adm + ".");
     }
 
     if (config.max && selected.length > config.max) {
-      throw new Error(`Selecione no máximo ${config.max} estratégia(s) de lance para ${config.adm}.`);
+      throw new Error("Selecione no máximo " + config.max + " estratégia(s) de lance para " + config.adm + ".");
     }
 
     const opcoes = selected.map((opt: any) => {
@@ -149,14 +149,14 @@ const helperInsert = `${helperAnchor}
       if (opt.requiresPct) {
         const raw = String(lanceStrategy?.[opt.key + "_pct"] || "").trim();
         const parsed = parsePct4(raw);
-        if (parsed == null) throw new Error(`Informe o percentual para ${opt.label}.`);
+        if (parsed == null) throw new Error("Informe o percentual para " + opt.label + ".");
         percentual = parsed;
       }
       return {
         chave: opt.key,
         tipo: opt.tipo || opt.label,
         percentual,
-        percentual_formatado: percentual == null ? null : `${formatPct4(percentual)}%`,
+        percentual_formatado: percentual == null ? null : formatPct4(percentual) + "%",
       };
     });
 
@@ -263,7 +263,7 @@ const uiInsert = `              {form.tipo_venda === "Bolsão" && (
                         {config.options.map((opt: any) => {
                           const checked = !!lanceStrategy?.[opt.key];
                           return (
-                            <div key={opt.key} className={`rounded-xl border p-3 ${checked ? "bg-white border-[#1E293F]" : "bg-white/60"}`}>
+                            <div key={opt.key} className={"rounded-xl border p-3 " + (checked ? "bg-white border-[#1E293F]" : "bg-white/60")}>
                               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                                 <input type={config.single ? "radio" : "checkbox"} checked={checked} onChange={() => toggleLanceStrategy(opt.key, config)} />
                                 {opt.label}

@@ -62,6 +62,36 @@ function formatPctBR(value?: number | null) {
   return `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 4 }).format(Number(value))}%`;
 }
 
+function formatSavedLanceStrategy(strategy: any): string | null {
+  const opcoes = Array.isArray(strategy?.opcoes) ? strategy.opcoes : [];
+  if (!opcoes.length) return null;
+
+  const parts = opcoes
+    .map((op: any) => {
+      const tipo = String(op?.tipo || "").trim();
+      const pct = op?.percentual != null ? formatPctBR(Number(op.percentual)) : String(op?.percentual_formatado || "").trim();
+      if (!tipo && !pct) return "";
+      if (tipo && pct && pct !== "—") return `${tipo}: ${pct}`;
+      return tipo || pct;
+    })
+    .filter(Boolean);
+
+  return parts.length ? parts.join("; ") : null;
+}
+
+function tipoLanceFromVendas(vendas: AnyRow[]): string | null {
+  const rows = vendas
+    .map((v) => ({ cota: String(v.cota || "").trim(), text: formatSavedLanceStrategy(v.estrategia_lance) }))
+    .filter((r) => !!r.text) as Array<{ cota: string; text: string }>;
+
+  if (!rows.length) return null;
+
+  const unique = Array.from(new Set(rows.map((r) => r.text)));
+  if (unique.length === 1) return unique[0];
+
+  return rows.map((r) => (r.cota ? `Cota ${r.cota}: ${r.text}` : r.text)).join(" | ");
+}
+
 function firstName(nome?: string | null) {
   const full = String(nome || "Cliente").trim() || "Cliente";
   return full.split(/\s+/)[0] || full;
@@ -266,7 +296,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const dryRun = String(req.query.dry_run || req.body?.dry_run || "").toLowerCase() === "true";
     const date = String(req.query.date || req.body?.date || "").slice(0, 10);
-    const tipoLance = String(req.query.tipo_lance || req.body?.tipo_lance || "Acompanhamento estratégico").trim() || "Acompanhamento estratégico";
     const groupIdsRaw = req.body?.group_ids || req.query.group_ids;
     const groupIds = Array.isArray(groupIdsRaw)
       ? groupIdsRaw.map(String).filter(Boolean)
@@ -304,7 +333,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { data: vendas, error: vendasError } = await supabaseAdmin
       .from("vendas")
-      .select("id,lead_id,administradora,grupo,cota,codigo,contemplada,inad,status")
+      .select("id,lead_id,administradora,grupo,cota,codigo,contemplada,inad,status,estrategia_lance")
       .eq("status", "encarteirada")
       .eq("codigo", "00")
       .in("grupo", Array.from(groupCodes));
@@ -353,11 +382,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .filter(Boolean)
         .sort(cmpNumLike)
         .join(", ") || "—";
+      const tipoLance = tipoLanceFromVendas(item.vendas);
 
       const automationKey = `gestao_nao_contemplada:${date}:${item.groupId}:${item.leadId}`;
 
       if (!phone) {
         out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, status: "skipped", reason: "sem_telefone", cotas });
+        continue;
+      }
+      if (!tipoLance) {
+        out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, phone, status: "skipped", reason: "estrategia_lance_nao_informada", cotas });
         continue;
       }
       if (await alreadySent(automationKey)) {
@@ -395,7 +429,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const renderedBody = renderTemplateBody(templateDefinition, params);
 
       if (dryRun) {
-        out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, phone, status: "dry_run", cotas, body: renderedBody, params: paramData });
+        out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, phone, status: "dry_run", cotas, tipo_lance: tipoLance, body: renderedBody, params: paramData });
         continue;
       }
 
@@ -403,7 +437,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sent = await sendTemplate(phone, params);
 
       if (!sent.ok) {
-        out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, phone, status: "error", error: sent.data, cotas });
+        out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, phone, status: "error", error: sent.data, cotas, tipo_lance: tipoLance });
         continue;
       }
 
@@ -420,6 +454,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         template_rendered_body: renderedBody,
         template_components: sent.payload?.template?.components || [],
         cotas,
+        tipo_lance: tipoLance,
         param_data: paramData,
       };
 
@@ -440,7 +475,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .update({ last_message: renderedBody, last_message_at: new Date().toISOString(), unread_count: 0, status: "humano", updated_at: new Date().toISOString() })
         .eq("id", conversationId);
 
-      out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, phone, conversation_id: conversationId, status: "sent", meta_message_id: metaMessageId, cotas });
+      out.push({ group_id: item.groupId, lead_id: item.leadId, nome: nomeCompleto, phone, conversation_id: conversationId, status: "sent", meta_message_id: metaMessageId, cotas, tipo_lance: tipoLance });
     }
 
     return res.status(200).json({
@@ -448,7 +483,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       date,
       template: TEMPLATE_NAME,
       dry_run: dryRun,
-      tipo_lance: tipoLance,
       total: out.length,
       sent: out.filter((r) => r.status === "sent").length,
       skipped: out.filter((r) => r.status === "skipped").length,

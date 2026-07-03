@@ -6,7 +6,7 @@ let src = fs.readFileSync(file, 'utf8');
 const helperAnchor = `function toPct4(v: number | null | undefined): string {
   if (v == null) return "—";
   const str = Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-  return `${str}%`;
+  return \`${str}%\`;
 }
 `;
 
@@ -77,20 +77,6 @@ if (!src.includes('estrategia_lance: string;')) {
   if (!src.includes(typeOld)) throw new Error('patch-gestao-oferta-lance-strategy-v1: OfertaRow type anchor not found');
   src = src.replace(typeOld, typeNew);
 }
-
-const selectOld = `.select("*")
-        .eq("status", "encarteirada")
-        .eq("codigo", "00")
-        .in("grupo", Array.from(gruposDigits));
-`;
-const selectNew = `.select("*")
-        .eq("status", "encarteirada")
-        .eq("codigo", "00")
-        .in("grupo", Array.from(gruposDigits));
-`;
-// The codigo = 00 predicate already removes cancelled quotas.
-if (!src.includes(selectOld)) throw new Error('patch-gestao-oferta-lance-strategy-v1: vendas select anchor not found');
-src = src.replace(selectOld, selectNew);
 
 const descBlock = `      const descCandidates = [
         "vendas_descrecao",
@@ -247,7 +233,7 @@ if (src.includes(screenHeadOld)) src = src.replace(screenHeadOld, screenHeadNew)
 src = src.replace(/colSpan=\{8\}/g, 'colSpan={10}');
 src = src.replace('min-w-[1080px]', 'min-w-[1280px]');
 
-const rowOld = `                    <React.Fragment key={`${o.administradora}-${o.grupo}-${o.cota}-${i}`}>
+const rowOld = `                    <React.Fragment key={\`${o.administradora}-${o.grupo}-${o.cota}-${i}\`}>
                       <tr className="odd:bg-muted/30">
                         <td className="p-2">{o.administradora}</td>
                         <td className="p-2">{o.grupo}</td>
@@ -273,7 +259,7 @@ const rowOld = `                    <React.Fragment key={`${o.administradora}-${
                       </tr>
                     </React.Fragment>
 `;
-const rowNew = `                    <tr key={`${o.administradora}-${o.grupo}-${o.cota}-${i}`} className="odd:bg-muted/30">
+const rowNew = `                    <tr key={\`${o.administradora}-${o.grupo}-${o.cota}-${i}\`} className="odd:bg-muted/30">
                       <td className="p-2">{o.administradora}</td>
                       <td className="p-2">{o.grupo}</td>
                       <td className="p-2">{o.cota ?? "—"}</td>

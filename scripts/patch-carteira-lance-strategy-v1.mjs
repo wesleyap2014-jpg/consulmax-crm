@@ -3,6 +3,19 @@ import fs from 'fs';
 const file = 'src/pages/Carteira.tsx';
 let src = fs.readFileSync(file, 'utf8');
 
+const typeAnchor = `  descricao: string | null;
+  status: "nova" | "encarteirada";
+`;
+const typeInsert = `  descricao: string | null;
+  estrategia_lance?: any | null;
+  status: "nova" | "encarteirada";
+`;
+
+if (!src.includes('estrategia_lance?: any | null;')) {
+  if (!src.includes(typeAnchor)) throw new Error('patch-carteira-lance-strategy-v1: Venda type anchor not found');
+  src = src.replace(typeAnchor, typeInsert);
+}
+
 const stateAnchor = `  const [form, setForm] = useState<Partial<Venda>>({
     cpf: "",
     data_venda: new Date().toISOString().slice(0, 10),
@@ -63,9 +76,9 @@ const helperInsert = `${helperAnchor}
         single: true,
         note: "Selecione exatamente uma estratégia para Embracon.",
         options: [
-          { key: "livre", label: "Lance Livre", requiresPct: true },
-          { key: "fixo1", label: "Primeiro Lance Fixo 50%", requiresPct: false, fixedPct: "50%" },
-          { key: "fixo2", label: "Segundo Lance Fixo 25%", requiresPct: false, fixedPct: "25%" },
+          { key: "livre", tipo: "Lance Livre", label: "Lance Livre", requiresPct: true },
+          { key: "fixo1", tipo: "Primeiro Lance Fixo 50%", label: "Primeiro Lance Fixo 50%", requiresPct: false, fixedPct: 50 },
+          { key: "fixo2", tipo: "Segundo Lance Fixo 25%", label: "Segundo Lance Fixo 25%", requiresPct: false, fixedPct: 25 },
         ],
       };
     }
@@ -77,9 +90,9 @@ const helperInsert = `${helperAnchor}
         max: 3,
         note: "Selecione uma ou mais estratégias para Maggi. Todas exigem percentual.",
         options: [
-          { key: "livre", label: "Lance Livre", requiresPct: true },
-          { key: "fixo1", label: "Primeiro Lance Fixo", requiresPct: true },
-          { key: "fixo2", label: "Segundo Lance Fixo", requiresPct: true },
+          { key: "livre", tipo: "Lance Livre", label: "Lance Livre", requiresPct: true },
+          { key: "fixo1", tipo: "Primeiro Lance Fixo", label: "Primeiro Lance Fixo", requiresPct: true },
+          { key: "fixo2", tipo: "Segundo Lance Fixo", label: "Segundo Lance Fixo", requiresPct: true },
         ],
       };
     }
@@ -91,8 +104,8 @@ const helperInsert = `${helperAnchor}
         max: 2,
         note: "Selecione ao menos uma estratégia para BB Consórcios.",
         options: [
-          { key: "livre", label: "Lance Livre", requiresPct: true },
-          { key: "fixo1", label: "Lance Fixo", requiresPct: true },
+          { key: "livre", tipo: "Lance Livre", label: "Lance Livre", requiresPct: true },
+          { key: "fixo1", tipo: "Lance Fixo", label: "Lance Fixo", requiresPct: true },
         ],
       };
     }
@@ -115,7 +128,7 @@ const helperInsert = `${helperAnchor}
     });
   };
 
-  const validateAndBuildLanceDescription = () => {
+  const validateAndBuildLancePayload = () => {
     const config = lanceConfigForAdmin(form.administradora as string);
     const selected = selectedLanceOptions(config);
 
@@ -131,18 +144,29 @@ const helperInsert = `${helperAnchor}
       throw new Error(`Selecione no máximo ${config.max} estratégia(s) de lance para ${config.adm}.`);
     }
 
-    const lines = selected.map((opt: any) => {
-      let pct = opt.fixedPct || "";
+    const opcoes = selected.map((opt: any) => {
+      let percentual = opt.fixedPct ?? null;
       if (opt.requiresPct) {
         const raw = String(lanceStrategy?.[opt.key + "_pct"] || "").trim();
         const parsed = parsePct4(raw);
         if (parsed == null) throw new Error(`Informe o percentual para ${opt.label}.`);
-        pct = `${formatPct4(parsed)}%`;
+        percentual = parsed;
       }
-      return pct ? `${opt.label}: ${pct}` : opt.label;
+      return {
+        chave: opt.key,
+        tipo: opt.tipo || opt.label,
+        percentual,
+        percentual_formatado: percentual == null ? null : `${formatPct4(percentual)}%`,
+      };
     });
 
-    return lines.length ? `[Estratégia de lance]\\n${lines.map((line: string) => `- ${line}`).join("\\n")}` : "";
+    if (!opcoes.length) return null;
+
+    return {
+      administradora: config.adm,
+      opcoes,
+      atualizado_em: new Date().toISOString(),
+    };
   };
 `;
 
@@ -165,20 +189,20 @@ const payloadOld = `      const segmento = normalizeProdutoToSegmento(form.produ
       const payload: Partial<Venda> = {
 `;
 const payloadNew = `      const segmento = normalizeProdutoToSegmento(form.produto as Produto);
-      const lanceDescription = validateAndBuildLanceDescription();
-      const descricaoFinal = [lanceDescription, form.descricao ?? ""].filter(Boolean).join("\\n\\n");
+      const estrategiaLance = validateAndBuildLancePayload();
       const payload: Partial<Venda> = {
 `;
-if (!src.includes('const lanceDescription = validateAndBuildLanceDescription();')) {
+if (!src.includes('const estrategiaLance = validateAndBuildLancePayload();')) {
   if (!src.includes(payloadOld)) throw new Error('patch-carteira-lance-strategy-v1: payload anchor not found');
   src = src.replace(payloadOld, payloadNew);
 }
 
 const descricaoOld = `        descricao: form.descricao ?? "",
 `;
-const descricaoNew = `        descricao: descricaoFinal,
+const descricaoNew = `        descricao: form.descricao ?? "",
+        estrategia_lance: estrategiaLance,
 `;
-if (!src.includes('descricao: descricaoFinal,')) {
+if (!src.includes('estrategia_lance: estrategiaLance,')) {
   if (!src.includes(descricaoOld)) throw new Error('patch-carteira-lance-strategy-v1: descricao payload anchor not found');
   src = src.replace(descricaoOld, descricaoNew);
 }
@@ -244,7 +268,7 @@ const uiInsert = `              {form.tipo_venda === "Bolsão" && (
                                 <input type={config.single ? "radio" : "checkbox"} checked={checked} onChange={() => toggleLanceStrategy(opt.key, config)} />
                                 {opt.label}
                               </label>
-                              {opt.fixedPct && <div className="text-xs text-gray-500 mt-2">Percentual fixo: {opt.fixedPct}</div>}
+                              {opt.fixedPct && <div className="text-xs text-gray-500 mt-2">Percentual fixo: {formatPct4(opt.fixedPct)}%</div>}
                               {checked && opt.requiresPct && (
                                 <div className="mt-2">
                                   <label className="text-xs text-gray-500">Percentual</label>

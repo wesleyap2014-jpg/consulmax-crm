@@ -10,8 +10,8 @@ function replaceOnce(from, to, label) {
   src = src.replace(from, to);
 }
 
-// Wider overlay and more elegant compact table.
-src = src.replace('w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col', 'w-full max-w-[98vw] rounded-2xl bg-white shadow-xl max-h-[92vh] flex flex-col');
+// Wider overlays and more elegant compact table. Offer Lance benefits from the wide layout; the assembly overlay also remains comfortable.
+src = src.split('w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col').join('w-full max-w-[98vw] rounded-2xl bg-white shadow-xl max-h-[92vh] flex flex-col');
 src = src.replace('rounded-xl border overflow-auto max-h-[52vh]', 'rounded-xl border overflow-auto max-h-[62vh]');
 src = src.replace('min-w-[1280px] w-full text-sm', 'w-full text-xs table-fixed');
 src = src.replace('min-w-[1080px] w-full text-sm', 'w-full text-xs table-fixed');

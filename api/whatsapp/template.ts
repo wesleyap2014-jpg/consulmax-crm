@@ -7,6 +7,8 @@ const META_TOKEN = process.env["META" + "_WHATSAPP" + "_TOKEN"]!;
 const DEFAULT_PHONE_NUMBER_ID = process.env["META" + "_WHATSAPP" + "_PHONE" + "_NUMBER" + "_ID"]!;
 const WABA_ID = process.env["META" + "_WHATSAPP" + "_WABA" + "_ID"] || process.env["META" + "_WABA" + "_ID"] || process.env["WHATSAPP" + "_BUSINESS" + "_ACCOUNT" + "_ID"] || "";
 const GRAPH_BASE = "https://graph.facebook.com/v21.0";
+const BIRTHDAY_TEMPLATE_NAME = "felicitacao_aniversario_cliente";
+const BIRTHDAY_IMAGE_URL = process.env.WHATSAPP_BIRTHDAY_IMAGE_URL || process.env.VITE_WHATSAPP_BIRTHDAY_IMAGE_URL || "";
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -88,6 +90,7 @@ async function buildBodyParams(conversationId: string, templateDefinition: any, 
     nomecliente: primeiroNome,
     nome: primeiroNome,
     cliente: primeiroNome,
+    primeironome: primeiroNome,
     primeiroNome: primeiroNome,
     primeiro_nome: primeiroNome,
     nomecompleto: nomeCompleto,
@@ -117,11 +120,13 @@ function renderBodyText(templateDefinition: any, params: any[], fallbackName: st
   }).trim();
 }
 
-function buildHeaderComponent(templateDefinition: any, reqBody: any) {
+function buildHeaderComponent(templateDefinition: any, reqBody: any, templateName?: string | null) {
   const header = headerComponent(templateDefinition);
   const format = String(header?.format || "").toLowerCase();
+  const isBirthdayTemplate = String(templateName || "") === BIRTHDAY_TEMPLATE_NAME;
   const media = reqBody?.header_media || reqBody?.media || null;
-  const link = reqBody?.header_media_link || reqBody?.media_link || reqBody?.document_link || reqBody?.image_link || media?.link || null;
+  const birthdayImageLink = isBirthdayTemplate && format === "image" ? BIRTHDAY_IMAGE_URL : null;
+  const link = reqBody?.header_media_link || reqBody?.media_link || reqBody?.document_link || reqBody?.image_link || media?.link || birthdayImageLink || null;
   const id = reqBody?.header_media_id || reqBody?.media_id || media?.id || null;
   const filename = reqBody?.header_file_name || reqBody?.file_name || media?.filename || media?.file_name || undefined;
   const type = ["image", "document", "video"].includes(format) ? format : String(media?.type || reqBody?.media_type || "").toLowerCase();
@@ -151,12 +156,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!conversation_id || !phone || !name) return res.status(400).json({ ok: false, error: "conversation_id, to e template_name são obrigatórios." });
 
     const templateDefinition = await getTemplateDefinition(name, language).catch(() => null);
+    const headerFormat = String(headerComponent(templateDefinition)?.format || "").toUpperCase();
+    if (name === BIRTHDAY_TEMPLATE_NAME && headerFormat === "IMAGE" && !BIRTHDAY_IMAGE_URL) {
+      return res.status(400).json({ ok: false, error: "O modelo de aniversário possui cabeçalho de imagem, mas WHATSAPP_BIRTHDAY_IMAGE_URL não está configurada na Vercel." });
+    }
+
     const needed = bodyVariableCount(templateDefinition);
     const provided = Array.isArray(template_params) ? template_params : Array.isArray(body_params) ? body_params : [];
     const templatePayload: any = { name, language: { code: language } };
     const components: any[] = [];
 
-    const headerPayload = buildHeaderComponent(templateDefinition, req.body || {});
+    const headerPayload = buildHeaderComponent(templateDefinition, req.body || {}, name);
     if (headerPayload) components.push({ type: "header", parameters: headerPayload.parameters });
 
     const bodyParams = needed > 0 ? await buildBodyParams(conversation_id, templateDefinition, provided) : [];

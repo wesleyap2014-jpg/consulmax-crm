@@ -21,6 +21,7 @@ const EmbraconSimulator = React.lazy(() => import("./pages/simuladores/EmbraconS
 const MaggiSimulator = React.lazy(() => import("./pages/simuladores/MaggiSimulator"));
 const BBConsorciosSimulator = React.lazy(() => import("./pages/simuladores/BBConsorciosSimulator"));
 const Propostas = React.lazy(() => import("./pages/Propostas"));
+const PropostasProMax = React.lazy(() => import("./pages/PropostasProMax"));
 const PropostasCadenciado = React.lazy(() => import("./pages/PropostasCadenciado"));
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
 const Carteira = React.lazy(() => import("./pages/Carteira"));
@@ -159,6 +160,8 @@ export const router = createBrowserRouter([
           },
 
           { path: "propostas", element: withSuspense(<Propostas />) },
+          { path: "propostas-pro-max", element: withSuspense(<PropostasProMax />) },
+          { path: "propostas-pro-max/:code", element: withSuspense(<PropostasProMax />) },
           { path: "propostas-cadenciado", element: withSuspense(<PropostasCadenciado />) },
           { path: "comissoes", element: withSuspense(<Comissoes />) },
           { path: "carteira", element: withSuspense(<Carteira />) },

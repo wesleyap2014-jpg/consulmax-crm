@@ -91,6 +91,12 @@ type AdminDirectoryRow = {
   slug?: string | null;
 };
 
+type UnitDirectoryRow = {
+  id: string;
+  name: string;
+  active?: boolean;
+};
+
 type ProposalParams = {
   selic_anual: number;
   cdi_anual: number;
@@ -126,6 +132,8 @@ const C = {
   navy: "#1E293F",
   gold: "#B5A573",
 };
+
+const PAGE_SIZE = 10;
 
 function onlyNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -192,6 +200,14 @@ function unitLabel(unitId?: string | null, explicitName?: string | null) {
   return `Unidade ${unitId.slice(0, 8)}`;
 }
 
+function rowIsActive(source: Record<string, unknown>) {
+  if ("is_active" in source) return source.is_active !== false;
+  if ("ativo" in source) return source.ativo !== false;
+  if ("active" in source) return source.active !== false;
+  const status = normalizeText(source.status);
+  return !status || status === "ativo" || status === "ativa" || status === "active";
+}
+
 function getAdminName(row: Proposal) {
   const explicit = rowText(
     row,
@@ -231,8 +247,6 @@ function getSellerName(row: Proposal, usersById: Map<string, UserDirectoryRow>) 
 function getUnitName(row: Proposal, usersById: Map<string, UserDirectoryRow>) {
   const explicit = rowText(row, ["unidade_nome", "unidade", "unit_name", "filial_nome"], "");
   if (explicit) return explicit;
-  const unitId = rowText(row, ["unidade_id", "unit_id", "filial_id"], "");
-  if (unitId) return unitLabel(unitId);
   const userId = userIdFromRow(row);
   return usersById.get(userId)?.unitName || "";
 }
@@ -387,8 +401,10 @@ export default function PropostasProMax() {
   const [rows, setRows] = useState<Proposal[]>([]);
   const [events, setEvents] = useState<ProposalEvent[]>([]);
   const [users, setUsers] = useState<UserDirectoryRow[]>([]);
+  const [unitRows, setUnitRows] = useState<UnitDirectoryRow[]>([]);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
+  const [page, setPage] = useState(1);
   const [unitFilter, setUnitFilter] = useState("todos");
   const [sellerFilter, setSellerFilter] = useState("todos");
   const [adminFilter, setAdminFilter] = useState("todos");
@@ -424,6 +440,8 @@ export default function PropostasProMax() {
       const metadataByCode = new Map<number, ProMaxMetadata>();
       const eventsList: ProposalEvent[] = [];
       const userDirectory: UserDirectoryRow[] = [];
+      const unitDirectory: UnitDirectoryRow[] = [];
+      const unitNameById = new Map<string, string>();
       const adminDirectory = new Map<string, AdminDirectoryRow>();
       const ownerByLeadId = new Map<string, string>();
 
@@ -447,6 +465,22 @@ export default function PropostasProMax() {
         if (!eventsRes.error) eventsList.push(...((eventsRes.data || []) as ProposalEvent[]));
       }
 
+      for (const table of ["units", "unidades", "filiais"]) {
+        const unitsRes = await supabase.from(table).select("*").limit(1000);
+        if (unitsRes.error || !unitsRes.data?.length) continue;
+
+        for (const item of unitsRes.data as Record<string, unknown>[]) {
+          const id = firstText(item, ["id", "unit_id", "unidade_id", "filial_id"]);
+          const name = firstText(item, ["nome", "name", "nome_unidade", "unidade", "filial", "title", "razao_social"]);
+          if (!id || !name || !rowIsActive(item)) continue;
+
+          unitDirectory.push({ id, name, active: true });
+          unitNameById.set(id, name);
+        }
+
+        if (unitDirectory.length) break;
+      }
+
       const usersRes = await supabase
         .from("users")
         .select("id,auth_user_id,nome,email,phone,telefone,unit_id,role,user_role,hierarchy_level,is_active,scopes")
@@ -460,6 +494,9 @@ export default function PropostasProMax() {
           const authUserId = firstText(item, ["auth_user_id"]) || null;
           const name = firstText(item, ["nome", "email"]);
           const unitId = firstText(item, ["unit_id"]) || null;
+          const resolvedUnitName = unitDirectory.length
+            ? unitNameById.get(unitId || "") || ""
+            : unitLabel(unitId);
           const role = firstText(item, ["user_role", "role"]) || null;
 
           if (!id || !name) continue;
@@ -471,7 +508,7 @@ export default function PropostasProMax() {
             email: firstText(item, ["email"]) || null,
             phone: firstText(item, ["phone", "telefone"]) || null,
             unitId,
-            unitName: unitLabel(unitId),
+            unitName: resolvedUnitName,
             role,
             hierarchyLevel: firstText(item, ["hierarchy_level"]) || null,
             active: item.is_active !== false,
@@ -577,6 +614,7 @@ export default function PropostasProMax() {
       );
       setEvents(eventsList);
       setUsers(userDirectory);
+      setUnitRows(unitDirectory);
       if (!paramsRes.error && paramsRes.data?.params) {
         setProposalParams({ ...DEFAULT_PARAMS, ...(paramsRes.data.params as Partial<ProposalParams>) });
       }
@@ -600,15 +638,19 @@ export default function PropostasProMax() {
   }, [users]);
 
   const options = useMemo(() => {
-    const units = new Set<string>();
+    const unitOptions = new Set<string>();
     const sellers = new Set<string>();
     const admins = new Set<string>();
     const segments = new Set<string>();
 
     const selectedUnitUsers = users.filter((user) => unitFilter === "todos" || user.unitName === unitFilter);
 
+    for (const unit of unitRows) {
+      if (unit.name) unitOptions.add(unit.name);
+    }
+
     for (const user of users) {
-      if (user.unitName) units.add(user.unitName);
+      if (user.unitName) unitOptions.add(user.unitName);
     }
 
     for (const user of selectedUnitUsers) {
@@ -619,7 +661,7 @@ export default function PropostasProMax() {
       const unitName = getUnitName(row, usersById);
       const sellerName = getSellerName(row, usersById);
 
-      units.add(unitName);
+      unitOptions.add(unitName);
       if (unitFilter === "todos" || unitName === unitFilter) sellers.add(sellerName);
       admins.add(getAdminName(row));
       segments.add(row.segmento || "");
@@ -627,12 +669,12 @@ export default function PropostasProMax() {
 
     const clean = (set: Set<string>) => [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
     return {
-      units: clean(units),
+      units: clean(unitOptions),
       sellers: clean(sellers),
       admins: clean(admins),
       segments: clean(segments),
     };
-  }, [rows, unitFilter, users, usersById]);
+  }, [rows, unitFilter, unitRows, users, usersById]);
 
   useEffect(() => {
     if (sellerFilter !== "todos" && !options.sellers.includes(sellerFilter)) {
@@ -675,8 +717,26 @@ export default function PropostasProMax() {
   const totalCredit = useMemo(() => filteredRows.reduce((sum, row) => sum + creditoContratado(row), 0), [filteredRows]);
   const totalLiquidCredit = useMemo(() => filteredRows.reduce((sum, row) => sum + creditoLiquido(row), 0), [filteredRows]);
   const selectedTotalCredit = useMemo(() => selectedRows.reduce((sum, row) => sum + creditoContratado(row), 0), [selectedRows]);
-  const totalSent = useMemo(() => events.filter((event) => event.event_type === "sent").length, [events]);
-  const totalOpened = useMemo(() => events.filter((event) => event.event_type === "opened").length, [events]);
+  const filteredCodeSet = useMemo(() => new Set(filteredRows.map((row) => row.code)), [filteredRows]);
+  const filteredEvents = useMemo(
+    () => events.filter((event) => event.simulation_code !== null && filteredCodeSet.has(event.simulation_code)),
+    [events, filteredCodeSet]
+  );
+  const totalSent = useMemo(() => filteredEvents.filter((event) => event.event_type === "sent").length, [filteredEvents]);
+  const totalOpened = useMemo(() => filteredEvents.filter((event) => event.event_type === "opened").length, [filteredEvents]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const paginatedRows = useMemo(
+    () => filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filteredRows, page]
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [adminFilter, q, segmentFilter, sellerFilter, unitFilter]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const kpis = useMemo(() => {
     const ranges = [
@@ -688,10 +748,10 @@ export default function PropostasProMax() {
     return ranges.map((range) => ({
       ...range,
       generated: filteredRows.filter((row) => isAfter(row.created_at, range.start)).length,
-      sent: events.filter((event) => event.event_type === "sent" && isAfter(event.created_at, range.start)).length,
-      opened: events.filter((event) => event.event_type === "opened" && isAfter(event.created_at, range.start)).length,
+      sent: filteredEvents.filter((event) => event.event_type === "sent" && isAfter(event.created_at, range.start)).length,
+      opened: filteredEvents.filter((event) => event.event_type === "opened" && isAfter(event.created_at, range.start)).length,
     }));
-  }, [events, filteredRows]);
+  }, [filteredEvents, filteredRows]);
 
   function toggleSelected(code: number) {
     setSelected((prev) => (prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code]));
@@ -1034,6 +1094,40 @@ export default function PropostasProMax() {
         )}
 
         <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+          {!loading && !error && (
+            <div className="flex flex-col gap-3 border-b bg-white px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
+              <div className="font-semibold text-slate-600">
+                Exibindo {filteredRows.length ? (page - 1) * PAGE_SIZE + 1 : 0}
+                {" - "}
+                {Math.min(page * PAGE_SIZE, filteredRows.length)} de {filteredRows.length} propostas filtradas
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={page <= 1}
+                >
+                  Anterior
+                </Button>
+                <span className="min-w-[88px] text-center text-xs font-bold text-slate-500">
+                  Página {page} de {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={page >= totalPages}
+                >
+                  Próxima
+                </Button>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center gap-2 p-6 text-sm text-slate-600">
               <Loader2 className="h-4 w-4 animate-spin" /> Carregando propostas...
@@ -1060,7 +1154,7 @@ export default function PropostasProMax() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((row) => (
+                  {paginatedRows.map((row) => (
                     <tr
                       key={row.code}
                       className="cursor-pointer border-t hover:bg-slate-50"
@@ -1113,7 +1207,7 @@ export default function PropostasProMax() {
                       </td>
                     </tr>
                   ))}
-                  {!filteredRows.length && (
+                  {!paginatedRows.length && (
                     <tr>
                       <td className="p-6 text-center text-sm text-slate-500" colSpan={12}>
                         Nenhuma proposta encontrada para os filtros selecionados.

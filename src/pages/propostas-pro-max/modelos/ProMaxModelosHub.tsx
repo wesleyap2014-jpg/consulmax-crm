@@ -19,6 +19,10 @@ type ProposalModelRow = {
   lance_proprio_valor?: number | string | null;
   lance_ofertado_valor?: number | string | null;
   saldo_devedor_final?: number | string | null;
+  prazo_venda?: number | string | null;
+  novo_prazo?: number | string | null;
+  adm_tax_pct?: number | string | null;
+  fr_tax_pct?: number | string | null;
   index_code?: string | null;
   index_12m_value?: number | string | null;
   administradora?: string | null;
@@ -66,6 +70,8 @@ const MODELS: Array<{ key: ModelKey; label: string; description: string }> = [
   { key: "cadenciada", label: "Cadenciada", description: "Estratégia com múltiplas cartas e fases de aquisição." },
   { key: "equity", label: "Equity", description: "Estratégia orientada a participação, entrada e saída." },
 ];
+
+const PROJECTION_PAGE_SIZE = 12;
 
 function onlyNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -168,6 +174,7 @@ function Metric({ label, value, tone = "navy" }: { label: string; value: string;
 }
 
 function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
+  const [projectionPage, setProjectionPage] = useState(1);
   const index = useMemo(() => resolveCorrectionIndex(proposal, params), [proposal, params]);
   const annualRate = index.annualRate;
   const monthlyRate = Math.pow(1 + annualRate, 1 / 12) - 1;
@@ -178,6 +185,9 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
   const firstInstallment = parcelaInicial(proposal);
   const nextInstallments = demaisParcelas(proposal);
   const debt = onlyNumber(proposal.saldo_devedor_final) || Math.max(0, baseCredit - onlyNumber(proposal.lance_ofertado_valor));
+  const adminTaxPct = onlyNumber(proposal.adm_tax_pct);
+  const reserveTaxPct = onlyNumber(proposal.fr_tax_pct);
+  const totalTaxPct = adminTaxPct + reserveTaxPct;
 
   const correctedBaseCredit = baseCredit * (1 + annualRate);
   const correctedContractedCredit = contractedCredit * (1 + annualRate);
@@ -185,17 +195,135 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
   const correctedDebt = debt * (1 + annualRate);
   const correctionValue = correctedBaseCredit - baseCredit;
 
-  const projection = Array.from({ length: 12 }, (_, indexMonth) => {
-    const month = indexMonth + 1;
-    const factor = Math.pow(1 + monthlyRate, month);
-    return {
-      month,
-      factor,
-      carta: baseCredit * factor,
-      creditoLiquido: liquidCredit * factor,
-      parcela: nextInstallments * factor,
+  const projection = useMemo(() => {
+    type MonthEntry = {
+      kind: "month";
+      month: number;
+      credit: number;
+      initialBalance: number;
+      installment: number;
+      payments: number;
+      endingBalance: number;
     };
-  });
+
+    type EventEntry = {
+      kind: "event";
+      month: number;
+      title: string;
+      details: string[];
+    };
+
+    const entries: Array<MonthEntry | EventEntry> = [];
+    const contemplationMonth = Math.max(0, Math.round(onlyNumber(proposal.parcela_contemplacao)));
+    const newTerm = Math.max(0, Math.round(onlyNumber(proposal.novo_prazo)));
+    const saleTerm = Math.max(0, Math.round(onlyNumber(proposal.prazo_venda)));
+    const plannedMonths = Math.max(saleTerm, contemplationMonth + newTerm, 1);
+    const bidPaid =
+      onlyNumber(proposal.lance_ofertado_valor) ||
+      onlyNumber(proposal.lance_embutido_valor) + onlyNumber(proposal.lance_proprio_valor);
+
+    let month = 1;
+    let credit = contractedCredit;
+    let balance = baseCredit;
+    let payments = 0;
+    let installment = firstInstallment || nextInstallments;
+    let postContemplationInstallment = nextInstallments || installment;
+    let guard = 0;
+
+    while (month <= plannedMonths && balance > 0 && guard < 360) {
+      guard += 1;
+
+      if (month > 1 && (month - 1) % 12 === 0) {
+        const correctionBase = contemplationMonth && month > contemplationMonth ? balance : credit;
+        const correctionValue = correctionBase * annualRate;
+        const taxValue = correctionValue * totalTaxPct;
+        const totalAdjustment = correctionValue + taxValue;
+        const installmentFactor = correctionBase > 0 ? (correctionBase + totalAdjustment) / correctionBase : 1;
+
+        credit += correctionValue;
+        balance += totalAdjustment;
+        installment *= installmentFactor;
+        postContemplationInstallment *= installmentFactor;
+
+        entries.push({
+          kind: "event",
+          month,
+          title: "Correção",
+          details: [
+            `Crédito pré: ${brMoney(correctionBase)}`,
+            `Correção: ${brMoney(correctionValue)}`,
+            `Taxas: ${brMoney(taxValue)}`,
+            `Nova parcela: ${brMoney(installment)}`,
+          ],
+        });
+      }
+
+      if (contemplationMonth > 0 && month === contemplationMonth) {
+        const balanceBeforeBid = balance;
+        balance = Math.max(0, balance - bidPaid);
+        payments += bidPaid;
+        installment = postContemplationInstallment || installment;
+
+        entries.push({
+          kind: "event",
+          month,
+          title: "Contemplação",
+          details: [
+            `Lance pago: ${brMoney(bidPaid)}`,
+            `Saldo antes do lance: ${brMoney(balanceBeforeBid)}`,
+            `Saldo após o lance: ${brMoney(balance)}`,
+            `Nova parcela: ${brMoney(installment)}`,
+            `Novo prazo: ${newTerm || "-"} meses`,
+          ],
+        });
+      }
+
+      const initialBalance = balance;
+      const monthlyPayment = Math.min(installment, balance);
+      payments += monthlyPayment;
+      balance = Math.max(0, balance - monthlyPayment);
+
+      entries.push({
+        kind: "month",
+        month,
+        credit,
+        initialBalance,
+        installment: monthlyPayment,
+        payments,
+        endingBalance: balance,
+      });
+
+      month += 1;
+    }
+
+    return {
+      entries,
+      totalMonths: Math.max(1, month - 1),
+    };
+  }, [
+    annualRate,
+    baseCredit,
+    contractedCredit,
+    firstInstallment,
+    nextInstallments,
+    proposal.adm_tax_pct,
+    proposal.fr_tax_pct,
+    proposal.lance_embutido_valor,
+    proposal.lance_ofertado_valor,
+    proposal.lance_proprio_valor,
+    proposal.novo_prazo,
+    proposal.parcela_contemplacao,
+    proposal.prazo_venda,
+    totalTaxPct,
+  ]);
+
+  const totalProjectionPages = Math.max(1, Math.ceil(projection.totalMonths / PROJECTION_PAGE_SIZE));
+  const safeProjectionPage = Math.min(projectionPage, totalProjectionPages);
+  const projectionStartMonth = (safeProjectionPage - 1) * PROJECTION_PAGE_SIZE + 1;
+  const projectionEndMonth = Math.min(safeProjectionPage * PROJECTION_PAGE_SIZE, projection.totalMonths);
+  const visibleProjection = projection.entries.filter(
+    (entry) => entry.month >= projectionStartMonth && entry.month <= projectionEndMonth
+  );
 
   return (
     <div className="space-y-4">
@@ -210,7 +338,7 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
             </h2>
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
               Primeiro modelo visual da Propostas Pró Max: mostra a carta atual, o índice de correção aplicado
-              e a projeção de crédito, crédito líquido e parcela ao longo dos próximos 12 meses.
+              e a projeção de crédito, saldo, parcela e pagamentos ao longo do prazo projetado.
             </p>
           </div>
           <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
@@ -273,32 +401,70 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
       </section>
 
       <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
-        <div className="border-b px-5 py-4">
+        <div className="flex flex-col gap-3 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
             <BarChart3 className="h-4 w-4" /> Projeção mês a mês
           </div>
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+            <button
+              type="button"
+              className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setProjectionPage((current) => Math.max(1, current - 1))}
+              disabled={safeProjectionPage <= 1}
+            >
+              Anterior
+            </button>
+            <span className="min-w-[150px] text-center">
+              Meses {projectionStartMonth}-{projectionEndMonth} de {projection.totalMonths}
+            </span>
+            <button
+              type="button"
+              className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setProjectionPage((current) => Math.min(totalProjectionPages, current + 1))}
+              disabled={safeProjectionPage >= totalProjectionPages}
+            >
+              Próxima
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-[720px] w-full border-collapse text-sm">
+          <table className="min-w-[980px] w-full border-collapse text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
               <tr>
                 <th className="p-3 text-left">Mês</th>
-                <th className="p-3 text-right">Fator acumulado</th>
-                <th className="p-3 text-right">Carta corrigida</th>
-                <th className="p-3 text-right">Crédito líquido</th>
-                <th className="p-3 text-right">Parcela estimada</th>
+                <th className="p-3 text-right">Crédito</th>
+                <th className="p-3 text-right">Saldo In</th>
+                <th className="p-3 text-right">Parcela</th>
+                <th className="p-3 text-right">Pgtos</th>
+                <th className="p-3 text-right">Saldo devedor</th>
               </tr>
             </thead>
             <tbody>
-              {projection.map((item) => (
-                <tr key={item.month} className="border-t">
-                  <td className="p-3 font-bold" style={{ color: C.navy }}>Mês {item.month}</td>
-                  <td className="p-3 text-right">{brPercent(item.factor - 1)}</td>
-                  <td className="p-3 text-right font-semibold">{brMoney(item.carta)}</td>
-                  <td className="p-3 text-right">{brMoney(item.creditoLiquido)}</td>
-                  <td className="p-3 text-right">{brMoney(item.parcela)}</td>
-                </tr>
-              ))}
+              {visibleProjection.map((item, index) => {
+                if (item.kind === "event") {
+                  return (
+                    <tr key={`${item.kind}-${item.month}-${index}`} className="border-t bg-amber-50/70">
+                      <td className="p-3 font-black" style={{ color: C.ruby }}>Evento: {item.title}</td>
+                      <td className="p-3 text-sm font-semibold text-amber-900" colSpan={5}>
+                        {item.details.join(" | ")}
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return (
+                  <tr key={`${item.kind}-${item.month}`} className="border-t">
+                    <td className="p-3 font-bold" style={{ color: C.navy }}>Mês {item.month}</td>
+                    <td className="p-3 text-right font-semibold">{brMoney(item.credit)}</td>
+                    <td className="p-3 text-right">{brMoney(item.initialBalance)}</td>
+                    <td className="p-3 text-right">{brMoney(item.installment)}</td>
+                    <td className="p-3 text-right">{brMoney(item.payments)}</td>
+                    <td className="p-3 text-right font-black" style={{ color: item.endingBalance <= 0 ? C.gold : C.ruby }}>
+                      {brMoney(item.endingBalance)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

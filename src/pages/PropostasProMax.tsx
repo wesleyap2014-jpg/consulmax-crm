@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import ProMaxModelosHub from "./propostas-pro-max/modelos/ProMaxModelosHub";
 import {
   ArrowLeft,
   BarChart3,
@@ -896,46 +897,26 @@ export default function PropostasProMax() {
   if (activeCode) {
     return (
       <div className="min-h-screen bg-slate-50 p-4 md:p-6">
-        <div className="mx-auto max-w-6xl space-y-4">
+        <div className="mx-auto w-full max-w-none space-y-4">
           <Button type="button" variant="outline" className="rounded-lg" onClick={() => navigate("/propostas-pro-max")}>
             <ArrowLeft className="mr-2 h-4 w-4" /> Voltar para lista
           </Button>
 
-          <section className="rounded-lg border bg-white p-6 shadow-sm">
-            <div className="text-xs font-bold uppercase tracking-[.14em] text-slate-500">Ambiente Pró Max</div>
-            <h1 className="mt-2 text-2xl font-black" style={{ color: C.navy }}>
-              Proposta #{activeCode}
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Este ambiente será usado para os modelos visuais: resumo do cliente, sorteio x lance,
-              estratégia recomendada, fluxo de parcelas, gráficos e PDF premium.
-            </p>
-
-            {activeRow ? (
-              <div className="mt-6 grid gap-3 md:grid-cols-4">
-                <div className="rounded-lg border p-4">
-                  <div className="text-xs text-slate-500">Lead</div>
-                  <div className="font-black" style={{ color: C.navy }}>{activeRow.lead_nome || "-"}</div>
-                </div>
-                <div className="rounded-lg border p-4">
-                  <div className="text-xs text-slate-500">Crédito contratado</div>
-                  <div className="font-black" style={{ color: C.navy }}>{brMoney(creditoContratado(activeRow))}</div>
-                </div>
-                <div className="rounded-lg border p-4">
-                  <div className="text-xs text-slate-500">Crédito líquido</div>
-                  <div className="font-black" style={{ color: C.ruby }}>{brMoney(creditoLiquido(activeRow))}</div>
-                </div>
-                <div className="rounded-lg border p-4">
-                  <div className="text-xs text-slate-500">Tipo de lance</div>
-                  <div className="font-black" style={{ color: C.navy }}>{tipoLance(activeRow)}</div>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                Proposta não encontrada na lista carregada.
-              </div>
-            )}
-          </section>
+          {loading ? (
+            <section className="flex items-center gap-2 rounded-lg border bg-white p-6 text-sm text-slate-600 shadow-sm">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando ambiente da proposta...
+            </section>
+          ) : error ? (
+            <section className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700">
+              {error}
+            </section>
+          ) : activeRow ? (
+            <ProMaxModelosHub proposal={activeRow} params={proposalParams} />
+          ) : (
+            <section className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+              Proposta não encontrada na lista carregada.
+            </section>
+          )}
         </div>
       </div>
     );

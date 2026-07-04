@@ -265,6 +265,7 @@ function groupForPath(pathname: string): GroupKey {
       "/central-grupos",
       "/grupos-disponiveis",
       "/propostas",
+      "/propostas-pro-max",
       "/ranking",
       "/estoque-contempladas",
     ])
@@ -448,6 +449,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           },
           { to: "/central-grupos", label: "Central de Grupos", icon: Database, end: true },
           { to: "/propostas", label: "Propostas", icon: FileText, end: true },
+          {
+            to: "/propostas-pro-max",
+            label: "Propostas Pró Max",
+            icon: FileText,
+            end: false,
+            activeMatch: (p) => p.startsWith("/propostas-pro-max"),
+          },
           { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
           { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
         ],

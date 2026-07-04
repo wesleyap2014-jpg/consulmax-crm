@@ -347,16 +347,31 @@ function ParamInput({
   value: number;
   onChange: (value: number) => void;
 }) {
+  const [draft, setDraft] = useState(formatPercentFraction(value));
+
+  useEffect(() => {
+    setDraft(formatPercentFraction(value));
+  }, [value]);
+
+  function commit() {
+    const parsed = parsePercentInput(draft);
+    const formatted = formatPercentFraction(parsed);
+    setDraft(formatted);
+    if (parsed !== value) onChange(parsed);
+  }
+
   return (
     <label className="space-y-1 text-xs font-semibold text-slate-600">
       <span>{label}</span>
       <Input
         className="h-10 rounded-lg"
-        defaultValue={formatPercentFraction(value)}
-        onBlur={(event) => {
-          const parsed = parsePercentInput(event.currentTarget.value);
-          event.currentTarget.value = formatPercentFraction(parsed);
-          onChange(parsed);
+        value={draft}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
         }}
       />
     </label>
@@ -760,7 +775,7 @@ export default function PropostasProMax() {
   async function persistProposalParams(next: ProposalParams) {
     setParamsSaving(true);
     const authRes = await supabase.auth.getUser();
-    const { error: saveError } = await supabase
+    const { data: saved, error: saveError } = await supabase
       .from("proposal_pro_max_parameters")
       .upsert(
         {
@@ -770,10 +785,14 @@ export default function PropostasProMax() {
           updated_at: new Date().toISOString(),
         },
         { onConflict: "id" }
-      );
+      )
+      .select("params")
+      .single();
 
     if (saveError) {
       alert(`Não foi possível salvar os parâmetros: ${saveError.message}`);
+    } else if (saved?.params) {
+      setProposalParams({ ...DEFAULT_PARAMS, ...(saved.params as Partial<ProposalParams>) });
     }
     setParamsSaving(false);
   }

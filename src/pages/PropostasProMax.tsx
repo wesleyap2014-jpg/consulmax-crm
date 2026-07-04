@@ -7,15 +7,17 @@ import { Input } from "@/components/ui/input";
 import {
   ArrowLeft,
   BarChart3,
+  Building2,
+  ChevronDown,
   CalendarDays,
   Copy,
   Download,
   Eye,
   FileText,
-  Filter,
   Link2,
   Loader2,
   Search,
+  Settings2,
 } from "lucide-react";
 
 type SimRow = {
@@ -67,6 +69,45 @@ type Proposal = SimRow & {
   promax?: ProMaxMetadata;
 };
 
+type UserDirectoryRow = {
+  id: string;
+  name: string;
+  email?: string | null;
+  unitId?: string | null;
+  unitName?: string | null;
+  role?: string | null;
+};
+
+type ProposalParams = {
+  selic_anual: number;
+  cdi_anual: number;
+  reforco_pct: number;
+  ipca12m: number;
+  igpm12m: number;
+  incc12m: number;
+  inpc12m: number;
+  fin_veic_mensal: number;
+  fin_imob_anual: number;
+  aluguel_pct: number;
+  airbnb_pct: number;
+  condominio_pct: number;
+};
+
+const DEFAULT_PARAMS: ProposalParams = {
+  selic_anual: 0.105,
+  cdi_anual: 0.104,
+  reforco_pct: 0.25,
+  ipca12m: 0.045,
+  igpm12m: 0.04,
+  incc12m: 0.06,
+  inpc12m: 0.045,
+  fin_veic_mensal: 0.018,
+  fin_imob_anual: 0.122,
+  aluguel_pct: 0.006,
+  airbnb_pct: 0.15,
+  condominio_pct: 0.08,
+};
+
 const C = {
   ruby: "#A11C27",
   navy: "#1E293F",
@@ -99,12 +140,76 @@ function normalizeText(value: unknown) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function rowText(row: Proposal, keys: string[], fallback = "Nao informado") {
+function parsePercentInput(raw: string): number {
+  const value = raw.trim().replace(/\s+/g, "");
+  if (!value) return 0;
+  const hasPercent = value.endsWith("%");
+  const number = Number(value.replace("%", "").replace(".", "").replace(",", "."));
+  if (!Number.isFinite(number)) return 0;
+  if (hasPercent) return number / 100;
+  return number > 1 ? number / 100 : number;
+}
+
+function formatPercentFraction(value: number) {
+  return `${((Number(value) || 0) * 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
+function rowText(row: Proposal, keys: string[], fallback = "Não informado") {
   for (const key of keys) {
     const value = row.promax?.[key as keyof ProMaxMetadata] ?? row[key];
     if (value !== null && value !== undefined && String(value).trim()) return String(value);
   }
   return fallback;
+}
+
+function firstText(source: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== null && value !== undefined && String(value).trim()) return String(value);
+  }
+  return "";
+}
+
+function getAdminName(row: Proposal) {
+  const explicit = rowText(
+    row,
+    [
+      "administradora",
+      "admin",
+      "admin_name",
+      "administradora_nome",
+      "nome_administradora",
+      "adminName",
+      "administrator",
+      "administrator_name",
+      "source_admin",
+    ],
+    ""
+  );
+  if (explicit) return explicit;
+
+  return "Não informado";
+}
+
+function userIdFromRow(row: Proposal) {
+  return firstText(row, ["vendedor_id", "seller_id", "consultor_id", "user_id", "usuario_id", "created_by", "owner_id"]);
+}
+
+function getSellerName(row: Proposal, usersById: Map<string, UserDirectoryRow>) {
+  const explicit = rowText(row, ["vendedor_nome", "seller_name", "consultor_nome", "usuario_nome", "created_by_name"], "");
+  if (explicit) return explicit;
+  const userId = userIdFromRow(row);
+  return usersById.get(userId)?.name || "";
+}
+
+function getUnitName(row: Proposal, usersById: Map<string, UserDirectoryRow>) {
+  const explicit = rowText(row, ["unidade_nome", "unidade", "unit_name", "filial_nome"], "");
+  if (explicit) return explicit;
+  const userId = userIdFromRow(row);
+  return usersById.get(userId)?.unitName || "";
 }
 
 function creditoContratado(row: Proposal) {
@@ -172,7 +277,7 @@ function isAfter(value: string | null | undefined, start: Date) {
 
 function KpiCard({ title, generated, sent, opened }: { title: string; generated: number; sent: number; opened: number }) {
   return (
-    <div className="rounded-lg border bg-white p-4 shadow-sm">
+    <div className="rounded-lg border bg-white/95 p-4 shadow-sm">
       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.12em] text-slate-500">
         <CalendarDays className="h-4 w-4" /> {title}
       </div>
@@ -191,6 +296,31 @@ function KpiCard({ title, generated, sent, opened }: { title: string; generated:
         </div>
       </div>
     </div>
+  );
+}
+
+function ParamInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="space-y-1 text-xs font-semibold text-slate-600">
+      <span>{label}</span>
+      <Input
+        className="h-10 rounded-lg"
+        defaultValue={formatPercentFraction(value)}
+        onBlur={(event) => {
+          const parsed = parsePercentInput(event.currentTarget.value);
+          event.currentTarget.value = formatPercentFraction(parsed);
+          onChange(parsed);
+        }}
+      />
+    </label>
   );
 }
 
@@ -231,12 +361,16 @@ export default function PropostasProMax() {
   const [error, setError] = useState("");
   const [rows, setRows] = useState<Proposal[]>([]);
   const [events, setEvents] = useState<ProposalEvent[]>([]);
+  const [users, setUsers] = useState<UserDirectoryRow[]>([]);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
   const [unitFilter, setUnitFilter] = useState("todos");
   const [sellerFilter, setSellerFilter] = useState("todos");
   const [adminFilter, setAdminFilter] = useState("todos");
   const [segmentFilter, setSegmentFilter] = useState("todos");
+  const [paramsOpen, setParamsOpen] = useState(false);
+  const [proposalParams, setProposalParams] = useState<ProposalParams>(DEFAULT_PARAMS);
+  const [paramsSaving, setParamsSaving] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -261,6 +395,7 @@ export default function PropostasProMax() {
       const codes = ((data || []) as SimRow[]).map((row) => row.code).filter(Boolean);
       const metadataByCode = new Map<number, ProMaxMetadata>();
       const eventsList: ProposalEvent[] = [];
+      const userDirectory: UserDirectoryRow[] = [];
 
       if (codes.length) {
         const metadataRes = await supabase
@@ -282,10 +417,43 @@ export default function PropostasProMax() {
         if (!eventsRes.error) eventsList.push(...((eventsRes.data || []) as ProposalEvent[]));
       }
 
+      const userTables = ["profiles", "usuarios", "users"];
+      for (const table of userTables) {
+        const usersRes = await supabase.from(table).select("*").limit(1000);
+        if (usersRes.error || !usersRes.data?.length) continue;
+
+        for (const item of usersRes.data as Record<string, unknown>[]) {
+          const id = firstText(item, ["id", "user_id", "auth_user_id", "uid"]);
+          const name = firstText(item, ["nome", "name", "full_name", "display_name", "email"]);
+          if (!id || !name) continue;
+
+          userDirectory.push({
+            id,
+            name,
+            email: firstText(item, ["email"]) || null,
+            unitId: firstText(item, ["unidade_id", "unit_id", "filial_id"]) || null,
+            unitName: firstText(item, ["unidade_nome", "unidade", "unit_name", "filial_nome", "filial"]) || null,
+            role: firstText(item, ["perfil", "role", "tipo", "nivel_acesso"]) || null,
+          });
+        }
+
+        if (userDirectory.length) break;
+      }
+
+      const paramsRes = await supabase
+        .from("proposal_pro_max_parameters")
+        .select("params")
+        .eq("id", "global")
+        .maybeSingle();
+
       if (!alive) return;
 
       setRows(((data || []) as SimRow[]).map((row) => ({ ...row, promax: metadataByCode.get(row.code) })));
       setEvents(eventsList);
+      setUsers(userDirectory);
+      if (!paramsRes.error && paramsRes.data?.params) {
+        setProposalParams({ ...DEFAULT_PARAMS, ...(paramsRes.data.params as Partial<ProposalParams>) });
+      }
       setLoading(false);
     }
 
@@ -296,16 +464,23 @@ export default function PropostasProMax() {
     };
   }, []);
 
+  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
+
   const options = useMemo(() => {
     const units = new Set<string>();
     const sellers = new Set<string>();
     const admins = new Set<string>();
     const segments = new Set<string>();
 
+    for (const user of users) {
+      if (user.unitName) units.add(user.unitName);
+      if (user.name) sellers.add(user.name);
+    }
+
     for (const row of rows) {
-      units.add(rowText(row, ["unidade_nome", "unidade", "unit_name"], ""));
-      sellers.add(rowText(row, ["vendedor_nome", "seller_name", "consultor_nome"], ""));
-      admins.add(rowText(row, ["administradora", "admin", "admin_name"], ""));
+      units.add(getUnitName(row, usersById));
+      sellers.add(getSellerName(row, usersById));
+      admins.add(getAdminName(row));
       segments.add(row.segmento || "");
     }
 
@@ -316,15 +491,15 @@ export default function PropostasProMax() {
       admins: clean(admins),
       segments: clean(segments),
     };
-  }, [rows]);
+  }, [rows, users, usersById]);
 
   const filteredRows = useMemo(() => {
     const query = normalizeText(q);
 
     return rows.filter((row) => {
-      const adminName = rowText(row, ["administradora", "admin", "admin_name"], "");
-      const sellerName = rowText(row, ["vendedor_nome", "seller_name", "consultor_nome"], "");
-      const unitName = rowText(row, ["unidade_nome", "unidade", "unit_name"], "");
+      const adminName = getAdminName(row);
+      const sellerName = getSellerName(row, usersById);
+      const unitName = getUnitName(row, usersById);
 
       if (unitFilter !== "todos" && unitName !== unitFilter) return false;
       if (sellerFilter !== "todos" && sellerName !== sellerFilter) return false;
@@ -346,18 +521,21 @@ export default function PropostasProMax() {
 
       return searchable.includes(query);
     });
-  }, [adminFilter, q, rows, segmentFilter, sellerFilter, unitFilter]);
+  }, [adminFilter, q, rows, segmentFilter, sellerFilter, unitFilter, usersById]);
 
   const activeRow = useMemo(() => rows.find((row) => row.code === activeCode) || null, [activeCode, rows]);
   const selectedRows = useMemo(() => rows.filter((row) => selected.includes(row.code)), [rows, selected]);
   const totalCredit = useMemo(() => filteredRows.reduce((sum, row) => sum + creditoContratado(row), 0), [filteredRows]);
+  const totalLiquidCredit = useMemo(() => filteredRows.reduce((sum, row) => sum + creditoLiquido(row), 0), [filteredRows]);
   const selectedTotalCredit = useMemo(() => selectedRows.reduce((sum, row) => sum + creditoContratado(row), 0), [selectedRows]);
+  const totalSent = useMemo(() => events.filter((event) => event.event_type === "sent").length, [events]);
+  const totalOpened = useMemo(() => events.filter((event) => event.event_type === "opened").length, [events]);
 
   const kpis = useMemo(() => {
     const ranges = [
       { key: "today", title: "Hoje", start: startOfToday() },
       { key: "week", title: "Semana", start: startOfWeek() },
-      { key: "month", title: "Mes", start: startOfMonth() },
+      { key: "month", title: "Mês", start: startOfMonth() },
     ];
 
     return ranges.map((range) => ({
@@ -370,6 +548,33 @@ export default function PropostasProMax() {
 
   function toggleSelected(code: number) {
     setSelected((prev) => (prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code]));
+  }
+
+  async function persistProposalParams(next: ProposalParams) {
+    setParamsSaving(true);
+    const { error: saveError } = await supabase
+      .from("proposal_pro_max_parameters")
+      .upsert(
+        {
+          id: "global",
+          params: next,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" }
+      );
+
+    if (saveError) {
+      alert(`Não foi possível salvar os parâmetros: ${saveError.message}`);
+    }
+    setParamsSaving(false);
+  }
+
+  function updateProposalParam<K extends keyof ProposalParams>(key: K, value: ProposalParams[K]) {
+    setProposalParams((prev) => {
+      const next = { ...prev, [key]: value };
+      persistProposalParams(next);
+      return next;
+    });
   }
 
   async function copyLink(row: Proposal) {
@@ -397,7 +602,7 @@ export default function PropostasProMax() {
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(20);
-    doc.text(targetRows.length > 1 ? "Propostas Pro Max - Unificadas" : "Proposta Pro Max", 36, y);
+    doc.text(targetRows.length > 1 ? "Propostas Pró Max - Unificadas" : "Proposta Pró Max", 36, y);
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text(`Emitido em ${new Date().toLocaleString("pt-BR")}`, 36, y + 18);
@@ -406,7 +611,7 @@ export default function PropostasProMax() {
     doc.setTextColor(30, 41, 63);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
-    doc.text(`Resumo: ${targetRows.length} proposta(s) | Credito total ${brMoney(targetRows.reduce((sum, row) => sum + creditoContratado(row), 0))}`, 36, y);
+    doc.text(`Resumo: ${targetRows.length} proposta(s) | Crédito total ${brMoney(targetRows.reduce((sum, row) => sum + creditoContratado(row), 0))}`, 36, y);
     y += 28;
 
     for (const row of targetRows) {
@@ -422,12 +627,12 @@ export default function PropostasProMax() {
       doc.setTextColor(30, 41, 63);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(12);
-      doc.text(`#${row.code} - ${row.lead_nome || "Lead nao informado"}`, 52, y + 24);
+      doc.text(`#${row.code} - ${row.lead_nome || "Lead não informado"}`, 52, y + 24);
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
-      doc.text(`Segmento: ${row.segmento || "-"} | Administradora: ${rowText(row, ["administradora", "admin", "admin_name"])}`, 52, y + 43);
-      doc.text(`Credito contratado: ${brMoney(creditoContratado(row))} | Credito liquido: ${brMoney(creditoLiquido(row))}`, 52, y + 62);
+      doc.text(`Segmento: ${row.segmento || "-"} | Administradora: ${getAdminName(row)}`, 52, y + 43);
+      doc.text(`Crédito contratado: ${brMoney(creditoContratado(row))} | Crédito líquido: ${brMoney(creditoLiquido(row))}`, 52, y + 62);
       doc.text(`Parcela inicial: ${brMoney(parcelaInicial(row))} | Demais parcelas: ${brMoney(demaisParcelas(row))}`, 52, y + 81);
       doc.text(`Tipo de lance: ${tipoLance(row)}`, 52, y + 100);
       y += 122;
@@ -441,7 +646,7 @@ export default function PropostasProMax() {
 
     const codes = selectedRows.map((row) => row.code);
     const payload = {
-      title: `Unificacao ${codes.join(", ")}`,
+      title: `Unificação ${codes.join(", ")}`,
       simulation_codes: codes,
       total_credito: selectedRows.reduce((sum, row) => sum + creditoContratado(row), 0),
       total_credito_liquido: selectedRows.reduce((sum, row) => sum + creditoLiquido(row), 0),
@@ -469,13 +674,13 @@ export default function PropostasProMax() {
           </Button>
 
           <section className="rounded-lg border bg-white p-6 shadow-sm">
-            <div className="text-xs font-bold uppercase tracking-[.14em] text-slate-500">Ambiente Pro Max</div>
+            <div className="text-xs font-bold uppercase tracking-[.14em] text-slate-500">Ambiente Pró Max</div>
             <h1 className="mt-2 text-2xl font-black" style={{ color: C.navy }}>
               Proposta #{activeCode}
             </h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Este ambiente sera usado para os modelos visuais: resumo do cliente, sorteio x lance,
-              estrategia recomendada, fluxo de parcelas, graficos e PDF premium.
+              Este ambiente será usado para os modelos visuais: resumo do cliente, sorteio x lance,
+              estratégia recomendada, fluxo de parcelas, gráficos e PDF premium.
             </p>
 
             {activeRow ? (
@@ -485,11 +690,11 @@ export default function PropostasProMax() {
                   <div className="font-black" style={{ color: C.navy }}>{activeRow.lead_nome || "-"}</div>
                 </div>
                 <div className="rounded-lg border p-4">
-                  <div className="text-xs text-slate-500">Credito contratado</div>
+                  <div className="text-xs text-slate-500">Crédito contratado</div>
                   <div className="font-black" style={{ color: C.navy }}>{brMoney(creditoContratado(activeRow))}</div>
                 </div>
                 <div className="rounded-lg border p-4">
-                  <div className="text-xs text-slate-500">Credito liquido</div>
+                  <div className="text-xs text-slate-500">Crédito líquido</div>
                   <div className="font-black" style={{ color: C.ruby }}>{brMoney(creditoLiquido(activeRow))}</div>
                 </div>
                 <div className="rounded-lg border p-4">
@@ -499,7 +704,7 @@ export default function PropostasProMax() {
               </div>
             ) : (
               <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                Proposta nao encontrada na lista carregada.
+                Proposta não encontrada na lista carregada.
               </div>
             )}
           </section>
@@ -509,25 +714,61 @@ export default function PropostasProMax() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-6">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <section className="rounded-lg border bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div>
-              <div className="text-xs font-black uppercase tracking-[.14em]" style={{ color: C.ruby }}>Consulmax</div>
-              <h1 className="mt-1 text-2xl font-black md:text-3xl" style={{ color: C.navy }}>Propostas Pro Max</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-600">
-                Lista inteligente das propostas salvas, com filtros, KPIs, links, PDF e unificacao.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-sm md:min-w-[360px]">
-              <div className="rounded-lg border p-3">
-                <div className="text-xs text-slate-500">Propostas</div>
-                <div className="text-xl font-black" style={{ color: C.navy }}>{filteredRows.length}</div>
+    <div className="min-h-screen bg-slate-50 px-3 py-4 md:px-5 md:py-5">
+      <div className="mx-auto w-full max-w-none space-y-4">
+        <section
+          className="relative overflow-hidden rounded-xl border p-5 shadow-sm"
+          style={{ background: "linear-gradient(135deg, #1E293F 0%, #A11C27 100%)", borderColor: "rgba(255,255,255,.22)" }}
+        >
+          <div className="absolute -right-20 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+          <div className="absolute right-24 top-8 h-32 w-32 rounded-full blur-3xl" style={{ background: "rgba(181,165,115,.30)" }} />
+
+          <div className="relative z-[1] flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+            <div className="max-w-3xl text-white">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[.14em]">
+                <FileText className="h-3.5 w-3.5" /> Consulmax
               </div>
-              <div className="rounded-lg border p-3">
-                <div className="text-xs text-slate-500">Credito total</div>
-                <div className="text-xl font-black" style={{ color: C.ruby }}>{brMoney(totalCredit)}</div>
+              <h1 className="mt-3 text-2xl font-black md:text-4xl">Propostas Pró Max</h1>
+              <p className="mt-2 text-sm text-white/78 md:text-base">
+                Controle, envio e unificação das propostas salvas, com filtros comerciais e base pronta para os modelos visuais.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-lg border-white/25 bg-white/10 text-white hover:bg-white/20"
+                  onClick={() => setParamsOpen((prev) => !prev)}
+                >
+                  <Settings2 className="mr-2 h-4 w-4" /> Parâmetros
+                  <ChevronDown className={`ml-2 h-4 w-4 transition ${paramsOpen ? "rotate-180" : ""}`} />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-lg border-white/25 bg-white/10 text-white hover:bg-white/20"
+                  onClick={() => setSelected(filteredRows.map((row) => row.code))}
+                >
+                  Selecionar lista filtrada
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[720px] xl:grid-cols-4">
+              <div className="rounded-lg border border-white/20 bg-white/95 p-3">
+                <div className="text-xs font-semibold text-slate-500">Propostas</div>
+                <div className="mt-1 text-2xl font-black" style={{ color: C.navy }}>{filteredRows.length}</div>
+              </div>
+              <div className="rounded-lg border border-white/20 bg-white/95 p-3">
+                <div className="text-xs font-semibold text-slate-500">Crédito total</div>
+                <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>{brMoney(totalCredit)}</div>
+              </div>
+              <div className="rounded-lg border border-white/20 bg-white/95 p-3">
+                <div className="text-xs font-semibold text-slate-500">Crédito líquido</div>
+                <div className="mt-1 text-xl font-black" style={{ color: C.navy }}>{brMoney(totalLiquidCredit)}</div>
+              </div>
+              <div className="rounded-lg border border-white/20 bg-white/95 p-3">
+                <div className="text-xs font-semibold text-slate-500">Enviadas / abertas</div>
+                <div className="mt-1 text-2xl font-black" style={{ color: C.gold }}>{totalSent} / {totalOpened}</div>
               </div>
             </div>
           </div>
@@ -539,27 +780,84 @@ export default function PropostasProMax() {
           ))}
         </div>
 
-        <section className="rounded-lg border bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-            <Filter className="h-4 w-4" /> Filtros e busca
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-5">
-            <label className="space-y-1 text-xs font-semibold text-slate-600 md:col-span-2">
-              <span>Buscar por numero, lead ou celular</span>
+        {paramsOpen && (
+          <section className="rounded-xl border bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+                  <Settings2 className="h-4 w-4" /> Parâmetros da apresentação
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Mesmo conjunto base usado na guia Propostas. Esses índices alimentarão os modelos visuais e projeções futuras.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-lg"
+                onClick={() => {
+                  setProposalParams(DEFAULT_PARAMS);
+                  persistProposalParams(DEFAULT_PARAMS);
+                }}
+                disabled={paramsSaving}
+              >
+                Restaurar padrão
+              </Button>
+            </div>
+            {paramsSaving && <div className="mt-2 text-xs font-semibold text-slate-500">Salvando parâmetros para todos os usuários...</div>}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+              <ParamInput label="SELIC anual" value={proposalParams.selic_anual} onChange={(value) => updateProposalParam("selic_anual", value)} />
+              <ParamInput label="CDI anual" value={proposalParams.cdi_anual} onChange={(value) => updateProposalParam("cdi_anual", value)} />
+              <ParamInput label="Reforço venda" value={proposalParams.reforco_pct} onChange={(value) => updateProposalParam("reforco_pct", value)} />
+              <ParamInput label="IPCA 12m" value={proposalParams.ipca12m} onChange={(value) => updateProposalParam("ipca12m", value)} />
+              <ParamInput label="IGP-M 12m" value={proposalParams.igpm12m} onChange={(value) => updateProposalParam("igpm12m", value)} />
+              <ParamInput label="INCC 12m" value={proposalParams.incc12m} onChange={(value) => updateProposalParam("incc12m", value)} />
+              <ParamInput label="INPC 12m" value={proposalParams.inpc12m} onChange={(value) => updateProposalParam("inpc12m", value)} />
+              <ParamInput label="Fin. veículos mês" value={proposalParams.fin_veic_mensal} onChange={(value) => updateProposalParam("fin_veic_mensal", value)} />
+              <ParamInput label="Fin. imóvel ano" value={proposalParams.fin_imob_anual} onChange={(value) => updateProposalParam("fin_imob_anual", value)} />
+              <ParamInput label="Aluguel mês" value={proposalParams.aluguel_pct} onChange={(value) => updateProposalParam("aluguel_pct", value)} />
+              <ParamInput label="Airbnb" value={proposalParams.airbnb_pct} onChange={(value) => updateProposalParam("airbnb_pct", value)} />
+              <ParamInput label="Condomínio" value={proposalParams.condominio_pct} onChange={(value) => updateProposalParam("condominio_pct", value)} />
+            </div>
+          </section>
+        )}
+
+        <section className="rounded-xl border bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+            <label className="space-y-1 text-xs font-semibold text-slate-600 xl:flex-[1.7]">
+              <span className="flex items-center gap-2">
+                <Search className="h-3.5 w-3.5" /> Buscar por número, lead ou celular
+              </span>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
                   className="h-10 rounded-lg pl-9"
                   value={q}
                   onChange={(event) => setQ(event.target.value)}
-                  placeholder="Ex.: 123, Ismael, 699..."
+                  placeholder="Ex.: 497, Letícia, 2394..."
                 />
               </div>
             </label>
-            <SelectFilter label="Unidade" value={unitFilter} onChange={setUnitFilter} options={options.units} />
-            <SelectFilter label="Vendedor" value={sellerFilter} onChange={setSellerFilter} options={options.sellers} />
-            <SelectFilter label="Administradora" value={adminFilter} onChange={setAdminFilter} options={options.admins} />
-            <SelectFilter label="Segmento" value={segmentFilter} onChange={setSegmentFilter} options={options.segments} />
+            <div className="grid flex-[2] gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <SelectFilter label="Unidade" value={unitFilter} onChange={setUnitFilter} options={options.units} />
+              <SelectFilter label="Vendedor" value={sellerFilter} onChange={setSellerFilter} options={options.sellers} />
+              <SelectFilter label="Administradora" value={adminFilter} onChange={setAdminFilter} options={options.admins} />
+              <SelectFilter label="Segmento" value={segmentFilter} onChange={setSegmentFilter} options={options.segments} />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-lg xl:w-[120px]"
+              onClick={() => {
+                setQ("");
+                setUnitFilter("todos");
+                setSellerFilter("todos");
+                setAdminFilter("todos");
+                setSegmentFilter("todos");
+              }}
+            >
+              Limpar
+            </Button>
           </div>
         </section>
 
@@ -567,7 +865,7 @@ export default function PropostasProMax() {
           <section className="flex flex-col gap-3 rounded-lg border bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
             <div>
               <div className="text-sm font-black" style={{ color: C.navy }}>{selectedRows.length} proposta(s) selecionada(s)</div>
-              <div className="text-sm text-slate-600">Credito contratado selecionado: {brMoney(selectedTotalCredit)}</div>
+              <div className="text-sm text-slate-600">Crédito contratado selecionado: {brMoney(selectedTotalCredit)}</div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" className="rounded-lg" onClick={generateUnifiedLink} disabled={selectedRows.length < 2}>
@@ -586,7 +884,7 @@ export default function PropostasProMax() {
           </section>
         )}
 
-        <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
+        <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
           {loading ? (
             <div className="flex items-center gap-2 p-6 text-sm text-slate-600">
               <Loader2 className="h-4 w-4 animate-spin" /> Carregando propostas...
@@ -595,19 +893,19 @@ export default function PropostasProMax() {
             <div className="p-6 text-sm text-red-700">{error}</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-[1200px] w-full border-collapse text-sm">
+              <table className="min-w-[1180px] w-full border-collapse text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
                   <tr>
                     <th className="w-10 p-3 text-left"></th>
-                    <th className="p-3 text-left">Numero</th>
+                    <th className="p-3 text-left">Número</th>
                     <th className="p-3 text-left">Lead</th>
                     <th className="p-3 text-left">Segmento</th>
                     <th className="p-3 text-left">Administradora</th>
-                    <th className="p-3 text-right">Credito contratado</th>
+                    <th className="p-3 text-right">Crédito contratado</th>
                     <th className="p-3 text-right">Parcela inicial</th>
                     <th className="p-3 text-right">Demais parcelas</th>
                     <th className="p-3 text-left">Tipo de lance</th>
-                    <th className="p-3 text-right">Credito liquido</th>
+                    <th className="p-3 text-right">Crédito líquido</th>
                     <th className="p-3 text-center">Link</th>
                     <th className="p-3 text-center">PDF</th>
                   </tr>
@@ -633,7 +931,11 @@ export default function PropostasProMax() {
                         <div className="text-xs text-slate-500">{row.lead_telefone || "-"}</div>
                       </td>
                       <td className="p-3">{row.segmento || "-"}</td>
-                      <td className="p-3">{rowText(row, ["administradora", "admin", "admin_name"])}</td>
+                      <td className="p-3">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold" style={{ color: C.navy }}>
+                          <Building2 className="h-3.5 w-3.5" /> {getAdminName(row)}
+                        </span>
+                      </td>
                       <td className="p-3 text-right font-semibold">{brMoney(creditoContratado(row))}</td>
                       <td className="p-3 text-right">{brMoney(parcelaInicial(row))}</td>
                       <td className="p-3 text-right">{brMoney(demaisParcelas(row))}</td>
@@ -675,13 +977,13 @@ export default function PropostasProMax() {
           )}
         </section>
 
-        <section className="rounded-lg border bg-white p-4 text-xs text-slate-500 shadow-sm">
+        <section className="rounded-xl border bg-white p-4 text-xs text-slate-500 shadow-sm">
           <div className="flex items-center gap-2 font-bold text-slate-600">
-            <BarChart3 className="h-4 w-4" /> Proximas etapas
+            <BarChart3 className="h-4 w-4" /> Próximas etapas
           </div>
           <p className="mt-2">
-            Ao abrir uma linha, a proposta ja entra no ambiente Pro Max. Nas proximas fases, esse ambiente recebe
-            os modelos visuais por estrategia, correcao de credito antes/depois da contemplacao e link publico rastreavel.
+            Ao abrir uma linha, a proposta já entra no ambiente Pró Max. Nas próximas fases, esse ambiente recebe
+            os modelos visuais por estratégia, correção de crédito antes/depois da contemplação e link público rastreável.
           </p>
         </section>
       </div>

@@ -23,6 +23,8 @@ import {
 type SimRow = {
   code: number;
   created_at: string;
+  admin_id?: string | null;
+  lead_id?: string | null;
   lead_nome: string | null;
   lead_telefone: string | null;
   segmento: string | null;
@@ -71,11 +73,22 @@ type Proposal = SimRow & {
 
 type UserDirectoryRow = {
   id: string;
+  authUserId?: string | null;
   name: string;
   email?: string | null;
+  phone?: string | null;
   unitId?: string | null;
   unitName?: string | null;
   role?: string | null;
+  hierarchyLevel?: string | null;
+  active?: boolean;
+  scopes?: string[];
+};
+
+type AdminDirectoryRow = {
+  id: string;
+  name: string;
+  slug?: string | null;
 };
 
 type ProposalParams = {
@@ -173,6 +186,12 @@ function firstText(source: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
+function unitLabel(unitId?: string | null, explicitName?: string | null) {
+  if (explicitName?.trim()) return explicitName.trim();
+  if (!unitId?.trim()) return "";
+  return `Unidade ${unitId.slice(0, 8)}`;
+}
+
 function getAdminName(row: Proposal) {
   const explicit = rowText(
     row,
@@ -194,6 +213,10 @@ function getAdminName(row: Proposal) {
   return "Não informado";
 }
 
+function adminIdFromRow(row: Proposal) {
+  return firstText(row, ["admin_id", "administradora_id", "administrator_id"]);
+}
+
 function userIdFromRow(row: Proposal) {
   return firstText(row, ["vendedor_id", "seller_id", "consultor_id", "user_id", "usuario_id", "created_by", "owner_id"]);
 }
@@ -208,6 +231,8 @@ function getSellerName(row: Proposal, usersById: Map<string, UserDirectoryRow>) 
 function getUnitName(row: Proposal, usersById: Map<string, UserDirectoryRow>) {
   const explicit = rowText(row, ["unidade_nome", "unidade", "unit_name", "filial_nome"], "");
   if (explicit) return explicit;
+  const unitId = rowText(row, ["unidade_id", "unit_id", "filial_id"], "");
+  if (unitId) return unitLabel(unitId);
   const userId = userIdFromRow(row);
   return usersById.get(userId)?.unitName || "";
 }
@@ -393,9 +418,14 @@ export default function PropostasProMax() {
       }
 
       const codes = ((data || []) as SimRow[]).map((row) => row.code).filter(Boolean);
+      const leadIds = [
+        ...new Set(((data || []) as SimRow[]).map((row) => String(row.lead_id || "")).filter(Boolean)),
+      ];
       const metadataByCode = new Map<number, ProMaxMetadata>();
       const eventsList: ProposalEvent[] = [];
       const userDirectory: UserDirectoryRow[] = [];
+      const adminDirectory = new Map<string, AdminDirectoryRow>();
+      const ownerByLeadId = new Map<string, string>();
 
       if (codes.length) {
         const metadataRes = await supabase
@@ -417,27 +447,99 @@ export default function PropostasProMax() {
         if (!eventsRes.error) eventsList.push(...((eventsRes.data || []) as ProposalEvent[]));
       }
 
-      const userTables = ["profiles", "usuarios", "users"];
-      for (const table of userTables) {
-        const usersRes = await supabase.from(table).select("*").limit(1000);
-        if (usersRes.error || !usersRes.data?.length) continue;
+      const usersRes = await supabase
+        .from("users")
+        .select("id,auth_user_id,nome,email,phone,telefone,unit_id,role,user_role,hierarchy_level,is_active,scopes")
+        .eq("is_active", true)
+        .order("nome", { ascending: true })
+        .limit(1000);
 
-        for (const item of usersRes.data as Record<string, unknown>[]) {
-          const id = firstText(item, ["id", "user_id", "auth_user_id", "uid"]);
-          const name = firstText(item, ["nome", "name", "full_name", "display_name", "email"]);
+      if (!usersRes.error) {
+        for (const item of (usersRes.data || []) as Record<string, unknown>[]) {
+          const id = firstText(item, ["id"]);
+          const authUserId = firstText(item, ["auth_user_id"]) || null;
+          const name = firstText(item, ["nome", "email"]);
+          const unitId = firstText(item, ["unit_id"]) || null;
+          const role = firstText(item, ["user_role", "role"]) || null;
+
           if (!id || !name) continue;
 
           userDirectory.push({
             id,
+            authUserId,
             name,
             email: firstText(item, ["email"]) || null,
-            unitId: firstText(item, ["unidade_id", "unit_id", "filial_id"]) || null,
-            unitName: firstText(item, ["unidade_nome", "unidade", "unit_name", "filial_nome", "filial"]) || null,
-            role: firstText(item, ["perfil", "role", "tipo", "nivel_acesso"]) || null,
+            phone: firstText(item, ["phone", "telefone"]) || null,
+            unitId,
+            unitName: unitLabel(unitId),
+            role,
+            hierarchyLevel: firstText(item, ["hierarchy_level"]) || null,
+            active: item.is_active !== false,
+            scopes: Array.isArray(item.scopes) ? (item.scopes as string[]) : [],
           });
         }
+      }
 
-        if (userDirectory.length) break;
+      const adminsRes = await supabase
+        .from("sim_admins")
+        .select("id,name,slug")
+        .order("name", { ascending: true });
+
+      if (!adminsRes.error) {
+        for (const item of (adminsRes.data || []) as Record<string, unknown>[]) {
+          const id = firstText(item, ["id"]);
+          const name = firstText(item, ["name", "nome", "slug"]);
+          if (!id || !name) continue;
+
+          adminDirectory.set(id, {
+            id,
+            name,
+            slug: firstText(item, ["slug"]) || null,
+          });
+        }
+      }
+
+      if (leadIds.length) {
+        const opportunitiesRes = await supabase
+          .from("opportunities")
+          .select("lead_id,vendedor_id,owner_id,updated_at,created_at")
+          .in("lead_id", leadIds)
+          .order("updated_at", { ascending: false });
+
+        if (!opportunitiesRes.error) {
+          for (const item of (opportunitiesRes.data || []) as Record<string, unknown>[]) {
+            const leadId = firstText(item, ["lead_id"]);
+            const ownerId = firstText(item, ["vendedor_id", "owner_id"]);
+            if (leadId && ownerId && !ownerByLeadId.has(leadId)) ownerByLeadId.set(leadId, ownerId);
+          }
+        }
+
+        const leadsRes = await supabase
+          .from("leads")
+          .select("id,owner_id")
+          .in("id", leadIds);
+
+        if (!leadsRes.error) {
+          for (const item of (leadsRes.data || []) as Record<string, unknown>[]) {
+            const leadId = firstText(item, ["id"]);
+            const ownerId = firstText(item, ["owner_id"]);
+            if (leadId && ownerId && !ownerByLeadId.has(leadId)) ownerByLeadId.set(leadId, ownerId);
+          }
+        }
+
+        const clientesRes = await supabase
+          .from("clientes")
+          .select("lead_id,vendedor_auth_user_id,created_by,updated_at")
+          .in("lead_id", leadIds)
+          .order("updated_at", { ascending: false });
+
+        if (!clientesRes.error) {
+          for (const item of (clientesRes.data || []) as Record<string, unknown>[]) {
+            const leadId = firstText(item, ["lead_id"]);
+            const ownerId = firstText(item, ["vendedor_auth_user_id", "created_by"]);
+            if (leadId && ownerId && !ownerByLeadId.has(leadId)) ownerByLeadId.set(leadId, ownerId);
+          }
+        }
       }
 
       const paramsRes = await supabase
@@ -448,7 +550,31 @@ export default function PropostasProMax() {
 
       if (!alive) return;
 
-      setRows(((data || []) as SimRow[]).map((row) => ({ ...row, promax: metadataByCode.get(row.code) })));
+      const usersByAnyId = new Map<string, UserDirectoryRow>();
+      for (const user of userDirectory) {
+        usersByAnyId.set(user.id, user);
+        if (user.authUserId) usersByAnyId.set(user.authUserId, user);
+      }
+
+      setRows(
+        ((data || []) as SimRow[]).map((row) => {
+          const metadata = metadataByCode.get(row.code);
+          const adminName = metadata?.administradora || adminDirectory.get(adminIdFromRow(row))?.name || null;
+          const leadOwnerId = row.lead_id ? ownerByLeadId.get(row.lead_id) : "";
+          const sellerId = metadata?.vendedor_id || row.vendedor_id || leadOwnerId || null;
+          const seller = sellerId ? usersByAnyId.get(sellerId) : null;
+
+          return {
+            ...row,
+            administradora: adminName,
+            vendedor_id: sellerId,
+            vendedor_nome: metadata?.vendedor_nome || row.vendedor_nome || seller?.name || null,
+            unidade_id: metadata?.unidade_id || row.unidade_id || seller?.unitId || null,
+            unidade_nome: metadata?.unidade_nome || row.unidade_nome || seller?.unitName || null,
+            promax: metadata,
+          };
+        })
+      );
       setEvents(eventsList);
       setUsers(userDirectory);
       if (!paramsRes.error && paramsRes.data?.params) {
@@ -464,7 +590,14 @@ export default function PropostasProMax() {
     };
   }, []);
 
-  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
+  const usersById = useMemo(() => {
+    const map = new Map<string, UserDirectoryRow>();
+    for (const user of users) {
+      map.set(user.id, user);
+      if (user.authUserId) map.set(user.authUserId, user);
+    }
+    return map;
+  }, [users]);
 
   const options = useMemo(() => {
     const units = new Set<string>();
@@ -472,14 +605,22 @@ export default function PropostasProMax() {
     const admins = new Set<string>();
     const segments = new Set<string>();
 
+    const selectedUnitUsers = users.filter((user) => unitFilter === "todos" || user.unitName === unitFilter);
+
     for (const user of users) {
       if (user.unitName) units.add(user.unitName);
+    }
+
+    for (const user of selectedUnitUsers) {
       if (user.name) sellers.add(user.name);
     }
 
     for (const row of rows) {
-      units.add(getUnitName(row, usersById));
-      sellers.add(getSellerName(row, usersById));
+      const unitName = getUnitName(row, usersById);
+      const sellerName = getSellerName(row, usersById);
+
+      units.add(unitName);
+      if (unitFilter === "todos" || unitName === unitFilter) sellers.add(sellerName);
       admins.add(getAdminName(row));
       segments.add(row.segmento || "");
     }
@@ -491,7 +632,13 @@ export default function PropostasProMax() {
       admins: clean(admins),
       segments: clean(segments),
     };
-  }, [rows, users, usersById]);
+  }, [rows, unitFilter, users, usersById]);
+
+  useEffect(() => {
+    if (sellerFilter !== "todos" && !options.sellers.includes(sellerFilter)) {
+      setSellerFilter("todos");
+    }
+  }, [options.sellers, sellerFilter]);
 
   const filteredRows = useMemo(() => {
     const query = normalizeText(q);
@@ -552,12 +699,14 @@ export default function PropostasProMax() {
 
   async function persistProposalParams(next: ProposalParams) {
     setParamsSaving(true);
+    const authRes = await supabase.auth.getUser();
     const { error: saveError } = await supabase
       .from("proposal_pro_max_parameters")
       .upsert(
         {
           id: "global",
           params: next,
+          updated_by: authRes.data.user?.id ?? null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "id" }

@@ -12,6 +12,7 @@ export type PrevidenciaChartPoint = {
   consortiumInstallment: number;
   monthlyIncome: number;
   accumulatedIncome: number;
+  consortiumCapital: number;
   grossBalance: number;
   netBalance: number;
   cdiNetBalance: number;
@@ -206,17 +207,21 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
       accumulatedIncome += monthlyIncome;
     }
 
-    const previdenciaTaxRate = taxRateByMonths(Math.max(1, month - contemplationMonth));
     const cdiComparison = calculateLotsNet(monthlyInvestingLots, month);
 
     finalGrossBalance = previdenciaBalance;
     finalNetBalance = previdenciaBalance;
+    const consortiumCapital =
+      month < contemplationMonth
+        ? consortiumDetail?.payments || 0
+        : capitalAtContemplation + accumulatedIncome;
 
     chart.push({
       month,
       consortiumInstallment: installment,
       monthlyIncome,
       accumulatedIncome,
+      consortiumCapital,
       grossBalance: previdenciaBalance,
       netBalance: finalNetBalance,
       cdiNetBalance: cdiComparison.netBalance,

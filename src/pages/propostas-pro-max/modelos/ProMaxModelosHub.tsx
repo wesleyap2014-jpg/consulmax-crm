@@ -706,6 +706,7 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
 function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
   const flow = useMemo(() => buildPrevidenciaFlow(proposal, params), [proposal, params]);
   const { summary, cdiComparison, cdi, tax } = flow;
+  const patrimonioDifference = summary.finalNetBalance - cdiComparison.netBalance;
 
   return (
     <div className="space-y-4">
@@ -742,15 +743,13 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Crédito líquido aplicado" value={brMoney(summary.capitalAtContemplation)} tone="gold" />
-        <Metric label="Patrimônio final isento" value={brMoney(summary.finalNetBalance)} />
-        <Metric label="Rentabilidade isenta" value={brMoney(summary.netIncome)} tone="ruby" />
-        <Metric label="Investimento total" value={brMoney(summary.totalInvested)} />
-        <Metric label="TIR mensal" value={brPercent(summary.monthlyIrr)} tone="ruby" />
+        <Metric label="Patrimônio acumulado" value={brMoney(summary.finalNetBalance)} />
+        <Metric label="Rentabilidade líquida" value={brMoney(summary.netIncome)} tone="ruby" />
+        <Metric label="Investimento realizado" value={brMoney(summary.totalInvested)} />
         <Metric label="ROI" value={brPercent(summary.roi)} tone="gold" />
         <Metric label="Rentabilidade a.m." value={brPercent(summary.monthlyReturn)} />
         <Metric label="% do CDI mensal" value={brPercent(summary.cdiPercent)} />
         <Metric label="Gross up mensal" value={brPercent(tax.grossUpMonthlyRate)} tone="ruby" />
-        <Metric label="Capital bruto equivalente" value={brMoney(tax.grossUpCapital)} tone="gold" />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[.9fr_1.1fr]">
@@ -771,17 +770,9 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
               <span className="text-slate-500">Rendimento bruto projetado</span>
               <strong style={{ color: C.gold }}>{brMoney(summary.grossIncome)}</strong>
             </div>
-            <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">IR equivalente para gross up</span>
-              <strong style={{ color: C.ruby }}>{brMoney(tax.amount)}</strong>
-            </div>
-            <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">Rendimento bruto necessário</span>
-              <strong style={{ color: C.gold }}>{brMoney(tax.grossUpIncome)}</strong>
-            </div>
             <div className="flex justify-between gap-4">
-              <span className="text-slate-500">Rentabilidade anual equivalente</span>
-              <strong style={{ color: C.navy }}>{brPercent(summary.annualIrr)}</strong>
+              <span className="text-slate-500">Capital acumulado</span>
+              <strong style={{ color: C.navy }}>{brMoney(summary.finalNetBalance)}</strong>
             </div>
           </div>
         </div>
@@ -820,6 +811,16 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
                   <td className="p-3 text-right">{brMoney(cdiComparison.grossIncome)}</td>
                   <td className="p-3 text-right">{brMoney(cdiComparison.tax)}</td>
                   <td className="p-3 text-right font-black" style={{ color: C.navy }}>{brMoney(cdiComparison.netBalance)}</td>
+                </tr>
+                <tr className="border-t bg-slate-50/70">
+                  <td className="p-3 font-black" style={{ color: patrimonioDifference >= 0 ? C.gold : C.ruby }}>Diferença Consórcio x Fundo DI</td>
+                  <td className="p-3 text-right">-</td>
+                  <td className="p-3 text-right">-</td>
+                  <td className="p-3 text-right">-</td>
+                  <td className="p-3 text-right">-</td>
+                  <td className="p-3 text-right font-black" style={{ color: patrimonioDifference >= 0 ? C.gold : C.ruby }}>
+                    {brMoney(patrimonioDifference)}
+                  </td>
                 </tr>
               </tbody>
             </table>

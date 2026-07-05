@@ -30,6 +30,8 @@ export type PrevidenciaFlow = {
   tax: {
     rate: number;
     amount: number;
+    grossUpIncome: number;
+    grossUpCapital: number;
     grossUpMonthlyRate: number;
   };
   summary: {
@@ -233,16 +235,21 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
 
   const finalTaxRate = taxRateByMonths(Math.max(1, remainingMonths));
   const grossIncome = Math.max(0, finalGrossBalance - capitalAtContemplation);
-  const taxAmount = grossIncome * finalTaxRate;
   const netIncome = grossIncome;
   finalNetBalance = finalGrossBalance;
   cashFlows[totalMonths] += finalNetBalance;
 
   const monthlyIrr = calculateIrr(cashFlows);
-  const roi = totalInvested > 0 ? (finalNetBalance - totalInvested) / totalInvested : 0;
-  const monthlyReturn = totalInvested > 0 && totalMonths > 0 ? Math.pow(finalNetBalance / totalInvested, 1 / totalMonths) - 1 : 0;
+  const roi = totalInvested > 0 ? netIncome / totalInvested : 0;
+  const monthlyReturn = totalMonths > 0 ? Math.pow(1 + roi, 1 / totalMonths) - 1 : 0;
   const cdiPercent = cdiMonthlyRate > 0 ? monthlyReturn / cdiMonthlyRate : 0;
-  const grossUpMonthlyRate = finalTaxRate < 1 ? monthlyReturn / (1 - finalTaxRate) : monthlyReturn;
+  const grossUpIncome = finalTaxRate < 1 ? netIncome / (1 - finalTaxRate) : netIncome;
+  const taxAmount = Math.max(0, grossUpIncome - netIncome);
+  const grossUpCapital = capitalAtContemplation + grossUpIncome;
+  const grossUpMonthlyRate =
+    capitalAtContemplation > 0 && totalMonths > 0
+      ? Math.pow(grossUpCapital / capitalAtContemplation, 1 / totalMonths) - 1
+      : 0;
   const cdiComparison = calculateLotsNet(monthlyInvestingLots, totalMonths);
 
   return {
@@ -254,6 +261,8 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
     tax: {
       rate: finalTaxRate,
       amount: taxAmount,
+      grossUpIncome,
+      grossUpCapital,
       grossUpMonthlyRate,
     },
     summary: {
@@ -266,7 +275,7 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
       grossIncome,
       netIncome,
       monthlyIrr,
-      annualIrr: Math.pow(1 + monthlyIrr, 12) - 1,
+      annualIrr: Math.pow(1 + monthlyReturn, 12) - 1,
       roi,
       monthlyReturn,
       cdiPercent,

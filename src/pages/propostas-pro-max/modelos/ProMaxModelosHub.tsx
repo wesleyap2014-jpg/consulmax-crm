@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound } from "lucide-react";
+import { buildAquisicaoFlow, type AcquisitionChartPoint, type AcquisitionComparison } from "./fluxos/aquisicaoFlow";
 import { buildExtratoFlow, onlyNumber, type ProposalModelRow, type ProposalParams } from "./fluxos/extratoFlow";
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
@@ -94,6 +95,157 @@ function Metric({ label, value, tone = "navy" }: { label: string; value: string;
     <div className="rounded-lg border bg-white p-4 shadow-sm">
       <div className="text-xs font-semibold uppercase tracking-[.08em] text-slate-500">{label}</div>
       <div className="mt-2 text-xl font-black" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+function compactMoney(value: number) {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  if (abs >= 1_000_000) {
+    return `${sign}R$ ${(abs / 1_000_000).toLocaleString("pt-BR", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })} mi`;
+  }
+
+  if (abs >= 1_000) {
+    return `${sign}R$ ${(abs / 1_000).toLocaleString("pt-BR", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1,
+    })} mil`;
+  }
+
+  return brMoney(value);
+}
+
+function ComparisonCard({
+  item,
+  tone,
+  highlight,
+}: {
+  item: AcquisitionComparison;
+  tone: "navy" | "ruby" | "gold";
+  highlight?: string;
+}) {
+  const color = tone === "ruby" ? C.ruby : tone === "gold" ? C.gold : C.navy;
+
+  return (
+    <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">{item.label}</div>
+          <div className="mt-2 text-2xl font-black" style={{ color }}>
+            {brMoney(item.totalPaid)}
+          </div>
+        </div>
+        {highlight ? (
+          <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color }}>
+            {highlight}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <div className="text-xs font-semibold text-slate-500">Crédito/valor</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(item.creditOrFinancedValue)}</div>
+        </div>
+        <div>
+          <div className="text-xs font-semibold text-slate-500">Prazo</div>
+          <div className="font-black" style={{ color: C.navy }}>{item.term} meses</div>
+        </div>
+        <div>
+          <div className="text-xs font-semibold text-slate-500">Parcela inicial</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(item.initialInstallment)}</div>
+        </div>
+        <div>
+          <div className="text-xs font-semibold text-slate-500">Parcela final</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(item.finalInstallment)}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm">
+        <div className="flex justify-between gap-3">
+          <span className="text-slate-500">Custo total</span>
+          <strong style={{ color }}>{brMoney(item.totalCost)}</strong>
+        </div>
+        <div className="mt-2 flex justify-between gap-3">
+          <span className="text-slate-500">Diferença vs consórcio</span>
+          <strong style={{ color }}>{brMoney(item.differenceVsConsortium)}</strong>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function linePoints(points: AcquisitionChartPoint[], key: keyof Omit<AcquisitionChartPoint, "month">, maxY: number) {
+  const width = 760;
+  const height = 220;
+  const left = 76;
+  const top = 24;
+  const safeMax = Math.max(1, maxY);
+  const denominator = Math.max(1, points.length - 1);
+
+  return points
+    .map((point, index) => {
+      const x = left + (index / denominator) * width;
+      const y = top + height - (point[key] / safeMax) * height;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
+function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
+  const maxY = Math.max(
+    1,
+    ...points.flatMap((point) => [point.consortium, point.sac, point.price])
+  );
+  const grid = [0, 0.25, 0.5, 0.75, 1];
+  const width = 760;
+  const height = 220;
+  const left = 76;
+  const top = 24;
+  const bottom = top + height;
+  const endMonth = points[points.length - 1]?.month || 1;
+
+  return (
+    <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+          <BarChart3 className="h-4 w-4" /> Evolução das parcelas
+        </div>
+        <div className="flex flex-wrap gap-3 text-xs font-bold">
+          <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.gold }} /> Consórcio</span>
+          <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.ruby }} /> SAC</span>
+          <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.navy }} /> Price</span>
+        </div>
+      </div>
+      <div className="overflow-x-auto p-4">
+        <svg viewBox="0 0 900 300" className="h-[300px] min-w-[860px] w-full" role="img" aria-label="Gráfico de evolução das parcelas mês a mês">
+          <rect x="0" y="0" width="900" height="300" fill="#ffffff" />
+          {grid.map((ratio) => {
+            const y = bottom - ratio * height;
+            return (
+              <g key={ratio}>
+                <line x1={left} x2={left + width} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" />
+                <text x="62" y={y + 4} textAnchor="end" fontSize="11" fill="#64748B">
+                  {compactMoney(maxY * ratio)}
+                </text>
+              </g>
+            );
+          })}
+          <line x1={left} x2={left + width} y1={bottom} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
+          <line x1={left} x2={left} y1={top} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
+          <text x={left} y="272" fontSize="11" fill="#64748B">Mês 1</text>
+          <text x={left + width} y="272" textAnchor="end" fontSize="11" fill="#64748B">Mês {endMonth}</text>
+
+          <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
     </div>
   );
 }
@@ -278,6 +430,128 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
   );
 }
 
+function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
+  const acquisition = useMemo(() => buildAquisicaoFlow(proposal, params), [proposal, params]);
+  const { consortium, sac, price, financingRate, correction } = acquisition;
+  const bestFinancingSavings = Math.max(sac.estimatedSavingsVsConsortium, price.estimatedSavingsVsConsortium);
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-[.12em]" style={{ color: C.navy }}>
+              <LineChart className="h-3.5 w-3.5" /> Aquisição
+            </div>
+            <h2 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>
+              Consórcio x financiamento na compra do bem
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm text-slate-600">
+              Este modelo compara o fluxo da carta com financiamentos SAC e Price para o mesmo valor de aquisição.
+              A projeção do consórcio usa o mesmo motor do Extrato, preservando correção do crédito, lance, contemplação,
+              antecipações e novo prazo após contemplação.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[520px]">
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Taxa financiamento</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>{brPercent(financingRate.monthlyRate)} a.m.</div>
+              <div className="text-xs text-slate-500">{financingRate.source} | equiv. {brPercent(financingRate.annualEquivalentRate)} a.a.</div>
+            </div>
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Correção consórcio</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.gold }}>{correction.label} {brPercent(correction.annualRate)}</div>
+              <div className="text-xs text-slate-500">{correction.source} | mês: {brPercent(correction.monthlyRate)}</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-3">
+        <ComparisonCard item={consortium} tone="gold" highlight="Base Pró Max" />
+        <ComparisonCard item={acquisition.comparisons[1]} tone="ruby" highlight="SAC" />
+        <ComparisonCard item={acquisition.comparisons[2]} tone="navy" highlight="Price" />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[.85fr_1.15fr]">
+        <div className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <TrendingUp className="h-4 w-4" /> Economia estimada
+          </div>
+          <div className="mt-4 rounded-lg p-4" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.18), rgba(161,28,39,.08))" }}>
+            <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Maior diferença encontrada</div>
+            <div className="mt-2 text-3xl font-black" style={{ color: C.ruby }}>{brMoney(bestFinancingSavings)}</div>
+            <p className="mt-2 text-sm text-slate-600">
+              Diferença entre o total pago no consórcio e o financiamento mais caro da comparação, considerando o mesmo valor de aquisição.
+            </p>
+          </div>
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Crédito corrigido na contemplação</span>
+              <strong className="text-right" style={{ color: C.navy }}>{brMoney(consortium.creditAtContemplation)}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Lance embutido projetado</span>
+              <strong className="text-right" style={{ color: C.navy }}>{brMoney(consortium.embeddedBidAtContemplation)}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Crédito disponível para aquisição</span>
+              <strong className="text-right" style={{ color: C.ruby }}>{brMoney(consortium.availableAtContemplation)}</strong>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">Lance próprio considerado</span>
+              <strong className="text-right" style={{ color: C.gold }}>{brMoney(consortium.ownBidAtContemplation)}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+          <div className="border-b px-5 py-4">
+            <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+              <FileSpreadsheet className="h-4 w-4" /> Quadro comparativo
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-[860px] w-full border-collapse text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+                <tr>
+                  <th className="p-3 text-left">Modelo</th>
+                  <th className="p-3 text-right">Crédito/valor</th>
+                  <th className="p-3 text-right">Prazo</th>
+                  <th className="p-3 text-right">Parcela inicial</th>
+                  <th className="p-3 text-right">Parcela final</th>
+                  <th className="p-3 text-right">Total pago</th>
+                  <th className="p-3 text-right">Custo total</th>
+                  <th className="p-3 text-right">Economia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {acquisition.comparisons.map((item) => (
+                  <tr key={item.label} className="border-t">
+                    <td className="p-3 font-black" style={{ color: item.label === "Consórcio" ? C.gold : C.navy }}>{item.label}</td>
+                    <td className="p-3 text-right">{brMoney(item.creditOrFinancedValue)}</td>
+                    <td className="p-3 text-right">{item.term} meses</td>
+                    <td className="p-3 text-right">{brMoney(item.initialInstallment)}</td>
+                    <td className="p-3 text-right">{brMoney(item.finalInstallment)}</td>
+                    <td className="p-3 text-right font-semibold">{brMoney(item.totalPaid)}</td>
+                    <td className="p-3 text-right">{brMoney(item.totalCost)}</td>
+                    <td className="p-3 text-right font-black" style={{ color: item.estimatedSavingsVsConsortium > 0 ? C.ruby : C.navy }}>
+                      {item.label === "Consórcio" ? "-" : brMoney(item.estimatedSavingsVsConsortium)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <ParcelEvolutionChart points={acquisition.chart} />
+    </div>
+  );
+}
+
 function PlaceholderModel({ model }: { model: (typeof MODELS)[number] }) {
   return (
     <section className="rounded-xl border bg-white p-8 text-center shadow-sm">
@@ -380,7 +654,13 @@ export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubP
         })}
       </section>
 
-      {activeModel === "extrato" ? <ExtratoModel proposal={proposal} params={params} /> : <PlaceholderModel model={model} />}
+      {activeModel === "extrato" ? (
+        <ExtratoModel proposal={proposal} params={params} />
+      ) : activeModel === "aquisicao" ? (
+        <AquisicaoModel proposal={proposal} params={params} />
+      ) : (
+        <PlaceholderModel model={model} />
+      )}
     </div>
   );
 }

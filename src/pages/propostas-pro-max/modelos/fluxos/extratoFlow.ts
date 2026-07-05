@@ -209,6 +209,15 @@ function parcelaAposContemplacao(row: ProposalModelRow) {
   );
 }
 
+function specialInstallmentMonths(row: ProposalModelRow) {
+  const explicitMonths = Math.max(0, Math.round(onlyNumber(row.antecip_parcelas)));
+  if (explicitMonths > 0) return explicitMonths;
+
+  const first = onlyNumber(row.parcela_ate_1_ou_2);
+  const regular = onlyNumber(row.parcela_demais) || onlyNumber(row.parcela_escolhida);
+  return first > 0 && regular > 0 && Math.abs(first - regular) > 0.01 ? 2 : 0;
+}
+
 function lancePago(row: ProposalModelRow) {
   return (
     onlyNumber(row.lance_ofertado_valor) ||
@@ -244,13 +253,13 @@ function bidAtCredit(row: ProposalModelRow, credit: number, contractedCredit: nu
 }
 
 function baseInstallmentForMonth(row: ProposalModelRow, month: number, contemplated: boolean) {
-  if (contemplated) return parcelaAposContemplacao(row);
-
-  const antecipParcelas = Math.max(0, Math.round(onlyNumber(row.antecip_parcelas)));
+  const antecipParcelas = specialInstallmentMonths(row);
   const first = parcelaInicial(row);
-  const regular = demaisParcelas(row);
 
   if (antecipParcelas > 0 && month <= antecipParcelas && first > 0) return first;
+  if (contemplated) return parcelaAposContemplacao(row);
+
+  const regular = demaisParcelas(row);
   return regular || first;
 }
 
@@ -352,6 +361,8 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       const balanceBeforeBid = balance;
       const correctedBid = bidAtCredit(proposal, credit, contractedCredit);
       const paidBid = correctedBid.total || bidPaid;
+      const nextInstallmentAfterContemplation =
+        baseInstallmentForMonth(proposal, month + 1, true) * installmentCorrectionFactor + postContemplationInstallmentExtra;
 
       creditAtContemplation = credit;
       embeddedBidAtContemplation = correctedBid.embedded;
@@ -371,7 +382,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
           `Lance pago: ${brMoney(paidBid)}`,
           `Saldo antes do lance: ${brMoney(balanceBeforeBid)}`,
           `Saldo após o lance: ${brMoney(balance)}`,
-          `Nova parcela: ${brMoney(postContemplationInstallment * installmentCorrectionFactor)}`,
+          `Nova parcela: ${brMoney(nextInstallmentAfterContemplation)}`,
           `Novo prazo: ${newTerm || "-"} meses`,
         ],
       });

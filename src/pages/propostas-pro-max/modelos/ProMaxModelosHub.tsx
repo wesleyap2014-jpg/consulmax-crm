@@ -63,6 +63,13 @@ function phoneLabel(value: string) {
   return value || "-";
 }
 
+function whatsappHref(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  const normalized = digits.startsWith("55") ? digits : `55${digits}`;
+  return `https://wa.me/${normalized}`;
+}
+
 function initials(name: string) {
   return name
     .split(/\s+/)
@@ -301,10 +308,12 @@ export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubP
               <TrendingUp className="h-3.5 w-3.5" /> Modelos Pró Max
             </div>
             <h1 className="mt-3 max-w-4xl text-2xl font-black md:text-4xl">
-              Proposta de investimento especialmente desenhada para {proposal.lead_nome || "você"}
+              <span className="block">Proposta de Investimento Personalizada</span>
+              <span className="mt-1 block font-medium text-white/85">Para {proposal.lead_nome || "você"}</span>
             </h1>
             <p className="mt-2 max-w-3xl text-sm text-white/78">
-              Uma leitura visual da estratégia, com números organizados para facilitar a decisão e mostrar o caminho até a contemplação.
+              Uma visão clara da sua estratégia, com crédito, lance, contemplação e evolução das parcelas organizados
+              para apoiar uma decisão mais segura e mostrar o caminho do investimento com transparência.
             </p>
           </div>
           <div className="w-full rounded-lg border border-white/20 bg-white/95 p-4 text-slate-900 shadow-sm lg:max-w-sm">
@@ -323,10 +332,22 @@ export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubP
               <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-[.08em] text-slate-500">Consultor</div>
                 <div className="truncate text-sm font-black" style={{ color: C.navy }}>{consultant.name}</div>
-                <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-slate-600">
-                  {consultant.phone ? <Phone className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
-                  {consultant.phone ? phoneLabel(consultant.phone) : consultant.email || "Atendimento Consulmax"}
-                </div>
+                {consultant.phone ? (
+                  <a
+                    href={whatsappHref(consultant.phone)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-600 transition hover:text-emerald-700"
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                    {phoneLabel(consultant.phone)}
+                  </a>
+                ) : (
+                  <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-slate-600">
+                    <UserRound className="h-3.5 w-3.5" />
+                    {consultant.email || "Atendimento Consulmax"}
+                  </div>
+                )}
               </div>
             </div>
             <p className="mt-3 text-xs leading-relaxed text-slate-600">

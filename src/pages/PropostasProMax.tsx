@@ -42,6 +42,13 @@ type SimRow = {
   lance_ofertado_valor?: number | null;
   lance_embutido_valor?: number | null;
   lance_proprio_valor?: number | null;
+  lance_embutido_pct?: number | null;
+  lance_proprio_pct?: number | null;
+  lance_ofertado_pct?: number | null;
+  lance_base?: string | null;
+  ofert_base?: string | null;
+  embut_base?: string | null;
+  modelo_lance_base?: string | null;
   administradora?: string | null;
   admin?: string | null;
   vendedor_id?: string | null;
@@ -263,6 +270,48 @@ function creditoContratado(row: Proposal) {
   return onlyNumber(row.credito) || onlyNumber(row.valor_categoria) || onlyNumber(row.novo_credito);
 }
 
+function normalizeFraction(value: unknown) {
+  const parsed = onlyNumber(value);
+  if (!parsed) return 0;
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
+function baseUsesCategory(value: unknown) {
+  const normalized = normalizeText(value);
+  return (
+    normalized.includes("categoria") ||
+    normalized.includes("valor_categoria") ||
+    normalized.includes("valor categoria") ||
+    normalized.includes("parcela_termo") ||
+    normalized.includes("termo") ||
+    normalized.includes("taxa")
+  );
+}
+
+function categoryForCredit(row: Proposal, credit: number) {
+  const category = onlyNumber(row.valor_categoria);
+  const contracted = creditoContratado(row);
+  if (category > 0 && contracted > 0) return credit * (category / contracted);
+
+  const adm = normalizeFraction(row.adm_tax_pct);
+  const fr = normalizeFraction(row.fr_tax_pct);
+  return credit * (1 + adm + fr);
+}
+
+function bidBaseValue(row: Proposal, baseKey: string, credit: number) {
+  return baseUsesCategory(baseKey) ? categoryForCredit(row, credit) : credit;
+}
+
+function embeddedBidValue(row: Proposal) {
+  const saved = onlyNumber(row.lance_embutido_valor);
+  if (saved > 0) return saved;
+
+  const credit = creditoContratado(row);
+  const baseKey = firstText(row, ["embut_base", "lance_base", "modelo_lance_base"]);
+  const base = bidBaseValue(row, baseKey, credit);
+  return base * normalizeFraction(row.lance_embutido_pct);
+}
+
 function parcelaInicial(row: Proposal) {
   return onlyNumber(row.parcela_ate_1_ou_2) || onlyNumber(row.parcela_escolhida) || onlyNumber(row.parcela_contemplacao);
 }
@@ -275,7 +324,7 @@ function creditoLiquido(row: Proposal) {
   const novoCredito = onlyNumber(row.novo_credito);
   if (novoCredito > 0) return novoCredito;
   const contratado = creditoContratado(row);
-  const embutido = onlyNumber(row.lance_embutido_valor);
+  const embutido = embeddedBidValue(row);
   return Math.max(0, contratado - embutido);
 }
 

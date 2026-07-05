@@ -101,25 +101,32 @@ function Metric({ label, value, tone = "navy" }: { label: string; value: string;
   );
 }
 
-function compactMoney(value: number) {
+function axisMoney(value: number) {
   const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
 
   if (abs >= 1_000_000) {
-    return `${sign}R$ ${(abs / 1_000_000).toLocaleString("pt-BR", {
+    return `R$ ${(abs / 1_000_000).toLocaleString("pt-BR", {
       minimumFractionDigits: 1,
       maximumFractionDigits: 1,
     })} mi`;
   }
 
   if (abs >= 1_000) {
-    return `${sign}R$ ${(abs / 1_000).toLocaleString("pt-BR", {
-      minimumFractionDigits: 0,
+    return `R$ ${(abs / 1_000).toLocaleString("pt-BR", {
+      minimumFractionDigits: 1,
       maximumFractionDigits: 1,
     })} mil`;
   }
 
-  return brMoney(value);
+  return `R$ ${abs.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`;
+}
+
+function niceChartMax(value: number) {
+  if (value <= 0) return 1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+  const normalized = value / magnitude;
+  const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return niceNormalized * magnitude;
 }
 
 function ComparisonCard({
@@ -195,34 +202,37 @@ function ComparisonCard({
 }
 
 function chartX(index: number, total: number) {
-  const left = 74;
-  const width = 786;
+  const left = 82;
+  const width = 760;
   return left + (index / Math.max(1, total - 1)) * width;
 }
 
 function chartY(value: number, maxY: number) {
-  const top = 28;
-  const height = 226;
+  const top = 34;
+  const height = 218;
   return top + height - (value / Math.max(1, maxY)) * height;
 }
 
 function linePoints(points: AcquisitionChartPoint[], key: "consortium" | "sac" | "price", maxY: number) {
   return points
-    .map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(point[key], maxY).toFixed(2)}`)
+    .map((point, index) => ({ point, index }))
+    .filter(({ point }) => key !== "consortium" || point.consortiumDetail)
+    .map(({ point, index }) => `${chartX(index, points.length).toFixed(2)},${chartY(point[key], maxY).toFixed(2)}`)
     .join(" ");
 }
 
 function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
   const [hovered, setHovered] = useState<AcquisitionChartPoint | null>(null);
-  const maxY = Math.max(
+  const rawMaxY = Math.max(
     1,
     ...points.flatMap((point) => [point.consortium, point.sac, point.price])
   );
+  const maxY = niceChartMax(rawMaxY);
   const grid = [0, 0.25, 0.5, 0.75, 1];
-  const left = 74;
-  const right = 860;
-  const top = 28;
-  const bottom = 254;
+  const left = 82;
+  const right = 842;
+  const top = 34;
+  const bottom = 252;
   const bandWidth = Math.max(1.5, (right - left) / Math.max(1, points.length));
   const endMonth = points[points.length - 1]?.month || 1;
   const hoveredIndex = hovered ? Math.max(0, hovered.month - 1) : -1;
@@ -231,23 +241,29 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
 
   return (
     <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-          <BarChart3 className="h-4 w-4" /> Evolução das parcelas
+      <div className="flex flex-col gap-3 border-b bg-slate-50/70 px-5 py-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <BarChart3 className="h-4 w-4" /> Evolução das parcelas
+          </div>
+          <div className="mt-1 text-xs font-semibold text-slate-500">Passe o cursor sobre os meses para ver os detalhes da projeção.</div>
         </div>
-        <div className="flex flex-wrap gap-3 text-xs font-bold">
-          <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.gold }} /> Consórcio</span>
-          <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.ruby }} /> SAC</span>
-          <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.navy }} /> Price</span>
+        <div className="flex flex-wrap gap-2 text-xs font-black">
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.gold }} /> Consórcio</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.ruby }} /> SAC</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.navy }} /> Price</span>
         </div>
       </div>
-      <div className="relative p-4">
+      <div className="relative p-4 md:p-5">
         {hovered ? (
           <div
-            className="pointer-events-none absolute top-16 z-10 w-[280px] rounded-lg border bg-white p-3 text-xs shadow-xl"
+            className="pointer-events-none absolute top-16 z-10 w-[292px] rounded-xl border bg-white p-3 text-xs shadow-xl ring-1 ring-slate-900/5"
             style={{ left: `${tooltipLeft}%` }}
           >
-            <div className="font-black" style={{ color: C.navy }}>Mês {hovered.month}</div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-black" style={{ color: C.navy }}>Mês {hovered.month}</div>
+              <div className="rounded-full bg-slate-100 px-2 py-0.5 font-black text-slate-500">detalhes</div>
+            </div>
             <div className="mt-2 grid gap-1.5">
               <div className="flex justify-between gap-3"><span className="text-slate-500">Consórcio</span><strong style={{ color: C.gold }}>{brMoney(hovered.consortium)}</strong></div>
               {hovered.consortiumDetail ? (
@@ -274,48 +290,57 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
         ) : null}
 
         <svg
-          viewBox="0 0 920 330"
-          className="h-[340px] w-full"
+          viewBox="0 0 920 320"
+          className="h-[330px] w-full"
           role="img"
           aria-label="Gráfico de evolução das parcelas mês a mês"
           onMouseLeave={() => setHovered(null)}
         >
-          <rect x="0" y="0" width="920" height="330" fill="#ffffff" />
+          <defs>
+            <linearGradient id="parcelChartBg" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#F8FAFC" />
+              <stop offset="100%" stopColor="#FFFFFF" />
+            </linearGradient>
+            <filter id="lineGlow" x="-10%" y="-20%" width="120%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#0F172A" floodOpacity="0.12" />
+            </filter>
+          </defs>
+          <rect x="0" y="0" width="920" height="320" fill="#ffffff" />
+          <rect x={left} y="18" width={right - left} height="252" rx="12" fill="url(#parcelChartBg)" stroke="#E2E8F0" />
           {grid.map((ratio) => {
             const y = bottom - ratio * (bottom - top);
             return (
               <g key={ratio}>
-                <line x1={left} x2={right} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" />
-                <text x="62" y={y + 4} textAnchor="end" fontSize="11" fill="#64748B">
-                  {compactMoney(maxY * ratio)}
+                <line x1={left + 12} x2={right - 12} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" strokeDasharray={ratio === 0 ? "0" : "3 5"} />
+                <text x="68" y={y + 4} textAnchor="end" fontSize="11" fontWeight="700" fill="#64748B">
+                  {axisMoney(maxY * ratio)}
                 </text>
               </g>
             );
           })}
           <line x1={left} x2={right} y1={bottom} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
-          <line x1={left} x2={left} y1={top} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
           {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
             const month = Math.max(1, Math.round(1 + (endMonth - 1) * ratio));
             const x = left + (right - left) * ratio;
             return (
               <g key={ratio}>
-                <line x1={x} x2={x} y1={bottom} y2={bottom + 5} stroke="#CBD5E1" strokeWidth="1" />
-                <text x={x} y="278" textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#64748B">
+                <line x1={x} x2={x} y1={bottom} y2={bottom + 5} stroke="#CBD5E1" strokeWidth="1.2" />
+                <text x={x} y="282" textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fontWeight="700" fill="#64748B">
                   Mês {month}
                 </text>
               </g>
             );
           })}
 
-          <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
+          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
+          <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
           {hovered ? (
             <>
               <line x1={hoveredX} x2={hoveredX} y1={top} y2={bottom} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth="1.5" />
-              <circle cx={hoveredX} cy={chartY(hovered.consortium, maxY)} r="4" fill={C.gold} />
-              <circle cx={hoveredX} cy={chartY(hovered.sac, maxY)} r="4" fill={C.ruby} />
-              <circle cx={hoveredX} cy={chartY(hovered.price, maxY)} r="4" fill={C.navy} />
+              {hovered.consortiumDetail ? <circle cx={hoveredX} cy={chartY(hovered.consortium, maxY)} r="5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2" /> : null}
+              <circle cx={hoveredX} cy={chartY(hovered.sac, maxY)} r="5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2" />
+              <circle cx={hoveredX} cy={chartY(hovered.price, maxY)} r="5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2" />
             </>
           ) : null}
           {points.map((point, index) => {

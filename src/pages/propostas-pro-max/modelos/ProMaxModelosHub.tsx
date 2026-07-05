@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
 import { buildAquisicaoFlow, type AcquisitionChartPoint, type AcquisitionComparison, type AcquisitionFlow, type FinancingSummary } from "./fluxos/aquisicaoFlow";
 import { buildExtratoFlow, onlyNumber, type ProposalModelRow, type ProposalParams } from "./fluxos/extratoFlow";
+import { buildPrevidenciaFlow, type PrevidenciaChartPoint, type PrevidenciaFlow } from "./fluxos/previdenciaFlow";
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
 
@@ -548,6 +549,262 @@ function DetailOverlay({
   );
 }
 
+function previdenciaLinePoints(points: PrevidenciaChartPoint[], key: "consortiumInstallment" | "monthlyIncome", maxY: number) {
+  return points
+    .map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(point[key], maxY).toFixed(2)}`)
+    .join(" ");
+}
+
+function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
+  const [hovered, setHovered] = useState<PrevidenciaChartPoint | null>(null);
+  const points = flow.chart;
+  const rawMaxY = Math.max(
+    1,
+    ...points.flatMap((point) => [point.consortiumInstallment, point.monthlyIncome])
+  );
+  const maxY = niceChartMax(rawMaxY);
+  const grid = [0, 0.25, 0.5, 0.75, 1];
+  const left = 92;
+  const right = 1532;
+  const top = 34;
+  const bottom = 254;
+  const bandWidth = Math.max(1.5, (right - left) / Math.max(1, points.length));
+  const endMonth = points[points.length - 1]?.month || 1;
+  const hoveredIndex = hovered ? Math.max(0, hovered.month - 1) : -1;
+  const hoveredX = hovered ? chartX(hoveredIndex, points.length) : 0;
+  const tooltipLeft = hovered ? Math.min(78, Math.max(8, (hoveredX / 1600) * 100)) : 50;
+
+  return (
+    <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b bg-slate-50/70 px-5 py-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <BarChart3 className="h-4 w-4" /> Parcela x rentabilidade mensal
+          </div>
+          <div className="mt-1 text-xs font-semibold text-slate-500">
+            Passe o cursor sobre os meses para ver rentabilidade mensal, acumulada e patrimônio líquido projetado.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs font-black">
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.gold }} /> Parcela consórcio</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.navy }} /> Rentabilidade</span>
+        </div>
+      </div>
+      <div className="relative bg-transparent p-4 md:p-5">
+        {hovered ? (
+          <div
+            className="pointer-events-none absolute top-16 z-10 w-[310px] rounded-xl border bg-white p-3 text-xs shadow-xl ring-1 ring-slate-900/5"
+            style={{ left: `${tooltipLeft}%` }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-black" style={{ color: C.navy }}>Mês {hovered.month}</div>
+              <div className="rounded-full bg-slate-100 px-2 py-0.5 font-black text-slate-500">100% CDI</div>
+            </div>
+            <div className="mt-2 grid gap-1.5">
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Parcela consórcio</span><strong style={{ color: C.gold }}>{brMoney(hovered.consortiumInstallment)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Rentabilidade no mês</span><strong style={{ color: C.navy }}>{brMoney(hovered.monthlyIncome)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Rentabilidade acumulada</span><strong>{brMoney(hovered.accumulatedIncome)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Patrimônio líquido</span><strong>{brMoney(hovered.netBalance)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">CDI mês a mês líquido</span><strong>{brMoney(hovered.cdiNetBalance)}</strong></div>
+            </div>
+          </div>
+        ) : null}
+
+        <svg
+          viewBox="0 0 1600 320"
+          className="block h-[340px] w-full max-w-none"
+          role="img"
+          aria-label="Gráfico comparativo de parcela do consórcio e rentabilidade mensal"
+          onMouseLeave={() => setHovered(null)}
+        >
+          <defs>
+            <filter id="previdenciaLineGlow" x="-10%" y="-20%" width="120%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#0F172A" floodOpacity="0.12" />
+            </filter>
+          </defs>
+          <rect x="0" y="0" width="1600" height="320" fill="transparent" />
+          {grid.map((ratio) => {
+            const y = bottom - ratio * (bottom - top);
+            return (
+              <g key={ratio}>
+                <line x1={left} x2={right} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" strokeDasharray={ratio === 0 ? "0" : "4 7"} />
+                <text x="78" y={y + 4} textAnchor="end" fontSize="11" fontWeight="700" fill="#64748B">
+                  {axisMoney(maxY * ratio)}
+                </text>
+              </g>
+            );
+          })}
+          <line x1={left} x2={right} y1={bottom} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+            const month = Math.max(1, Math.round(1 + (endMonth - 1) * ratio));
+            const x = left + (right - left) * ratio;
+            return (
+              <g key={ratio}>
+                <line x1={x} x2={x} y1={bottom} y2={bottom + 5} stroke="#CBD5E1" strokeWidth="1.2" />
+                <text x={x} y="282" textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fontWeight="700" fill="#64748B">
+                  Mês {month}
+                </text>
+              </g>
+            );
+          })}
+
+          <polyline points={previdenciaLinePoints(points, "consortiumInstallment", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={previdenciaLinePoints(points, "monthlyIncome", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={previdenciaLinePoints(points, "consortiumInstallment", maxY)} fill="none" stroke={C.gold} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
+          <polyline points={previdenciaLinePoints(points, "monthlyIncome", maxY)} fill="none" stroke={C.navy} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
+          {hovered ? (
+            <>
+              <line x1={hoveredX} x2={hoveredX} y1={top} y2={bottom} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth="1.5" />
+              <circle cx={hoveredX} cy={chartY(hovered.consortiumInstallment, maxY)} r="5.5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2.25" />
+              <circle cx={hoveredX} cy={chartY(hovered.monthlyIncome, maxY)} r="5.5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2.25" />
+            </>
+          ) : null}
+          {points.map((point, index) => {
+            const x = chartX(index, points.length);
+            return (
+              <rect
+                key={point.month}
+                x={x - bandWidth / 2}
+                y={top}
+                width={bandWidth}
+                height={bottom - top}
+                fill="transparent"
+                pointerEvents="all"
+                onMouseEnter={() => setHovered(point)}
+                onMouseMove={() => setHovered(point)}
+              />
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
+  const flow = useMemo(() => buildPrevidenciaFlow(proposal, params), [proposal, params]);
+  const { summary, cdiComparison, cdi, tax } = flow;
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-[.12em]" style={{ color: C.navy }}>
+              <TrendingUp className="h-3.5 w-3.5" /> Previdência
+            </div>
+            <h2 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>
+              Consórcio como construção de renda futura
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm text-slate-600">
+              O modelo captura o crédito líquido na contemplação e simula esse capital aplicado pelo prazo restante
+              a 100% do CDI. A leitura compara a parcela reajustada do consórcio com a rentabilidade mensal projetada
+              e mostra o cenário alternativo de aplicar apenas os valores pagos mês a mês.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[520px]">
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">CDI aplicado</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>{brPercent(cdi.monthlyRate)} a.m.</div>
+              <div className="text-xs text-slate-500">{cdi.label} | {brPercent(cdi.annualRate)} a.a.</div>
+            </div>
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">IR estimado</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.gold }}>{brPercent(tax.rate)}</div>
+              <div className="text-xs text-slate-500">Tabela regressiva sobre rendimentos</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Crédito líquido aplicado" value={brMoney(summary.capitalAtContemplation)} tone="gold" />
+        <Metric label="Patrimônio líquido final" value={brMoney(summary.finalNetBalance)} />
+        <Metric label="Rentabilidade líquida" value={brMoney(summary.netIncome)} tone="ruby" />
+        <Metric label="Investimento total" value={brMoney(summary.totalInvested)} />
+        <Metric label="TIR mensal" value={brPercent(summary.monthlyIrr)} tone="ruby" />
+        <Metric label="ROI" value={brPercent(summary.roi)} tone="gold" />
+        <Metric label="Rentabilidade a.m." value={brPercent(summary.monthlyReturn)} />
+        <Metric label="% do CDI mensal" value={brPercent(summary.cdiPercent)} />
+        <Metric label="Gross up mensal" value={brPercent(tax.grossUpMonthlyRate)} tone="ruby" />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[.9fr_1.1fr]">
+        <div className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <LineChart className="h-4 w-4" /> Investimento x Rentabilidade
+          </div>
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Mês da contemplação</span>
+              <strong style={{ color: C.navy }}>Mês {summary.contemplationMonth}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Prazo aplicado após contemplação</span>
+              <strong style={{ color: C.navy }}>{summary.remainingMonths} meses</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Rendimento bruto projetado</span>
+              <strong style={{ color: C.gold }}>{brMoney(summary.grossIncome)}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">IR sobre rendimento</span>
+              <strong style={{ color: C.ruby }}>{brMoney(tax.amount)}</strong>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">TIR anual equivalente</span>
+              <strong style={{ color: C.navy }}>{brPercent(summary.annualIrr)}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+          <div className="border-b px-5 py-4">
+            <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+              <FileSpreadsheet className="h-4 w-4" /> Comparativo no CDI
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-[760px] w-full border-collapse text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+                <tr>
+                  <th className="p-3 text-left">Cenário</th>
+                  <th className="p-3 text-right">Capital/Principal</th>
+                  <th className="p-3 text-right">Patrimônio bruto</th>
+                  <th className="p-3 text-right">Rentabilidade</th>
+                  <th className="p-3 text-right">IR</th>
+                  <th className="p-3 text-right">Patrimônio líquido</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t">
+                  <td className="p-3 font-black" style={{ color: C.gold }}>Consórcio + crédito aplicado</td>
+                  <td className="p-3 text-right">{brMoney(summary.capitalAtContemplation)}</td>
+                  <td className="p-3 text-right">{brMoney(summary.finalGrossBalance)}</td>
+                  <td className="p-3 text-right">{brMoney(summary.grossIncome)}</td>
+                  <td className="p-3 text-right">{brMoney(tax.amount)}</td>
+                  <td className="p-3 text-right font-black" style={{ color: C.navy }}>{brMoney(summary.finalNetBalance)}</td>
+                </tr>
+                <tr className="border-t">
+                  <td className="p-3 font-black" style={{ color: C.ruby }}>Aplicar parcelas mês a mês</td>
+                  <td className="p-3 text-right">{brMoney(cdiComparison.investedPrincipal)}</td>
+                  <td className="p-3 text-right">{brMoney(cdiComparison.grossBalance)}</td>
+                  <td className="p-3 text-right">{brMoney(cdiComparison.grossIncome)}</td>
+                  <td className="p-3 text-right">{brMoney(cdiComparison.tax)}</td>
+                  <td className="p-3 text-right font-black" style={{ color: C.navy }}>{brMoney(cdiComparison.netBalance)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <PrevidenciaChart flow={flow} />
+    </div>
+  );
+}
+
 function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
   const [projectionPage, setProjectionPage] = useState(1);
   const flow = useMemo(() => buildExtratoFlow(proposal, params), [proposal, params]);
@@ -959,6 +1216,8 @@ export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubP
         <ExtratoModel proposal={proposal} params={params} />
       ) : activeModel === "aquisicao" ? (
         <AquisicaoModel proposal={proposal} params={params} />
+      ) : activeModel === "previdencia" ? (
+        <PrevidenciaModel proposal={proposal} params={params} />
       ) : (
         <PlaceholderModel model={model} />
       )}

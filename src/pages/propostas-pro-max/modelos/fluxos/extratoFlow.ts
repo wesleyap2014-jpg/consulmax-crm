@@ -332,6 +332,22 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       });
     }
 
+    const initialBalance = balance;
+    const installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
+    const monthlyPayment = Math.min(installment, balance);
+    payments += monthlyPayment;
+    balance = Math.max(0, balance - monthlyPayment);
+
+    entries.push({
+      kind: "month",
+      month,
+      credit,
+      initialBalance,
+      installment: monthlyPayment,
+      payments,
+      endingBalance: balance,
+    });
+
     if (!contemplated && contemplationMonth > 0 && month === contemplationMonth) {
       const balanceBeforeBid = balance;
       const correctedBid = bidAtCredit(proposal, credit, contractedCredit);
@@ -360,22 +376,6 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
         ],
       });
     }
-
-    const initialBalance = balance;
-    const installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
-    const monthlyPayment = Math.min(installment, balance);
-    payments += monthlyPayment;
-    balance = Math.max(0, balance - monthlyPayment);
-
-    entries.push({
-      kind: "month",
-      month,
-      credit,
-      initialBalance,
-      installment: monthlyPayment,
-      payments,
-      endingBalance: balance,
-    });
 
     month += 1;
   }

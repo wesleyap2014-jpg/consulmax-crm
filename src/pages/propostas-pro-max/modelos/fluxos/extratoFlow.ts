@@ -15,6 +15,10 @@ export type ProposalModelRow = {
   lance_embutido_valor?: number | string | null;
   lance_proprio_valor?: number | string | null;
   lance_ofertado_valor?: number | string | null;
+  lance_embutido_pct?: number | string | null;
+  lance_proprio_pct?: number | string | null;
+  lance_ofertado_pct?: number | string | null;
+  lance_percebido_pct?: number | string | null;
   saldo_devedor_final?: number | string | null;
   prazo_venda?: number | string | null;
   novo_prazo?: number | string | null;
@@ -24,6 +28,10 @@ export type ProposalModelRow = {
   index_12m_value?: number | string | null;
   administradora?: string | null;
   nome_tabela?: string | null;
+  vendedor_nome?: string | null;
+  vendedor_telefone?: string | null;
+  vendedor_email?: string | null;
+  vendedor_foto_url?: string | null;
   forma_contratacao?: string | null;
   parcela_termo?: number | string | null;
   parcela_limitante?: number | string | null;
@@ -31,6 +39,10 @@ export type ProposalModelRow = {
   antecip_parcelas?: number | string | null;
   promax?: {
     administradora?: string | null;
+    vendedor_nome?: string | null;
+    vendedor_telefone?: string | null;
+    vendedor_email?: string | null;
+    vendedor_foto_url?: string | null;
   };
   [key: string]: unknown;
 };
@@ -93,6 +105,13 @@ export type ExtratoFlow = {
     correctedLiquidCredit: number;
     correctedDebt: number;
     correctionValue: number;
+    creditAtContemplation: number;
+    embeddedBidAtContemplation: number;
+    availableAtContemplation: number;
+    ownBidAtContemplation: number;
+    investmentUntilContemplation: number;
+    adminTaxPct: number;
+    reserveTaxPct: number;
   };
 };
 
@@ -197,6 +216,33 @@ function lancePago(row: ProposalModelRow) {
   );
 }
 
+function bidPctFromValue(value: unknown, base: number) {
+  return base > 0 ? onlyNumber(value) / base : 0;
+}
+
+function bidAtCredit(row: ProposalModelRow, credit: number, contractedCredit: number) {
+  const totalPct =
+    normalizeFraction(row.lance_ofertado_pct) ||
+    bidPctFromValue(row.lance_ofertado_valor, contractedCredit);
+  const embeddedPct =
+    normalizeFraction(row.lance_embutido_pct) ||
+    bidPctFromValue(row.lance_embutido_valor, contractedCredit);
+  const ownPct =
+    normalizeFraction(row.lance_proprio_pct) ||
+    Math.max(0, totalPct - embeddedPct) ||
+    bidPctFromValue(row.lance_proprio_valor, contractedCredit);
+
+  const total = credit * totalPct;
+  const embedded = total > 0 ? Math.min(total, credit * embeddedPct) : credit * embeddedPct;
+  const own = Math.max(0, total || credit * ownPct) - embedded;
+
+  return {
+    total: total || embedded + Math.max(0, credit * ownPct),
+    embedded,
+    own: Math.max(0, own),
+  };
+}
+
 function baseInstallmentForMonth(row: ProposalModelRow, month: number, contemplated: boolean) {
   if (contemplated) return parcelaAposContemplacao(row);
 
@@ -227,6 +273,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   const saleTerm = Math.max(0, Math.round(onlyNumber(proposal.prazo_venda)));
   const plannedMonths = Math.max(saleTerm, contemplationMonth + newTerm, 1);
   const bidPaid = lancePago(proposal);
+  const initialBid = bidAtCredit(proposal, contractedCredit, contractedCredit);
 
   const entries: ExtratoEntry[] = [];
   let month = 1;
@@ -234,8 +281,14 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   let balance = baseCredit;
   let payments = 0;
   let installmentCorrectionFactor = 1;
+  let postContemplationInstallmentExtra = 0;
   let contemplated = false;
   let guard = 0;
+  let creditAtContemplation = contemplationMonth > 0 ? contractedCredit : contractedCredit;
+  let embeddedBidAtContemplation = initialBid.embedded || onlyNumber(proposal.lance_embutido_valor);
+  let ownBidAtContemplation = initialBid.own || onlyNumber(proposal.lance_proprio_valor);
+  let availableAtContemplation = Math.max(0, creditAtContemplation - embeddedBidAtContemplation);
+  let investmentUntilContemplation = 0;
 
   while (month <= plannedMonths && balance > 0 && guard < 420) {
     guard += 1;
@@ -243,32 +296,54 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
     if (month > 1 && (month - 1) % 12 === 0) {
       const correctionBase = contemplated ? balance : credit;
       const correctionValue = correctionBase * annualRate;
-      const taxValue = correctionValue * totalTaxPct;
+      const taxValue = contemplated ? 0 : correctionValue * totalTaxPct;
       const totalAdjustment = correctionValue + taxValue;
-      const factor = correctionBase > 0 ? (correctionBase + totalAdjustment) / correctionBase : 1;
 
       credit += correctionValue;
       balance += totalAdjustment;
-      installmentCorrectionFactor *= factor;
+
+      if (contemplated) {
+        const remainingTerm = Math.max(1, plannedMonths - month + 1);
+        postContemplationInstallmentExtra += correctionValue / remainingTerm;
+      } else {
+        const factor = correctionBase > 0 ? (correctionBase + totalAdjustment) / correctionBase : 1;
+        installmentCorrectionFactor *= factor;
+      }
 
       entries.push({
         kind: "event",
         month,
         title: "Correção",
-        details: [
-          `Base: ${contemplated ? "saldo devedor" : "crédito contratado"}`,
-          `Crédito pré: ${brMoney(correctionBase)}`,
-          `Correção: ${brMoney(correctionValue)}`,
-          `Taxas: ${brMoney(taxValue)}`,
-          `Nova parcela: ${brMoney(baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor)}`,
-        ],
+        details: contemplated
+          ? [
+              "Base: saldo devedor",
+              `Saldo pré: ${brMoney(correctionBase)}`,
+              `Correção: ${brMoney(correctionValue)}`,
+              `Impacto mensal: ${brMoney(correctionValue / Math.max(1, plannedMonths - month + 1))}`,
+              `Nova parcela: ${brMoney(baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + postContemplationInstallmentExtra)}`,
+            ]
+          : [
+              "Base: crédito contratado",
+              `Crédito pré: ${brMoney(correctionBase)}`,
+              `Correção: ${brMoney(correctionValue)}`,
+              `Taxas: ${brMoney(taxValue)}`,
+              `Nova parcela: ${brMoney(baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor)}`,
+            ],
       });
     }
 
     if (!contemplated && contemplationMonth > 0 && month === contemplationMonth) {
       const balanceBeforeBid = balance;
-      balance = Math.max(0, balance - bidPaid);
-      payments += bidPaid;
+      const correctedBid = bidAtCredit(proposal, credit, contractedCredit);
+      const paidBid = correctedBid.total || bidPaid;
+
+      creditAtContemplation = credit;
+      embeddedBidAtContemplation = correctedBid.embedded;
+      ownBidAtContemplation = correctedBid.own;
+      availableAtContemplation = Math.max(0, credit - correctedBid.embedded);
+      investmentUntilContemplation = payments + correctedBid.own;
+      balance = Math.max(0, balance - paidBid);
+      payments += paidBid;
       contemplated = true;
 
       entries.push({
@@ -276,7 +351,8 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
         month,
         title: "Contemplação",
         details: [
-          `Lance pago: ${brMoney(bidPaid)}`,
+          `Crédito corrigido: ${brMoney(credit)}`,
+          `Lance pago: ${brMoney(paidBid)}`,
           `Saldo antes do lance: ${brMoney(balanceBeforeBid)}`,
           `Saldo após o lance: ${brMoney(balance)}`,
           `Nova parcela: ${brMoney(postContemplationInstallment * installmentCorrectionFactor)}`,
@@ -286,7 +362,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
     }
 
     const initialBalance = balance;
-    const installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor;
+    const installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
     const monthlyPayment = Math.min(installment, balance);
     payments += monthlyPayment;
     balance = Math.max(0, balance - monthlyPayment);
@@ -322,6 +398,13 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       correctedLiquidCredit: liquidCredit * (1 + annualRate),
       correctedDebt: debt * (1 + annualRate),
       correctionValue: baseCredit * annualRate,
+      creditAtContemplation,
+      embeddedBidAtContemplation,
+      availableAtContemplation,
+      ownBidAtContemplation,
+      investmentUntilContemplation,
+      adminTaxPct,
+      reserveTaxPct,
     },
   };
 }

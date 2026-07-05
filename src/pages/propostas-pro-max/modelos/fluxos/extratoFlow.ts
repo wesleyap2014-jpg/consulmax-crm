@@ -218,6 +218,10 @@ function specialInstallmentMonths(row: ProposalModelRow) {
   return first > 0 && regular > 0 && Math.abs(first - regular) > 0.01 ? 2 : 0;
 }
 
+function monthlyAnticipationValue(row: ProposalModelRow) {
+  return Math.max(0, parcelaInicial(row) - demaisParcelas(row));
+}
+
 function lancePago(row: ProposalModelRow) {
   return (
     onlyNumber(row.lance_ofertado_valor) ||
@@ -256,6 +260,10 @@ function baseInstallmentForMonth(row: ProposalModelRow, month: number, contempla
   const antecipParcelas = specialInstallmentMonths(row);
   const first = parcelaInicial(row);
 
+  if (contemplated && antecipParcelas > 0 && month <= antecipParcelas) {
+    return parcelaAposContemplacao(row) + monthlyAnticipationValue(row);
+  }
+
   if (antecipParcelas > 0 && month <= antecipParcelas && first > 0) return first;
   if (contemplated) return parcelaAposContemplacao(row);
 
@@ -280,7 +288,9 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   const contemplationMonth = Math.max(0, Math.round(onlyNumber(proposal.parcela_contemplacao)));
   const newTerm = Math.max(0, Math.round(onlyNumber(proposal.novo_prazo)));
   const saleTerm = Math.max(0, Math.round(onlyNumber(proposal.prazo_venda)));
-  const plannedMonths = Math.max(saleTerm, contemplationMonth + newTerm, 1);
+  const plannedMonths = contemplationMonth > 0 && newTerm > 0
+    ? contemplationMonth + newTerm
+    : Math.max(saleTerm, newTerm, 1);
   const bidPaid = lancePago(proposal);
   const initialBid = bidAtCredit(proposal, contractedCredit, contractedCredit);
 

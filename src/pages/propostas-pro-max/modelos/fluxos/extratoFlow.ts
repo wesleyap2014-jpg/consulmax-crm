@@ -19,6 +19,11 @@ export type ProposalModelRow = {
   lance_proprio_pct?: number | string | null;
   lance_ofertado_pct?: number | string | null;
   lance_percebido_pct?: number | string | null;
+  lance_base?: string | null;
+  ofert_base?: string | null;
+  embut_base?: string | null;
+  redutor_base?: string | null;
+  modelo_lance_base?: string | null;
   saldo_devedor_final?: number | string | null;
   prazo_venda?: number | string | null;
   novo_prazo?: number | string | null;
@@ -186,6 +191,39 @@ export function valorCategoria(row: ProposalModelRow) {
   return onlyNumber(row.valor_categoria) || creditoContratado(row);
 }
 
+function rowText(row: ProposalModelRow, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function baseUsesCategory(value: unknown) {
+  const normalized = normalizeText(value);
+  return (
+    normalized.includes("categoria") ||
+    normalized.includes("valor_categoria") ||
+    normalized.includes("valor categoria") ||
+    normalized.includes("parcela_termo") ||
+    normalized.includes("termo") ||
+    normalized.includes("taxa")
+  );
+}
+
+function categoryForCredit(row: ProposalModelRow, credit: number, contractedCredit: number) {
+  const savedCategory = valorCategoria(row);
+  if (savedCategory > 0 && contractedCredit > 0) return credit * (savedCategory / contractedCredit);
+
+  const adminTaxPct = normalizeFraction(row.adm_tax_pct);
+  const reserveTaxPct = normalizeFraction(row.fr_tax_pct);
+  return credit * (1 + adminTaxPct + reserveTaxPct);
+}
+
+function bidBaseValue(row: ProposalModelRow, baseKey: string, credit: number, contractedCredit: number) {
+  return baseUsesCategory(baseKey) ? categoryForCredit(row, credit, contractedCredit) : credit;
+}
+
 export function creditoLiquido(row: ProposalModelRow) {
   const novoCredito = onlyNumber(row.novo_credito);
   if (novoCredito > 0) return novoCredito;
@@ -234,23 +272,31 @@ function bidPctFromValue(value: unknown, base: number) {
 }
 
 function bidAtCredit(row: ProposalModelRow, credit: number, contractedCredit: number) {
+  const totalBaseKey = rowText(row, ["ofert_base", "lance_base", "modelo_lance_base"]);
+  const embeddedBaseKey = rowText(row, ["embut_base", "lance_base"]);
+  const originalTotalBase = bidBaseValue(row, totalBaseKey, contractedCredit, contractedCredit);
+  const originalEmbeddedBase = bidBaseValue(row, embeddedBaseKey, contractedCredit, contractedCredit);
+  const currentTotalBase = bidBaseValue(row, totalBaseKey, credit, contractedCredit);
+  const currentEmbeddedBase = bidBaseValue(row, embeddedBaseKey, credit, contractedCredit);
+
   const totalPct =
     normalizeFraction(row.lance_ofertado_pct) ||
-    bidPctFromValue(row.lance_ofertado_valor, contractedCredit);
+    bidPctFromValue(row.lance_ofertado_valor, originalTotalBase);
   const embeddedPct =
     normalizeFraction(row.lance_embutido_pct) ||
-    bidPctFromValue(row.lance_embutido_valor, contractedCredit);
+    bidPctFromValue(row.lance_embutido_valor, originalEmbeddedBase);
   const ownPct =
     normalizeFraction(row.lance_proprio_pct) ||
     Math.max(0, totalPct - embeddedPct) ||
-    bidPctFromValue(row.lance_proprio_valor, contractedCredit);
+    bidPctFromValue(row.lance_proprio_valor, originalTotalBase);
 
-  const total = credit * totalPct;
-  const embedded = total > 0 ? Math.min(total, credit * embeddedPct) : credit * embeddedPct;
-  const own = Math.max(0, total || credit * ownPct) - embedded;
+  const total = currentTotalBase * totalPct;
+  const embeddedValue = currentEmbeddedBase * embeddedPct;
+  const embedded = total > 0 ? Math.min(total, embeddedValue) : embeddedValue;
+  const own = total > 0 ? Math.max(0, total - embedded) : Math.max(0, currentTotalBase * ownPct);
 
   return {
-    total: total || embedded + Math.max(0, credit * ownPct),
+    total: total || embedded + own,
     embedded,
     own: Math.max(0, own),
   };

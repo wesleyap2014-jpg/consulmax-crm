@@ -46,6 +46,9 @@ type SimRow = {
   admin?: string | null;
   vendedor_id?: string | null;
   vendedor_nome?: string | null;
+  vendedor_telefone?: string | null;
+  vendedor_email?: string | null;
+  vendedor_foto_url?: string | null;
   unidade_id?: string | null;
   unidade_nome?: string | null;
   [key: string]: unknown;
@@ -56,6 +59,9 @@ type ProMaxMetadata = {
   administradora?: string | null;
   vendedor_id?: string | null;
   vendedor_nome?: string | null;
+  vendedor_telefone?: string | null;
+  vendedor_email?: string | null;
+  vendedor_foto_url?: string | null;
   unidade_id?: string | null;
   unidade_nome?: string | null;
   status?: string | null;
@@ -78,6 +84,7 @@ type UserDirectoryRow = {
   name: string;
   email?: string | null;
   phone?: string | null;
+  photoUrl?: string | null;
   unitId?: string | null;
   unitName?: string | null;
   role?: string | null;
@@ -499,7 +506,7 @@ export default function PropostasProMax() {
 
       const usersRes = await supabase
         .from("users")
-        .select("id,auth_user_id,nome,email,phone,telefone,unit_id,role,user_role,hierarchy_level,is_active,scopes")
+        .select("*")
         .eq("is_active", true)
         .order("nome", { ascending: true })
         .limit(1000);
@@ -523,6 +530,7 @@ export default function PropostasProMax() {
             name,
             email: firstText(item, ["email"]) || null,
             phone: firstText(item, ["phone", "telefone"]) || null,
+            photoUrl: firstText(item, ["avatar_url", "photo_url", "foto_url", "profile_photo_url", "image_url", "picture", "foto", "avatar"]) || null,
             unitId,
             unitName: resolvedUnitName,
             role,
@@ -622,6 +630,9 @@ export default function PropostasProMax() {
             administradora: adminName,
             vendedor_id: sellerId,
             vendedor_nome: metadata?.vendedor_nome || row.vendedor_nome || seller?.name || null,
+            vendedor_telefone: metadata?.vendedor_telefone || row.vendedor_telefone || seller?.phone || null,
+            vendedor_email: metadata?.vendedor_email || row.vendedor_email || seller?.email || null,
+            vendedor_foto_url: metadata?.vendedor_foto_url || row.vendedor_foto_url || seller?.photoUrl || null,
             unidade_id: metadata?.unidade_id || row.unidade_id || seller?.unitId || null,
             unidade_nome: metadata?.unidade_nome || row.unidade_nome || seller?.unitName || null,
             promax: metadata,

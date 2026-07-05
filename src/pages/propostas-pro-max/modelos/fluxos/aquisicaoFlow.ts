@@ -2,6 +2,7 @@ import {
   buildExtratoFlow,
   creditoLiquido,
   onlyNumber,
+  type ExtratoEventEntry,
   type ExtratoMonthEntry,
   type ProposalModelRow,
   type ProposalParams,
@@ -50,6 +51,10 @@ export type AcquisitionChartPoint = {
   consortium: number;
   sac: number;
   price: number;
+  consortiumDetail?: ExtratoMonthEntry;
+  consortiumEvents: ExtratoEventEntry[];
+  sacDetail?: FinancingMonthEntry;
+  priceDetail?: FinancingMonthEntry;
 };
 
 export type AcquisitionFlow = {
@@ -62,12 +67,16 @@ export type AcquisitionFlow = {
   sac: FinancingSummary;
   price: FinancingSummary;
   comparisons: AcquisitionComparison[];
+  consortiumEntries: ExtratoMonthEntry[];
+  consortiumEvents: ExtratoEventEntry[];
   chart: AcquisitionChartPoint[];
   financingRate: {
     label: string;
     source: string;
     monthlyRate: number;
     annualEquivalentRate: number;
+    isRealEstate: boolean;
+    termSource: string;
   };
   correction: {
     label: string;
@@ -107,6 +116,8 @@ function resolveFinancingRate(row: ProposalModelRow, params: ProposalParams) {
       source: "fin_imob_anual",
       monthlyRate,
       annualEquivalentRate: annualRate,
+      isRealEstate: true,
+      termSource: "Prazo imobiliário padrão",
     };
   }
 
@@ -116,6 +127,8 @@ function resolveFinancingRate(row: ProposalModelRow, params: ProposalParams) {
     source: "fin_veic_mensal",
     monthlyRate,
     annualEquivalentRate: Math.pow(1 + monthlyRate, 12) - 1,
+    isRealEstate: false,
+    termSource: "Prazo da proposta",
   };
 }
 
@@ -180,6 +193,10 @@ function monthEntries(entries: ReturnType<typeof buildExtratoFlow>["entries"]) {
   return entries.filter((entry): entry is ExtratoMonthEntry => entry.kind === "month");
 }
 
+function eventEntries(entries: ReturnType<typeof buildExtratoFlow>["entries"]) {
+  return entries.filter((entry): entry is ExtratoEventEntry => entry.kind === "event");
+}
+
 function comparisonFromFinancing(summary: FinancingSummary): AcquisitionComparison {
   return {
     label: summary.label,
@@ -197,6 +214,7 @@ function comparisonFromFinancing(summary: FinancingSummary): AcquisitionComparis
 export function buildAquisicaoFlow(proposal: ProposalModelRow, params: ProposalParams): AcquisitionFlow {
   const extrato = buildExtratoFlow(proposal, params);
   const consortiumMonths = monthEntries(extrato.entries);
+  const consortiumEvents = eventEntries(extrato.entries);
   const totalInstallmentsPaid = consortiumMonths.reduce((sum, entry) => sum + entry.installment, 0);
   const hasContemplation = onlyNumber(proposal.parcela_contemplacao) > 0;
   const ownBidPaid = hasContemplation ? extrato.summary.ownBidAtContemplation : 0;
@@ -209,8 +227,9 @@ export function buildAquisicaoFlow(proposal: ProposalModelRow, params: ProposalP
   const consortiumTotalCost = Math.max(0, consortiumTotalPaid - acquisitionValue);
   const planTerm = Math.max(1, extrato.summary.planTerm || extrato.totalMonths);
   const financingRate = resolveFinancingRate(proposal, params);
-  const sac = buildFinancingSummary("sac", acquisitionValue, planTerm, financingRate.monthlyRate, consortiumTotalPaid);
-  const price = buildFinancingSummary("price", acquisitionValue, planTerm, financingRate.monthlyRate, consortiumTotalPaid);
+  const financingTerm = financingRate.isRealEstate ? 420 : planTerm;
+  const sac = buildFinancingSummary("sac", acquisitionValue, financingTerm, financingRate.monthlyRate, consortiumTotalPaid);
+  const price = buildFinancingSummary("price", acquisitionValue, financingTerm, financingRate.monthlyRate, consortiumTotalPaid);
   const consortium: AcquisitionFlow["consortium"] = {
     label: "Consórcio",
     creditOrFinancedValue: acquisitionValue,
@@ -228,17 +247,32 @@ export function buildAquisicaoFlow(proposal: ProposalModelRow, params: ProposalP
   };
 
   const chartMonths = Math.max(extrato.totalMonths, sac.term, price.term);
-  const consortiumByMonth = new Map(consortiumMonths.map((entry) => [entry.month, entry.installment]));
-  const sacByMonth = new Map(sac.entries.map((entry) => [entry.month, entry.installment]));
-  const priceByMonth = new Map(price.entries.map((entry) => [entry.month, entry.installment]));
+  const consortiumByMonth = new Map(consortiumMonths.map((entry) => [entry.month, entry]));
+  const eventsByMonth = new Map<number, ExtratoEventEntry[]>();
+  const sacByMonth = new Map(sac.entries.map((entry) => [entry.month, entry]));
+  const priceByMonth = new Map(price.entries.map((entry) => [entry.month, entry]));
   const chart: AcquisitionChartPoint[] = [];
 
+  for (const event of consortiumEvents) {
+    const current = eventsByMonth.get(event.month) || [];
+    current.push(event);
+    eventsByMonth.set(event.month, current);
+  }
+
   for (let month = 1; month <= chartMonths; month += 1) {
+    const consortiumDetail = consortiumByMonth.get(month);
+    const sacDetail = sacByMonth.get(month);
+    const priceDetail = priceByMonth.get(month);
+
     chart.push({
       month,
-      consortium: consortiumByMonth.get(month) || 0,
-      sac: sacByMonth.get(month) || 0,
-      price: priceByMonth.get(month) || 0,
+      consortium: consortiumDetail?.installment || 0,
+      sac: sacDetail?.installment || 0,
+      price: priceDetail?.installment || 0,
+      consortiumDetail,
+      consortiumEvents: eventsByMonth.get(month) || [],
+      sacDetail,
+      priceDetail,
     });
   }
 
@@ -247,6 +281,8 @@ export function buildAquisicaoFlow(proposal: ProposalModelRow, params: ProposalP
     sac,
     price,
     comparisons: [consortium, comparisonFromFinancing(sac), comparisonFromFinancing(price)],
+    consortiumEntries: consortiumMonths,
+    consortiumEvents,
     chart,
     financingRate,
     correction: {

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound } from "lucide-react";
-import { buildAquisicaoFlow, type AcquisitionChartPoint, type AcquisitionComparison } from "./fluxos/aquisicaoFlow";
+import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
+import { buildAquisicaoFlow, type AcquisitionChartPoint, type AcquisitionComparison, type AcquisitionFlow, type FinancingSummary } from "./fluxos/aquisicaoFlow";
 import { buildExtratoFlow, onlyNumber, type ProposalModelRow, type ProposalParams } from "./fluxos/extratoFlow";
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
@@ -9,6 +9,8 @@ type ProMaxModelosHubProps = {
   proposal: ProposalModelRow;
   params: ProposalParams;
 };
+
+type AcquisitionDetailKey = "consortium" | "sac" | "price";
 
 const C = {
   ruby: "#A11C27",
@@ -124,15 +126,22 @@ function ComparisonCard({
   item,
   tone,
   highlight,
+  onOpen,
 }: {
   item: AcquisitionComparison;
   tone: "navy" | "ruby" | "gold";
   highlight?: string;
+  onOpen?: () => void;
 }) {
   const color = tone === "ruby" ? C.ruby : tone === "gold" ? C.gold : C.navy;
 
   return (
-    <div className="rounded-xl border bg-white p-5 shadow-sm">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="rounded-xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-300"
+      style={{ borderColor: onOpen ? `${color}55` : undefined }}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">{item.label}</div>
@@ -176,39 +185,49 @@ function ComparisonCard({
           <strong style={{ color }}>{brMoney(item.differenceVsConsortium)}</strong>
         </div>
       </div>
-    </div>
+      {onOpen ? (
+        <div className="mt-4 text-xs font-black uppercase tracking-[.1em]" style={{ color }}>
+          Ver detalhamento das parcelas
+        </div>
+      ) : null}
+    </button>
   );
 }
 
-function linePoints(points: AcquisitionChartPoint[], key: keyof Omit<AcquisitionChartPoint, "month">, maxY: number) {
-  const width = 760;
-  const height = 220;
-  const left = 76;
-  const top = 24;
-  const safeMax = Math.max(1, maxY);
-  const denominator = Math.max(1, points.length - 1);
+function chartX(index: number, total: number) {
+  const left = 74;
+  const width = 786;
+  return left + (index / Math.max(1, total - 1)) * width;
+}
 
+function chartY(value: number, maxY: number) {
+  const top = 28;
+  const height = 226;
+  return top + height - (value / Math.max(1, maxY)) * height;
+}
+
+function linePoints(points: AcquisitionChartPoint[], key: "consortium" | "sac" | "price", maxY: number) {
   return points
-    .map((point, index) => {
-      const x = left + (index / denominator) * width;
-      const y = top + height - (point[key] / safeMax) * height;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
+    .map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(point[key], maxY).toFixed(2)}`)
     .join(" ");
 }
 
 function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
+  const [hovered, setHovered] = useState<AcquisitionChartPoint | null>(null);
   const maxY = Math.max(
     1,
     ...points.flatMap((point) => [point.consortium, point.sac, point.price])
   );
   const grid = [0, 0.25, 0.5, 0.75, 1];
-  const width = 760;
-  const height = 220;
-  const left = 76;
-  const top = 24;
-  const bottom = top + height;
+  const left = 74;
+  const right = 860;
+  const top = 28;
+  const bottom = 254;
+  const bandWidth = Math.max(1.5, (right - left) / Math.max(1, points.length));
   const endMonth = points[points.length - 1]?.month || 1;
+  const hoveredIndex = hovered ? Math.max(0, hovered.month - 1) : -1;
+  const hoveredX = hovered ? chartX(hoveredIndex, points.length) : 0;
+  const tooltipLeft = hovered ? Math.min(72, Math.max(16, (hoveredX / 920) * 100)) : 50;
 
   return (
     <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
@@ -222,30 +241,225 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
           <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.navy }} /> Price</span>
         </div>
       </div>
-      <div className="overflow-x-auto p-4">
-        <svg viewBox="0 0 900 300" className="h-[300px] min-w-[860px] w-full" role="img" aria-label="Gráfico de evolução das parcelas mês a mês">
-          <rect x="0" y="0" width="900" height="300" fill="#ffffff" />
+      <div className="relative p-4">
+        {hovered ? (
+          <div
+            className="pointer-events-none absolute top-16 z-10 w-[280px] rounded-lg border bg-white p-3 text-xs shadow-xl"
+            style={{ left: `${tooltipLeft}%` }}
+          >
+            <div className="font-black" style={{ color: C.navy }}>Mês {hovered.month}</div>
+            <div className="mt-2 grid gap-1.5">
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Consórcio</span><strong style={{ color: C.gold }}>{brMoney(hovered.consortium)}</strong></div>
+              {hovered.consortiumDetail ? (
+                <>
+                  <div className="flex justify-between gap-3"><span className="text-slate-500">Crédito</span><strong>{brMoney(hovered.consortiumDetail.credit)}</strong></div>
+                  <div className="flex justify-between gap-3"><span className="text-slate-500">Saldo devedor</span><strong>{brMoney(hovered.consortiumDetail.endingBalance)}</strong></div>
+                </>
+              ) : null}
+              <div className="flex justify-between gap-3"><span className="text-slate-500">SAC</span><strong style={{ color: C.ruby }}>{brMoney(hovered.sac)}</strong></div>
+              {hovered.sacDetail ? (
+                <div className="flex justify-between gap-3"><span className="text-slate-500">Juros SAC</span><strong>{brMoney(hovered.sacDetail.interest)}</strong></div>
+              ) : null}
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Price</span><strong style={{ color: C.navy }}>{brMoney(hovered.price)}</strong></div>
+              {hovered.priceDetail ? (
+                <div className="flex justify-between gap-3"><span className="text-slate-500">Juros Price</span><strong>{brMoney(hovered.priceDetail.interest)}</strong></div>
+              ) : null}
+              {hovered.consortiumEvents.length ? (
+                <div className="mt-1 rounded bg-amber-50 p-2 font-semibold text-amber-900">
+                  {hovered.consortiumEvents.map((event) => event.title).join(" | ")}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        <svg
+          viewBox="0 0 920 330"
+          className="h-[340px] w-full"
+          role="img"
+          aria-label="Gráfico de evolução das parcelas mês a mês"
+          onMouseLeave={() => setHovered(null)}
+        >
+          <rect x="0" y="0" width="920" height="330" fill="#ffffff" />
           {grid.map((ratio) => {
-            const y = bottom - ratio * height;
+            const y = bottom - ratio * (bottom - top);
             return (
               <g key={ratio}>
-                <line x1={left} x2={left + width} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" />
+                <line x1={left} x2={right} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" />
                 <text x="62" y={y + 4} textAnchor="end" fontSize="11" fill="#64748B">
                   {compactMoney(maxY * ratio)}
                 </text>
               </g>
             );
           })}
-          <line x1={left} x2={left + width} y1={bottom} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
+          <line x1={left} x2={right} y1={bottom} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
           <line x1={left} x2={left} y1={top} y2={bottom} stroke="#CBD5E1" strokeWidth="1.5" />
-          <text x={left} y="272" fontSize="11" fill="#64748B">Mês 1</text>
-          <text x={left + width} y="272" textAnchor="end" fontSize="11" fill="#64748B">Mês {endMonth}</text>
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+            const month = Math.max(1, Math.round(1 + (endMonth - 1) * ratio));
+            const x = left + (right - left) * ratio;
+            return (
+              <g key={ratio}>
+                <line x1={x} x2={x} y1={bottom} y2={bottom + 5} stroke="#CBD5E1" strokeWidth="1" />
+                <text x={x} y="278" textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#64748B">
+                  Mês {month}
+                </text>
+              </g>
+            );
+          })}
 
           <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
           <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
           <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          {hovered ? (
+            <>
+              <line x1={hoveredX} x2={hoveredX} y1={top} y2={bottom} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth="1.5" />
+              <circle cx={hoveredX} cy={chartY(hovered.consortium, maxY)} r="4" fill={C.gold} />
+              <circle cx={hoveredX} cy={chartY(hovered.sac, maxY)} r="4" fill={C.ruby} />
+              <circle cx={hoveredX} cy={chartY(hovered.price, maxY)} r="4" fill={C.navy} />
+            </>
+          ) : null}
+          {points.map((point, index) => {
+            const x = chartX(index, points.length);
+            return (
+              <rect
+                key={point.month}
+                x={x - bandWidth / 2}
+                y={top}
+                width={bandWidth}
+                height={bottom - top}
+                fill="transparent"
+                pointerEvents="all"
+                onMouseEnter={() => setHovered(point)}
+                onMouseMove={() => setHovered(point)}
+              />
+            );
+          })}
         </svg>
       </div>
+    </div>
+  );
+}
+
+function DetailOverlay({
+  open,
+  acquisition,
+  onClose,
+}: {
+  open: AcquisitionDetailKey | null;
+  acquisition: AcquisitionFlow;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  const isConsortium = open === "consortium";
+  const financing: FinancingSummary | null = open === "sac" ? acquisition.sac : open === "price" ? acquisition.price : null;
+  const title = isConsortium ? "Base Pró Max - Detalhamento do Consórcio" : financing?.label || "Detalhamento";
+  const subtitle = isConsortium
+    ? "Parcelas projetadas pelo mesmo motor do Extrato, com crédito, saldo e eventos da estratégia."
+    : "Parcelas do financiamento com composição mensal de juros, amortização e saldo devedor.";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
+      <section className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+          <div>
+            <h3 className="text-xl font-black" style={{ color: C.navy }}>{title}</h3>
+            <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+            aria-label="Fechar detalhamento"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-3 border-b bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Metric
+            label={isConsortium ? "Crédito disponível" : "Valor financiado"}
+            value={brMoney(isConsortium ? acquisition.consortium.availableAtContemplation : financing?.financedValue || 0)}
+          />
+          <Metric
+            label="Prazo"
+            value={`${isConsortium ? acquisition.consortium.term : financing?.term || 0} meses`}
+            tone="gold"
+          />
+          <Metric
+            label="Parcela inicial"
+            value={brMoney(isConsortium ? acquisition.consortium.initialInstallment : financing?.initialInstallment || 0)}
+            tone="ruby"
+          />
+          <Metric
+            label="Total pago"
+            value={brMoney(isConsortium ? acquisition.consortium.totalPaid : financing?.totalPaid || 0)}
+          />
+        </div>
+
+        <div className="overflow-auto">
+          {isConsortium ? (
+            <table className="min-w-[1020px] w-full border-collapse text-sm">
+              <thead className="sticky top-0 bg-white text-xs uppercase tracking-[.08em] text-slate-500 shadow-sm">
+                <tr>
+                  <th className="p-3 text-left">Mês</th>
+                  <th className="p-3 text-right">Crédito</th>
+                  <th className="p-3 text-right">Saldo inicial</th>
+                  <th className="p-3 text-right">Parcela</th>
+                  <th className="p-3 text-right">Pago acumulado</th>
+                  <th className="p-3 text-right">Saldo final</th>
+                  <th className="p-3 text-left">Evento do Extrato</th>
+                </tr>
+              </thead>
+              <tbody>
+                {acquisition.consortiumEntries.map((entry) => {
+                  const events = acquisition.consortiumEvents.filter((event) => event.month === entry.month);
+                  return (
+                    <tr key={entry.month} className="border-t">
+                      <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
+                      <td className="p-3 text-right">{brMoney(entry.credit)}</td>
+                      <td className="p-3 text-right">{brMoney(entry.initialBalance)}</td>
+                      <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
+                      <td className="p-3 text-right">{brMoney(entry.payments)}</td>
+                      <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
+                        {brMoney(entry.endingBalance)}
+                      </td>
+                      <td className="max-w-[320px] p-3 text-xs text-slate-600">
+                        {events.length ? events.map((event) => `${event.title}: ${event.details.join(" | ")}`).join(" / ") : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <table className="min-w-[880px] w-full border-collapse text-sm">
+              <thead className="sticky top-0 bg-white text-xs uppercase tracking-[.08em] text-slate-500 shadow-sm">
+                <tr>
+                  <th className="p-3 text-left">Mês</th>
+                  <th className="p-3 text-right">Parcela</th>
+                  <th className="p-3 text-right">Juros</th>
+                  <th className="p-3 text-right">Amortização</th>
+                  <th className="p-3 text-right">Saldo devedor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(financing?.entries || []).map((entry) => (
+                  <tr key={entry.month} className="border-t">
+                    <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
+                    <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
+                    <td className="p-3 text-right">{brMoney(entry.interest)}</td>
+                    <td className="p-3 text-right">{brMoney(entry.amortization)}</td>
+                    <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
+                      {brMoney(entry.endingBalance)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -431,6 +645,7 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
 }
 
 function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
+  const [detailOpen, setDetailOpen] = useState<AcquisitionDetailKey | null>(null);
   const acquisition = useMemo(() => buildAquisicaoFlow(proposal, params), [proposal, params]);
   const { consortium, sac, price, financingRate, correction } = acquisition;
   const bestFinancingSavings = Math.max(sac.estimatedSavingsVsConsortium, price.estimatedSavingsVsConsortium);
@@ -444,12 +659,11 @@ function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
               <LineChart className="h-3.5 w-3.5" /> Aquisição
             </div>
             <h2 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>
-              Consórcio x financiamento na compra do bem
+              Consórcio x Financiamento
             </h2>
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Este modelo compara o fluxo da carta com financiamentos SAC e Price para o mesmo valor de aquisição.
-              A projeção do consórcio usa o mesmo motor do Extrato, preservando correção do crédito, lance, contemplação,
-              antecipações e novo prazo após contemplação.
+              Compare, de forma clara e estratégica, o custo e a evolução do consórcio frente às diferentes formas de
+              financiamento. Analise parcelas, custos totais e os benefícios do planejamento financeiro.
             </p>
           </div>
 
@@ -457,7 +671,9 @@ function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
             <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
               <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Taxa financiamento</div>
               <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>{brPercent(financingRate.monthlyRate)} a.m.</div>
-              <div className="text-xs text-slate-500">{financingRate.source} | equiv. {brPercent(financingRate.annualEquivalentRate)} a.a.</div>
+              <div className="text-xs text-slate-500">
+                {financingRate.source} | equiv. {brPercent(financingRate.annualEquivalentRate)} a.a. | {financingRate.termSource}
+              </div>
             </div>
             <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
               <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Correção consórcio</div>
@@ -469,9 +685,9 @@ function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
-        <ComparisonCard item={consortium} tone="gold" highlight="Base Pró Max" />
-        <ComparisonCard item={acquisition.comparisons[1]} tone="ruby" highlight="SAC" />
-        <ComparisonCard item={acquisition.comparisons[2]} tone="navy" highlight="Price" />
+        <ComparisonCard item={consortium} tone="gold" highlight="Base Pró Max" onOpen={() => setDetailOpen("consortium")} />
+        <ComparisonCard item={acquisition.comparisons[1]} tone="ruby" highlight="SAC" onOpen={() => setDetailOpen("sac")} />
+        <ComparisonCard item={acquisition.comparisons[2]} tone="navy" highlight="PRICE" onOpen={() => setDetailOpen("price")} />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[.85fr_1.15fr]">
@@ -548,6 +764,7 @@ function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
       </section>
 
       <ParcelEvolutionChart points={acquisition.chart} />
+      <DetailOverlay open={detailOpen} acquisition={acquisition} onClose={() => setDetailOpen(null)} />
     </div>
   );
 }

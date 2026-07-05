@@ -112,6 +112,8 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
     investmentUntilContemplation,
     adminTaxPct,
     reserveTaxPct,
+    planTerm,
+    consortiumMonthlyTaxPct,
   } = summary;
 
   const totalProjectionPages = Math.max(1, Math.ceil(flow.totalMonths / PROJECTION_PAGE_SIZE));
@@ -196,8 +198,8 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
               <strong className="text-right" style={{ color: C.navy }}>{brPercent(reserveTaxPct)}</strong>
             </div>
             <div className="flex justify-between gap-4">
-              <span className="text-slate-500">Taxa Mensalizada</span>
-              <strong className="text-right" style={{ color: C.navy }}>{brPercent(monthlyRate)}</strong>
+              <span className="text-slate-500">Taxa Mensalizada ({planTerm} meses)</span>
+              <strong className="text-right" style={{ color: C.navy }}>{brPercent(consortiumMonthlyTaxPct)}</strong>
             </div>
           </div>
         </div>

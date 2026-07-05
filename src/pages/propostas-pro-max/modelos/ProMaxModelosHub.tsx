@@ -221,6 +221,11 @@ function linePoints(points: AcquisitionChartPoint[], key: "consortium" | "sac" |
     .join(" ");
 }
 
+function lastRenderablePoint(points: AcquisitionChartPoint[], key: "consortium" | "sac" | "price") {
+  const source = key === "consortium" ? points.filter((point) => point.consortiumDetail) : points;
+  return source[source.length - 1] || null;
+}
+
 function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
   const [hovered, setHovered] = useState<AcquisitionChartPoint | null>(null);
   const rawMaxY = Math.max(
@@ -238,6 +243,20 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
   const hoveredIndex = hovered ? Math.max(0, hovered.month - 1) : -1;
   const hoveredX = hovered ? chartX(hoveredIndex, points.length) : 0;
   const tooltipLeft = hovered ? Math.min(78, Math.max(8, (hoveredX / 1600) * 100)) : 50;
+  const endLabels = [
+    { key: "consortium" as const, label: "Consórcio", color: C.gold },
+    { key: "sac" as const, label: "SAC", color: C.ruby },
+    { key: "price" as const, label: "PRICE", color: C.navy },
+  ].map((item) => {
+    const point = lastRenderablePoint(points, item.key);
+    const index = point ? points.findIndex((candidate) => candidate.month === point.month) : -1;
+    return {
+      ...item,
+      point,
+      x: index >= 0 ? chartX(index, points.length) : 0,
+      y: point ? chartY(point[item.key], maxY) : 0,
+    };
+  });
 
   return (
     <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
@@ -249,12 +268,12 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
           <div className="mt-1 text-xs font-semibold text-slate-500">Passe o cursor sobre os meses para ver os detalhes da projeção.</div>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-black">
-          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.gold }} /> Consórcio</span>
-          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.ruby }} /> SAC</span>
-          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-2.5 w-2.5 rounded-full" style={{ background: C.navy }} /> Price</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.gold }} /> Consórcio</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.ruby }} /> SAC</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="w-5 border-t-2 border-dashed" style={{ borderColor: C.navy }} /> Price</span>
         </div>
       </div>
-      <div className="relative p-4 md:p-5">
+      <div className="relative bg-transparent p-4 md:p-5">
         {hovered ? (
           <div
             className="pointer-events-none absolute top-16 z-10 w-[292px] rounded-xl border bg-white p-3 text-xs shadow-xl ring-1 ring-slate-900/5"
@@ -297,21 +316,16 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
           onMouseLeave={() => setHovered(null)}
         >
           <defs>
-            <linearGradient id="parcelChartBg" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="#F8FAFC" />
-              <stop offset="100%" stopColor="#FFFFFF" />
-            </linearGradient>
             <filter id="lineGlow" x="-10%" y="-20%" width="120%" height="140%">
               <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#0F172A" floodOpacity="0.12" />
             </filter>
           </defs>
-          <rect x="0" y="0" width="1600" height="320" fill="#ffffff" />
-          <rect x={left} y="18" width={right - left} height="252" rx="12" fill="url(#parcelChartBg)" stroke="#E2E8F0" />
+          <rect x="0" y="0" width="1600" height="320" fill="transparent" />
           {grid.map((ratio) => {
             const y = bottom - ratio * (bottom - top);
             return (
               <g key={ratio}>
-                <line x1={left + 12} x2={right - 12} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" strokeDasharray={ratio === 0 ? "0" : "3 5"} />
+                <line x1={left} x2={right} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" strokeDasharray={ratio === 0 ? "0" : "4 7"} />
                 <text x="78" y={y + 4} textAnchor="end" fontSize="11" fontWeight="700" fill="#64748B">
                   {axisMoney(maxY * ratio)}
                 </text>
@@ -333,8 +347,14 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
           })}
 
           <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
-          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
           <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
+          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="3.25" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8 8" filter="url(#lineGlow)" />
+          {endLabels.map((item) => item.point ? (
+            <g key={item.key} transform={`translate(${Math.min(item.x + 12, 1500)}, ${Math.max(32, Math.min(258, item.y))})`}>
+              <rect x="0" y="-13" width={item.key === "consortium" ? 78 : 48} height="22" rx="11" fill="#FFFFFF" stroke="#E2E8F0" />
+              <text x="10" y="2" fontSize="10" fontWeight="800" fill={item.color}>{item.label}</text>
+            </g>
+          ) : null)}
           {hovered ? (
             <>
               <line x1={hoveredX} x2={hoveredX} y1={top} y2={bottom} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth="1.5" />

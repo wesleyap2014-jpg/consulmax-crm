@@ -549,7 +549,7 @@ function DetailOverlay({
   );
 }
 
-function previdenciaLinePoints(points: PrevidenciaChartPoint[], key: "consortiumInstallment" | "monthlyIncome", maxY: number) {
+function previdenciaLinePoints(points: PrevidenciaChartPoint[], key: "consortiumInstallment" | "monthlyIncome" | "cdiNetBalance", maxY: number) {
   return points
     .map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(point[key], maxY).toFixed(2)}`)
     .join(" ");
@@ -560,7 +560,7 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
   const points = flow.chart;
   const rawMaxY = Math.max(
     1,
-    ...points.flatMap((point) => [point.consortiumInstallment, point.monthlyIncome])
+    ...points.flatMap((point) => [point.consortiumInstallment, point.monthlyIncome, point.cdiNetBalance])
   );
   const maxY = niceChartMax(rawMaxY);
   const grid = [0, 0.25, 0.5, 0.75, 1];
@@ -588,6 +588,7 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
         <div className="flex flex-wrap gap-2 text-xs font-black">
           <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.gold }} /> Parcela consórcio</span>
           <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.navy }} /> Rentabilidade</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="w-5 border-t-[3px] border-dashed" style={{ borderColor: C.ruby }} /> CDI acumulado</span>
         </div>
       </div>
       <div className="relative bg-transparent p-4 md:p-5">
@@ -605,7 +606,8 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
               <div className="flex justify-between gap-3"><span className="text-slate-500">Rentabilidade no mês</span><strong style={{ color: C.navy }}>{brMoney(hovered.monthlyIncome)}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">Rentabilidade acumulada</span><strong>{brMoney(hovered.accumulatedIncome)}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">Patrimônio líquido</span><strong>{brMoney(hovered.netBalance)}</strong></div>
-              <div className="flex justify-between gap-3"><span className="text-slate-500">CDI mês a mês líquido</span><strong>{brMoney(hovered.cdiNetBalance)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">CDI acumulado líquido</span><strong style={{ color: C.ruby }}>{brMoney(hovered.cdiNetBalance)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">IR CDI acumulado</span><strong>{brMoney(hovered.cdiTax)}</strong></div>
             </div>
           </div>
         ) : null}
@@ -650,13 +652,16 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
 
           <polyline points={previdenciaLinePoints(points, "consortiumInstallment", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
           <polyline points={previdenciaLinePoints(points, "monthlyIncome", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={previdenciaLinePoints(points, "cdiNetBalance", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
           <polyline points={previdenciaLinePoints(points, "consortiumInstallment", maxY)} fill="none" stroke={C.gold} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
           <polyline points={previdenciaLinePoints(points, "monthlyIncome", maxY)} fill="none" stroke={C.navy} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
+          <polyline points={previdenciaLinePoints(points, "cdiNetBalance", maxY)} fill="none" stroke={C.ruby} strokeWidth="4.25" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="14 10" filter="url(#previdenciaLineGlow)" />
           {hovered ? (
             <>
               <line x1={hoveredX} x2={hoveredX} y1={top} y2={bottom} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth="1.5" />
               <circle cx={hoveredX} cy={chartY(hovered.consortiumInstallment, maxY)} r="5.5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2.25" />
               <circle cx={hoveredX} cy={chartY(hovered.monthlyIncome, maxY)} r="5.5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2.25" />
+              <circle cx={hoveredX} cy={chartY(hovered.cdiNetBalance, maxY)} r="5.5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2.25" />
             </>
           ) : null}
           {points.map((point, index) => {
@@ -710,9 +715,9 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
               <div className="text-xs text-slate-500">{cdi.label} | {brPercent(cdi.annualRate)} a.a.</div>
             </div>
             <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
-              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">IR estimado</div>
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">IR referência gross up</div>
               <div className="mt-1 text-xl font-black" style={{ color: C.gold }}>{brPercent(tax.rate)}</div>
-              <div className="text-xs text-slate-500">Tabela regressiva sobre rendimentos</div>
+              <div className="text-xs text-slate-500">Consórcio isento | referência renda fixa</div>
             </div>
           </div>
         </div>
@@ -720,8 +725,8 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Crédito líquido aplicado" value={brMoney(summary.capitalAtContemplation)} tone="gold" />
-        <Metric label="Patrimônio líquido final" value={brMoney(summary.finalNetBalance)} />
-        <Metric label="Rentabilidade líquida" value={brMoney(summary.netIncome)} tone="ruby" />
+        <Metric label="Patrimônio final isento" value={brMoney(summary.finalNetBalance)} />
+        <Metric label="Rentabilidade isenta" value={brMoney(summary.netIncome)} tone="ruby" />
         <Metric label="Investimento total" value={brMoney(summary.totalInvested)} />
         <Metric label="TIR mensal" value={brPercent(summary.monthlyIrr)} tone="ruby" />
         <Metric label="ROI" value={brPercent(summary.roi)} tone="gold" />
@@ -749,7 +754,7 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
               <strong style={{ color: C.gold }}>{brMoney(summary.grossIncome)}</strong>
             </div>
             <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">IR sobre rendimento</span>
+              <span className="text-slate-500">IR equivalente para gross up</span>
               <strong style={{ color: C.ruby }}>{brMoney(tax.amount)}</strong>
             </div>
             <div className="flex justify-between gap-4">
@@ -783,7 +788,7 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
                   <td className="p-3 text-right">{brMoney(summary.capitalAtContemplation)}</td>
                   <td className="p-3 text-right">{brMoney(summary.finalGrossBalance)}</td>
                   <td className="p-3 text-right">{brMoney(summary.grossIncome)}</td>
-                  <td className="p-3 text-right">{brMoney(tax.amount)}</td>
+                  <td className="p-3 text-right">{brMoney(0)}</td>
                   <td className="p-3 text-right font-black" style={{ color: C.navy }}>{brMoney(summary.finalNetBalance)}</td>
                 </tr>
                 <tr className="border-t">

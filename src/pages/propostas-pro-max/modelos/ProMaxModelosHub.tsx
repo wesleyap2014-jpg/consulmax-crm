@@ -257,6 +257,19 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
       y: point ? chartY(point[item.key], maxY) : 0,
     };
   });
+  const priceSegments = points.slice(0, -1).map((point, index) => {
+    const next = points[index + 1];
+    const dashOn = index % 6 < 4;
+    if (!next || !dashOn) return null;
+
+    return {
+      key: `${point.month}-${next.month}`,
+      x1: chartX(index, points.length),
+      y1: chartY(point.price, maxY),
+      x2: chartX(index + 1, points.length),
+      y2: chartY(next.price, maxY),
+    };
+  }).filter(Boolean) as Array<{ key: string; x1: number; y1: number; x2: number; y2: number }>;
 
   return (
     <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
@@ -348,10 +361,33 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
 
           <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
           <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="16 10" />
           <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1 10" filter="url(#lineGlow)" opacity="1" />
           <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" opacity="1" />
-          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="4.5" strokeLinecap="butt" strokeLinejoin="round" strokeDasharray="18 10" filter="url(#lineGlow)" opacity="1" />
+          {priceSegments.map((segment) => (
+            <line
+              key={`price-shadow-${segment.key}`}
+              x1={segment.x1}
+              y1={segment.y1}
+              x2={segment.x2}
+              y2={segment.y2}
+              stroke="#FFFFFF"
+              strokeWidth="9"
+              strokeLinecap="round"
+            />
+          ))}
+          {priceSegments.map((segment) => (
+            <line
+              key={`price-${segment.key}`}
+              x1={segment.x1}
+              y1={segment.y1}
+              x2={segment.x2}
+              y2={segment.y2}
+              stroke={C.navy}
+              strokeWidth="5"
+              strokeLinecap="round"
+              opacity="1"
+            />
+          ))}
           {endLabels.map((item) => item.point ? (
             <g key={item.key} transform={`translate(${Math.min(item.x + 12, 1500)}, ${Math.max(32, Math.min(258, item.y))})`}>
               <rect x="0" y="-13" width={item.key === "consortium" ? 78 : 48} height="22" rx="11" fill="#FFFFFF" stroke="#E2E8F0" />

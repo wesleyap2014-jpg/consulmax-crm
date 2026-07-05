@@ -207,11 +207,10 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
     }
 
     const previdenciaTaxRate = taxRateByMonths(Math.max(1, month - contemplationMonth));
-    const previdenciaTax = Math.max(0, accumulatedIncome * previdenciaTaxRate);
     const cdiComparison = calculateLotsNet(monthlyInvestingLots, month);
 
     finalGrossBalance = previdenciaBalance;
-    finalNetBalance = Math.max(0, previdenciaBalance - previdenciaTax);
+    finalNetBalance = previdenciaBalance;
 
     chart.push({
       month,
@@ -230,8 +229,8 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
   const finalTaxRate = taxRateByMonths(Math.max(1, remainingMonths));
   const grossIncome = Math.max(0, finalGrossBalance - capitalAtContemplation);
   const taxAmount = grossIncome * finalTaxRate;
-  const netIncome = Math.max(0, grossIncome - taxAmount);
-  finalNetBalance = Math.max(0, finalGrossBalance - taxAmount);
+  const netIncome = grossIncome;
+  finalNetBalance = finalGrossBalance;
   cashFlows[totalMonths] += finalNetBalance;
 
   const monthlyIrr = calculateIrr(cashFlows);

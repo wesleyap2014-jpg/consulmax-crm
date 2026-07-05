@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, TrendingUp } from "lucide-react";
+import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound } from "lucide-react";
 import { buildExtratoFlow, onlyNumber, type ProposalModelRow, type ProposalParams } from "./fluxos/extratoFlow";
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
@@ -46,6 +46,41 @@ function getAdminName(row: ProposalModelRow) {
   return row.promax?.administradora || row.administradora || "Não informado";
 }
 
+function rowText(row: ProposalModelRow, keys: string[], fallback = "") {
+  for (const key of keys) {
+    const value = key.startsWith("promax.")
+      ? row.promax?.[key.replace("promax.", "") as keyof NonNullable<ProposalModelRow["promax"]>]
+      : row[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+
+function phoneLabel(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return value || "-";
+}
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "CX";
+}
+
+function getConsultant(row: ProposalModelRow) {
+  const name = rowText(row, ["promax.vendedor_nome", "vendedor_nome", "consultor_nome", "seller_name"], "Consultor Consulmax");
+  const phone = rowText(row, ["promax.vendedor_telefone", "vendedor_telefone", "vendedor_whatsapp", "phone", "telefone"]);
+  const email = rowText(row, ["promax.vendedor_email", "vendedor_email", "email"]);
+  const photoUrl = rowText(row, ["promax.vendedor_foto_url", "vendedor_foto_url", "avatar_url", "photo_url", "foto_url"]);
+
+  return { name, phone, email, photoUrl };
+}
+
 function Metric({ label, value, tone = "navy" }: { label: string; value: string; tone?: "navy" | "ruby" | "gold" }) {
   const color = tone === "ruby" ? C.ruby : tone === "gold" ? C.gold : C.navy;
   return (
@@ -62,16 +97,14 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
   const { index, monthlyRate, summary } = flow;
   const annualRate = index.annualRate;
   const {
-    baseCredit,
     contractedCredit,
-    firstInstallment,
-    nextInstallments,
-    debt,
-    correctedBaseCredit,
-    correctedContractedCredit,
-    correctedLiquidCredit,
-    correctedDebt,
-    correctionValue,
+    creditAtContemplation,
+    embeddedBidAtContemplation,
+    availableAtContemplation,
+    ownBidAtContemplation,
+    investmentUntilContemplation,
+    adminTaxPct,
+    reserveTaxPct,
   } = summary;
 
   const totalProjectionPages = Math.max(1, Math.ceil(flow.totalMonths / PROJECTION_PAGE_SIZE));
@@ -91,11 +124,12 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
               <FileSpreadsheet className="h-3.5 w-3.5" /> Extrato da carta
             </div>
             <h2 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>
-              Reajuste estimado da proposta #{proposal.code}
+              Entenda a evolução do seu investimento
             </h2>
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Primeiro modelo visual da Propostas Pró Max: mostra a carta atual, o índice de correção aplicado
-              e a projeção de crédito, saldo, parcela e pagamentos ao longo do prazo projetado.
+              Aqui você acompanha, mês a mês, quanto já terá investido, a projeção de correção do seu crédito,
+              a evolução das parcelas e os eventos importantes da estratégia, como contemplação e reajustes.
+              A ideia é deixar claro como a carta se comporta ao longo do tempo e qual será sua posição em cada etapa.
             </p>
           </div>
           <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
@@ -106,25 +140,18 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
         </div>
       </section>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <Metric label="Carta atual" value={brMoney(baseCredit)} />
-        <Metric label="Carta corrigida 12m" value={brMoney(correctedBaseCredit)} tone="ruby" />
-        <Metric label="Reajuste estimado" value={brMoney(correctionValue)} tone="gold" />
-        <Metric label="Crédito líquido corrigido" value={brMoney(correctedLiquidCredit)} />
-      </div>
-
       <section className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]">
         <div className="rounded-xl border bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-            <LineChart className="h-4 w-4" /> Leitura comercial do reajuste
+            <LineChart className="h-4 w-4" /> Resumo da Proposta
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <Metric label="Crédito contratado" value={brMoney(contractedCredit)} />
-            <Metric label="Crédito contratado corrigido" value={brMoney(correctedContractedCredit)} tone="ruby" />
-            <Metric label="Parcela inicial atual" value={brMoney(firstInstallment)} />
-            <Metric label="Demais parcelas corrigidas" value={brMoney(nextInstallments * (1 + annualRate))} tone="gold" />
-            <Metric label="Saldo devedor base" value={brMoney(debt)} />
-            <Metric label="Saldo devedor corrigido" value={brMoney(correctedDebt)} tone="ruby" />
+            <Metric label="Crédito na contemplação" value={brMoney(creditAtContemplation)} tone="ruby" />
+            <Metric label="Lance embutido na contemplação" value={brMoney(embeddedBidAtContemplation)} tone="gold" />
+            <Metric label="Disponível na contemplação" value={brMoney(availableAtContemplation)} />
+            <Metric label="Lance próprio na contemplação" value={brMoney(ownBidAtContemplation)} tone="ruby" />
+            <Metric label="Investimento até a contemplação" value={brMoney(investmentUntilContemplation)} tone="gold" />
           </div>
         </div>
 
@@ -149,9 +176,21 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
               <span className="text-slate-500">Tabela/grupo</span>
               <strong className="text-right" style={{ color: C.navy }}>{proposal.nome_tabela || proposal.grupo || "-"}</strong>
             </div>
-            <div className="flex justify-between gap-4">
+            <div className="flex justify-between gap-4 border-b pb-2">
               <span className="text-slate-500">Mês contemplação</span>
               <strong className="text-right" style={{ color: C.navy }}>{proposal.parcela_contemplacao || "-"}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Taxa de Administração</span>
+              <strong className="text-right" style={{ color: C.navy }}>{brPercent(adminTaxPct)}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Fundo Reserva</span>
+              <strong className="text-right" style={{ color: C.navy }}>{brPercent(reserveTaxPct)}</strong>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">Taxa Mensalizada</span>
+              <strong className="text-right" style={{ color: C.navy }}>{brPercent(monthlyRate)}</strong>
             </div>
           </div>
         </div>
@@ -247,6 +286,7 @@ function PlaceholderModel({ model }: { model: (typeof MODELS)[number] }) {
 export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubProps) {
   const [activeModel, setActiveModel] = useState<ModelKey>("extrato");
   const model = MODELS.find((item) => item.key === activeModel) || MODELS[0];
+  const consultant = getConsultant(proposal);
 
   return (
     <div className="space-y-4">
@@ -255,19 +295,43 @@ export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubP
         style={{ background: "linear-gradient(135deg, #1E293F 0%, #A11C27 100%)", borderColor: "rgba(255,255,255,.22)" }}
       >
         <div className="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
-        <div className="relative z-[1] flex flex-col gap-3 text-white md:flex-row md:items-end md:justify-between">
+        <div className="relative z-[1] flex flex-col gap-5 text-white lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[.12em]">
               <TrendingUp className="h-3.5 w-3.5" /> Modelos Pró Max
             </div>
-            <h1 className="mt-3 text-2xl font-black md:text-4xl">Ambiente da proposta #{proposal.code}</h1>
+            <h1 className="mt-3 max-w-4xl text-2xl font-black md:text-4xl">
+              Proposta de investimento especialmente desenhada para {proposal.lead_nome || "você"}
+            </h1>
             <p className="mt-2 max-w-3xl text-sm text-white/78">
-              Escolha o modelo que será montado para o cliente no link público. O Extrato já calcula a correção da carta.
+              Uma leitura visual da estratégia, com números organizados para facilitar a decisão e mostrar o caminho até a contemplação.
             </p>
           </div>
-          <div className="rounded-lg border border-white/20 bg-white/95 px-4 py-3 text-slate-900">
-            <div className="text-xs font-semibold text-slate-500">Lead</div>
-            <div className="text-sm font-black" style={{ color: C.navy }}>{proposal.lead_nome || "Lead não informado"}</div>
+          <div className="w-full rounded-lg border border-white/20 bg-white/95 p-4 text-slate-900 shadow-sm lg:max-w-sm">
+            <div className="flex items-center gap-3">
+              {consultant.photoUrl ? (
+                <img
+                  src={consultant.photoUrl}
+                  alt={consultant.name}
+                  className="h-14 w-14 rounded-full object-cover ring-2 ring-white"
+                />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-full font-black text-white" style={{ background: C.navy }}>
+                  {initials(consultant.name)}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-[.08em] text-slate-500">Consultor</div>
+                <div className="truncate text-sm font-black" style={{ color: C.navy }}>{consultant.name}</div>
+                <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-slate-600">
+                  {consultant.phone ? <Phone className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
+                  {consultant.phone ? phoneLabel(consultant.phone) : consultant.email || "Atendimento Consulmax"}
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-slate-600">
+              Especialista Consulmax responsável por conduzir sua estratégia com clareza, segurança e foco no melhor aproveitamento da carta.
+            </p>
           </div>
         </div>
       </section>

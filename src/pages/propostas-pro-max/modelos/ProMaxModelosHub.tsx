@@ -269,8 +269,8 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-black">
           <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.gold }} /> Consórcio</span>
-          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.ruby }} /> SAC</span>
-          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="w-5 border-t-2 border-dashed" style={{ borderColor: C.navy }} /> Price</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="w-5 border-t-[3px] border-dotted" style={{ borderColor: C.ruby }} /> SAC</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="w-5 border-t-[3px] border-dashed" style={{ borderColor: C.navy }} /> Price</span>
         </div>
       </div>
       <div className="relative bg-transparent p-4 md:p-5">
@@ -346,9 +346,12 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
             );
           })}
 
-          <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
-          <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" />
-          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="3.25" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8 8" filter="url(#lineGlow)" />
+          <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="16 10" />
+          <polyline points={linePoints(points, "sac", maxY)} fill="none" stroke={C.ruby} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1 10" filter="url(#lineGlow)" opacity="1" />
+          <polyline points={linePoints(points, "consortium", maxY)} fill="none" stroke={C.gold} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#lineGlow)" opacity="1" />
+          <polyline points={linePoints(points, "price", maxY)} fill="none" stroke={C.navy} strokeWidth="4.5" strokeLinecap="butt" strokeLinejoin="round" strokeDasharray="18 10" filter="url(#lineGlow)" opacity="1" />
           {endLabels.map((item) => item.point ? (
             <g key={item.key} transform={`translate(${Math.min(item.x + 12, 1500)}, ${Math.max(32, Math.min(258, item.y))})`}>
               <rect x="0" y="-13" width={item.key === "consortium" ? 78 : 48} height="22" rx="11" fill="#FFFFFF" stroke="#E2E8F0" />
@@ -359,8 +362,8 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
             <>
               <line x1={hoveredX} x2={hoveredX} y1={top} y2={bottom} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth="1.5" />
               {hovered.consortiumDetail ? <circle cx={hoveredX} cy={chartY(hovered.consortium, maxY)} r="5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2" /> : null}
-              <circle cx={hoveredX} cy={chartY(hovered.sac, maxY)} r="5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2" />
-              <circle cx={hoveredX} cy={chartY(hovered.price, maxY)} r="5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2" />
+              <circle cx={hoveredX} cy={chartY(hovered.sac, maxY)} r="5.5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2.25" />
+              <circle cx={hoveredX} cy={chartY(hovered.price, maxY)} r="5.5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2.25" />
             </>
           ) : null}
           {points.map((point, index) => {

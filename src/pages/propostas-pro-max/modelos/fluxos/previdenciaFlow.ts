@@ -242,7 +242,6 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
   const monthlyIrr = calculateIrr(cashFlows);
   const roi = totalInvested > 0 ? netIncome / totalInvested : 0;
   const monthlyReturn = totalMonths > 0 ? Math.pow(1 + roi, 1 / totalMonths) - 1 : 0;
-  const cdiPercent = cdiMonthlyRate > 0 ? monthlyReturn / cdiMonthlyRate : 0;
   const grossUpIncome = finalTaxRate < 1 ? netIncome / (1 - finalTaxRate) : netIncome;
   const taxAmount = Math.max(0, grossUpIncome - netIncome);
   const grossUpCapital = capitalAtContemplation + grossUpIncome;
@@ -250,6 +249,7 @@ export function buildPrevidenciaFlow(proposal: ProposalModelRow, params: Proposa
     capitalAtContemplation > 0 && totalMonths > 0
       ? Math.pow(grossUpCapital / capitalAtContemplation, 1 / totalMonths) - 1
       : 0;
+  const cdiPercent = cdiMonthlyRate > 0 ? grossUpMonthlyRate / cdiMonthlyRate : 0;
   const cdiComparison = calculateLotsNet(monthlyInvestingLots, totalMonths);
 
   return {

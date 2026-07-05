@@ -549,20 +549,30 @@ function DetailOverlay({
   );
 }
 
-function previdenciaLinePoints(points: PrevidenciaChartPoint[], key: "consortiumInstallment" | "monthlyIncome" | "cdiNetBalance", maxY: number) {
+function previdenciaLinePoints(
+  points: PrevidenciaChartPoint[],
+  key: "consortiumInstallment" | "monthlyIncome" | "cdiNetBalance" | "consortiumCapital",
+  maxY: number,
+  yForValue = chartY
+) {
   return points
-    .map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(point[key], maxY).toFixed(2)}`)
+    .map((point, index) => `${chartX(index, points.length).toFixed(2)},${yForValue(point[key], maxY).toFixed(2)}`)
     .join(" ");
 }
 
 function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
   const [hovered, setHovered] = useState<PrevidenciaChartPoint | null>(null);
   const points = flow.chart;
-  const rawMaxY = Math.max(
+  const rawCapitalMax = Math.max(
     1,
-    ...points.flatMap((point) => [point.consortiumInstallment, point.monthlyIncome, point.cdiNetBalance])
+    ...points.flatMap((point) => [point.cdiNetBalance, point.consortiumCapital])
   );
-  const maxY = niceChartMax(rawMaxY);
+  const rawMonthlyMax = Math.max(
+    1,
+    ...points.flatMap((point) => [point.consortiumInstallment, point.monthlyIncome])
+  );
+  const capitalMaxY = niceChartMax(rawCapitalMax);
+  const monthlyMaxY = niceChartMax(rawMonthlyMax);
   const grid = [0, 0.25, 0.5, 0.75, 1];
   const left = 92;
   const right = 1532;
@@ -586,8 +596,9 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-black">
-          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.gold }} /> Parcela consórcio</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="w-5 border-t-[3px] border-dotted" style={{ borderColor: C.gold }} /> Parcela consórcio</span>
           <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.navy }} /> Rentabilidade</span>
+          <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="h-0.5 w-5 rounded-full" style={{ background: C.gold }} /> Capital consórcio</span>
           <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 shadow-sm"><i className="w-5 border-t-[3px] border-dashed" style={{ borderColor: C.ruby }} /> CDI acumulado</span>
         </div>
       </div>
@@ -605,7 +616,7 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
               <div className="flex justify-between gap-3"><span className="text-slate-500">Parcela consórcio</span><strong style={{ color: C.gold }}>{brMoney(hovered.consortiumInstallment)}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">Rentabilidade no mês</span><strong style={{ color: C.navy }}>{brMoney(hovered.monthlyIncome)}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">Rentabilidade acumulada</span><strong>{brMoney(hovered.accumulatedIncome)}</strong></div>
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Patrimônio líquido</span><strong>{brMoney(hovered.netBalance)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Capital com consórcio</span><strong style={{ color: C.gold }}>{brMoney(hovered.consortiumCapital)}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">CDI acumulado líquido</span><strong style={{ color: C.ruby }}>{brMoney(hovered.cdiNetBalance)}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">IR CDI acumulado</span><strong>{brMoney(hovered.cdiTax)}</strong></div>
             </div>
@@ -631,7 +642,10 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
               <g key={ratio}>
                 <line x1={left} x2={right} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" strokeDasharray={ratio === 0 ? "0" : "4 7"} />
                 <text x="78" y={y + 4} textAnchor="end" fontSize="11" fontWeight="700" fill="#64748B">
-                  {axisMoney(maxY * ratio)}
+                  {axisMoney(capitalMaxY * ratio)}
+                </text>
+                <text x="1546" y={y + 4} textAnchor="start" fontSize="11" fontWeight="700" fill="#64748B">
+                  {axisMoney(monthlyMaxY * ratio)}
                 </text>
               </g>
             );
@@ -650,18 +664,21 @@ function PrevidenciaChart({ flow }: { flow: PrevidenciaFlow }) {
             );
           })}
 
-          <polyline points={previdenciaLinePoints(points, "consortiumInstallment", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={previdenciaLinePoints(points, "monthlyIncome", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={previdenciaLinePoints(points, "cdiNetBalance", maxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={previdenciaLinePoints(points, "consortiumInstallment", maxY)} fill="none" stroke={C.gold} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
-          <polyline points={previdenciaLinePoints(points, "monthlyIncome", maxY)} fill="none" stroke={C.navy} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
-          <polyline points={previdenciaLinePoints(points, "cdiNetBalance", maxY)} fill="none" stroke={C.ruby} strokeWidth="4.25" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="14 10" filter="url(#previdenciaLineGlow)" />
+          <polyline points={previdenciaLinePoints(points, "consortiumInstallment", monthlyMaxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={previdenciaLinePoints(points, "monthlyIncome", monthlyMaxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={previdenciaLinePoints(points, "consortiumCapital", capitalMaxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={previdenciaLinePoints(points, "cdiNetBalance", capitalMaxY)} fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={previdenciaLinePoints(points, "consortiumInstallment", monthlyMaxY)} fill="none" stroke={C.gold} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1 9" filter="url(#previdenciaLineGlow)" />
+          <polyline points={previdenciaLinePoints(points, "monthlyIncome", monthlyMaxY)} fill="none" stroke={C.navy} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
+          <polyline points={previdenciaLinePoints(points, "consortiumCapital", capitalMaxY)} fill="none" stroke={C.gold} strokeWidth="4.75" strokeLinecap="round" strokeLinejoin="round" filter="url(#previdenciaLineGlow)" />
+          <polyline points={previdenciaLinePoints(points, "cdiNetBalance", capitalMaxY)} fill="none" stroke={C.ruby} strokeWidth="4.25" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="14 10" filter="url(#previdenciaLineGlow)" />
           {hovered ? (
             <>
               <line x1={hoveredX} x2={hoveredX} y1={top} y2={bottom} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth="1.5" />
-              <circle cx={hoveredX} cy={chartY(hovered.consortiumInstallment, maxY)} r="5.5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2.25" />
-              <circle cx={hoveredX} cy={chartY(hovered.monthlyIncome, maxY)} r="5.5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2.25" />
-              <circle cx={hoveredX} cy={chartY(hovered.cdiNetBalance, maxY)} r="5.5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2.25" />
+              <circle cx={hoveredX} cy={chartY(hovered.consortiumInstallment, monthlyMaxY)} r="5.5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2.25" />
+              <circle cx={hoveredX} cy={chartY(hovered.monthlyIncome, monthlyMaxY)} r="5.5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2.25" />
+              <circle cx={hoveredX} cy={chartY(hovered.consortiumCapital, capitalMaxY)} r="5.5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2.25" />
+              <circle cx={hoveredX} cy={chartY(hovered.cdiNetBalance, capitalMaxY)} r="5.5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2.25" />
             </>
           ) : null}
           {points.map((point, index) => {

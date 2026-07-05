@@ -117,6 +117,8 @@ export type ExtratoFlow = {
     investmentUntilContemplation: number;
     adminTaxPct: number;
     reserveTaxPct: number;
+    planTerm: number;
+    consortiumMonthlyTaxPct: number;
   };
 };
 
@@ -334,6 +336,8 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   const contemplationMonth = Math.max(0, Math.round(onlyNumber(proposal.parcela_contemplacao)));
   const newTerm = Math.max(0, Math.round(onlyNumber(proposal.novo_prazo)));
   const saleTerm = Math.max(0, Math.round(onlyNumber(proposal.prazo_venda)));
+  const planTerm = Math.max(1, saleTerm || contemplationMonth + newTerm || newTerm || 1);
+  const consortiumMonthlyTaxPct = totalTaxPct / planTerm;
   const plannedMonths = contemplationMonth > 0 && newTerm > 0
     ? contemplationMonth + newTerm
     : Math.max(saleTerm, newTerm, 1);
@@ -472,6 +476,8 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       investmentUntilContemplation,
       adminTaxPct,
       reserveTaxPct,
+      planTerm,
+      consortiumMonthlyTaxPct,
     },
   };
 }

@@ -750,6 +750,7 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
         <Metric label="Rentabilidade a.m." value={brPercent(summary.monthlyReturn)} />
         <Metric label="% do CDI mensal" value={brPercent(summary.cdiPercent)} />
         <Metric label="Gross up mensal" value={brPercent(tax.grossUpMonthlyRate)} tone="ruby" />
+        <Metric label="Capital bruto equivalente" value={brMoney(tax.grossUpCapital)} tone="gold" />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[.9fr_1.1fr]">
@@ -774,8 +775,12 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
               <span className="text-slate-500">IR equivalente para gross up</span>
               <strong style={{ color: C.ruby }}>{brMoney(tax.amount)}</strong>
             </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Rendimento bruto necessário</span>
+              <strong style={{ color: C.gold }}>{brMoney(tax.grossUpIncome)}</strong>
+            </div>
             <div className="flex justify-between gap-4">
-              <span className="text-slate-500">TIR anual equivalente</span>
+              <span className="text-slate-500">Rentabilidade anual equivalente</span>
               <strong style={{ color: C.navy }}>{brPercent(summary.annualIrr)}</strong>
             </div>
           </div>
@@ -784,7 +789,7 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
         <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
           <div className="border-b px-5 py-4">
             <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-              <FileSpreadsheet className="h-4 w-4" /> Comparativo no CDI
+              <FileSpreadsheet className="h-4 w-4" /> Comparativo
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -801,7 +806,7 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
               </thead>
               <tbody>
                 <tr className="border-t">
-                  <td className="p-3 font-black" style={{ color: C.gold }}>Consórcio + crédito aplicado</td>
+                  <td className="p-3 font-black" style={{ color: C.gold }}>Consórcio</td>
                   <td className="p-3 text-right">{brMoney(summary.capitalAtContemplation)}</td>
                   <td className="p-3 text-right">{brMoney(summary.finalGrossBalance)}</td>
                   <td className="p-3 text-right">{brMoney(summary.grossIncome)}</td>
@@ -809,7 +814,7 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
                   <td className="p-3 text-right font-black" style={{ color: C.navy }}>{brMoney(summary.finalNetBalance)}</td>
                 </tr>
                 <tr className="border-t">
-                  <td className="p-3 font-black" style={{ color: C.ruby }}>Aplicar parcelas mês a mês</td>
+                  <td className="p-3 font-black" style={{ color: C.ruby }}>Fundo DI</td>
                   <td className="p-3 text-right">{brMoney(cdiComparison.investedPrincipal)}</td>
                   <td className="p-3 text-right">{brMoney(cdiComparison.grossBalance)}</td>
                   <td className="p-3 text-right">{brMoney(cdiComparison.grossIncome)}</td>

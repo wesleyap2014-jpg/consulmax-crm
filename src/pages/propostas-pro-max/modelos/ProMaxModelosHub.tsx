@@ -202,14 +202,14 @@ function ComparisonCard({
 }
 
 function chartX(index: number, total: number) {
-  const left = 82;
-  const width = 760;
+  const left = 92;
+  const width = 1440;
   return left + (index / Math.max(1, total - 1)) * width;
 }
 
 function chartY(value: number, maxY: number) {
   const top = 34;
-  const height = 218;
+  const height = 220;
   return top + height - (value / Math.max(1, maxY)) * height;
 }
 
@@ -229,15 +229,15 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
   );
   const maxY = niceChartMax(rawMaxY);
   const grid = [0, 0.25, 0.5, 0.75, 1];
-  const left = 82;
-  const right = 842;
+  const left = 92;
+  const right = 1532;
   const top = 34;
-  const bottom = 252;
+  const bottom = 254;
   const bandWidth = Math.max(1.5, (right - left) / Math.max(1, points.length));
   const endMonth = points[points.length - 1]?.month || 1;
   const hoveredIndex = hovered ? Math.max(0, hovered.month - 1) : -1;
   const hoveredX = hovered ? chartX(hoveredIndex, points.length) : 0;
-  const tooltipLeft = hovered ? Math.min(72, Math.max(16, (hoveredX / 920) * 100)) : 50;
+  const tooltipLeft = hovered ? Math.min(78, Math.max(8, (hoveredX / 1600) * 100)) : 50;
 
   return (
     <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
@@ -290,8 +290,8 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
         ) : null}
 
         <svg
-          viewBox="0 0 920 320"
-          className="h-[330px] w-full"
+          viewBox="0 0 1600 320"
+          className="block h-[340px] w-full max-w-none"
           role="img"
           aria-label="Gráfico de evolução das parcelas mês a mês"
           onMouseLeave={() => setHovered(null)}
@@ -305,14 +305,14 @@ function ParcelEvolutionChart({ points }: { points: AcquisitionChartPoint[] }) {
               <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#0F172A" floodOpacity="0.12" />
             </filter>
           </defs>
-          <rect x="0" y="0" width="920" height="320" fill="#ffffff" />
+          <rect x="0" y="0" width="1600" height="320" fill="#ffffff" />
           <rect x={left} y="18" width={right - left} height="252" rx="12" fill="url(#parcelChartBg)" stroke="#E2E8F0" />
           {grid.map((ratio) => {
             const y = bottom - ratio * (bottom - top);
             return (
               <g key={ratio}>
                 <line x1={left + 12} x2={right - 12} y1={y} y2={y} stroke="#E2E8F0" strokeWidth="1" strokeDasharray={ratio === 0 ? "0" : "3 5"} />
-                <text x="68" y={y + 4} textAnchor="end" fontSize="11" fontWeight="700" fill="#64748B">
+                <text x="78" y={y + 4} textAnchor="end" fontSize="11" fontWeight="700" fill="#64748B">
                   {axisMoney(maxY * ratio)}
                 </text>
               </g>

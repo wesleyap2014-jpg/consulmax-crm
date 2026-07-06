@@ -1,9 +1,13 @@
 import React, { useMemo, useState } from "react";
 import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
-import { buildAlavancagemFinanceiraFlow, type AlavancagemFinanceiraFlow, type AlavancagemTraditionalScenario } from "./fluxos/alavancagemFinanceiraFlow";
-import { buildAquisicaoFlow, type AcquisitionChartPoint, type AcquisitionComparison, type AcquisitionFlow, type FinancingSummary } from "./fluxos/aquisicaoFlow";
-import { buildExtratoFlow, onlyNumber, type ProposalModelRow, type ProposalParams } from "./fluxos/extratoFlow";
-import { buildPrevidenciaFlow, type PrevidenciaChartPoint, type PrevidenciaFlow } from "./fluxos/previdenciaFlow";
+import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFlow";
+import { buildAquisicaoFlow } from "./fluxos/aquisicaoFlow";
+import { buildExtratoFlow, onlyNumber } from "./fluxos/extratoFlow";
+import { buildPrevidenciaFlow } from "./fluxos/previdenciaFlow";
+import type { AlavancagemFinanceiraFlow, AlavancagemTraditionalScenario } from "./fluxos/alavancagemFinanceiraFlow";
+import type { AcquisitionChartPoint, AcquisitionComparison, AcquisitionFlow, FinancingSummary } from "./fluxos/aquisicaoFlow";
+import type { ProposalModelRow, ProposalParams } from "./fluxos/extratoFlow";
+import type { PrevidenciaChartPoint, PrevidenciaFlow } from "./fluxos/previdenciaFlow";
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
 

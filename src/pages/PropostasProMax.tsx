@@ -125,6 +125,7 @@ type ProposalParams = {
   aluguel_pct: number;
   airbnb_pct: number;
   condominio_pct: number;
+  alav_agio_pct: number;
 };
 
 const DEFAULT_PARAMS: ProposalParams = {
@@ -140,6 +141,7 @@ const DEFAULT_PARAMS: ProposalParams = {
   aluguel_pct: 0.006,
   airbnb_pct: 0.15,
   condominio_pct: 0.08,
+  alav_agio_pct: 0.2,
 };
 
 const C = {
@@ -1087,6 +1089,7 @@ export default function PropostasProMax() {
               <ParamInput label="Aluguel mês" value={proposalParams.aluguel_pct} onChange={(value) => updateProposalParam("aluguel_pct", value)} />
               <ParamInput label="Airbnb" value={proposalParams.airbnb_pct} onChange={(value) => updateProposalParam("airbnb_pct", value)} />
               <ParamInput label="Condomínio" value={proposalParams.condominio_pct} onChange={(value) => updateProposalParam("condominio_pct", value)} />
+              <ParamInput label="Ágio revenda carta" value={proposalParams.alav_agio_pct} onChange={(value) => updateProposalParam("alav_agio_pct", value)} />
             </div>
           </section>
         )}

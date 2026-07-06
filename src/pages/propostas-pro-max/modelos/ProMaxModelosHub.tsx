@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
+import { buildAlavancagemFinanceiraFlow, type AlavancagemFinanceiraFlow, type AlavancagemTraditionalScenario } from "./fluxos/alavancagemFinanceiraFlow";
 import { buildAquisicaoFlow, type AcquisitionChartPoint, type AcquisitionComparison, type AcquisitionFlow, type FinancingSummary } from "./fluxos/aquisicaoFlow";
 import { buildExtratoFlow, onlyNumber, type ProposalModelRow, type ProposalParams } from "./fluxos/extratoFlow";
 import { buildPrevidenciaFlow, type PrevidenciaChartPoint, type PrevidenciaFlow } from "./fluxos/previdenciaFlow";
@@ -12,6 +13,7 @@ type ProMaxModelosHubProps = {
 };
 
 type AcquisitionDetailKey = "consortium" | "sac" | "price";
+type AlavancagemFinanceiraMode = "tradicional" | "acelerada";
 
 const C = {
   ruby: "#A11C27",
@@ -1138,6 +1140,280 @@ function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
   );
 }
 
+function AlavancagemSelectorCard({
+  active,
+  label,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-lg border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      style={{
+        borderColor: active ? C.ruby : undefined,
+        boxShadow: active ? "0 10px 24px rgba(161,28,39,.14)" : undefined,
+      }}
+    >
+      <div className="text-sm font-black" style={{ color: active ? C.ruby : C.navy }}>{label}</div>
+      <div className="mt-1 text-xs leading-snug text-slate-500">{description}</div>
+    </button>
+  );
+}
+
+function TraditionalScenarioCard({ scenario, tone }: { scenario: AlavancagemTraditionalScenario; tone: "gold" | "ruby" }) {
+  const color = tone === "gold" ? C.gold : C.ruby;
+
+  return (
+    <div className="rounded-xl border bg-white p-5 shadow-sm" style={{ borderColor: `${color}44` }}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">{scenario.label}</div>
+          <div className="mt-2 text-2xl font-black" style={{ color }}>{brMoney(scenario.investedValue)}</div>
+          <p className="mt-2 text-sm leading-relaxed text-slate-600">{scenario.description}</p>
+        </div>
+        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color }}>
+          Mês {scenario.contemplationMonth}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Parcelas pagas</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.installmentsPaid)}</div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Lance próprio</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.ownBid)}</div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Crédito disponível</div>
+          <div className="font-black" style={{ color }}>{brMoney(scenario.availableCredit)}</div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Multiplicador</div>
+          <div className="font-black" style={{ color: C.navy }}>{scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x</div>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg p-3 text-sm" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.16), rgba(30,41,63,.05))" }}>
+        <div className="flex justify-between gap-3">
+          <span className="font-semibold text-slate-600">Ganho projetado sobre o capital investido</span>
+          <strong style={{ color }}>{brMoney(scenario.projectedGain)}</strong>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AlavancagemTimeline({ flow }: { flow: AlavancagemFinanceiraFlow }) {
+  const { accelerated, summary } = flow;
+  const points = [
+    { label: "Entrada no grupo", value: flow.entries[0]?.installment || 0, detail: "Primeira parcela" },
+    { label: "Contemplação", value: summary.investmentUntilContemplation, detail: `Parcelas + lance próprio no mês ${summary.contemplationMonth}` },
+    { label: "Revenda com ágio", value: accelerated.resaleValue, detail: `Ágio de ${brPercent(accelerated.premiumRate)}` },
+  ];
+
+  return (
+    <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+        <BarChart3 className="h-4 w-4" /> Linha estratégica
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        {points.map((point, index) => (
+          <div key={point.label} className="relative rounded-lg border bg-slate-50 p-4">
+            {index < points.length - 1 ? (
+              <div className="absolute left-[calc(100%-8px)] top-1/2 hidden h-px w-7 bg-slate-300 md:block" />
+            ) : null}
+            <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{point.label}</div>
+            <div className="mt-2 text-xl font-black" style={{ color: index === 2 ? C.ruby : index === 1 ? C.gold : C.navy }}>
+              {brMoney(point.value)}
+            </div>
+            <div className="mt-1 text-xs font-semibold text-slate-500">{point.detail}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AlavancagemFinanceiraModel({ proposal, params }: ProMaxModelosHubProps) {
+  const [mode, setMode] = useState<AlavancagemFinanceiraMode>("tradicional");
+  const flow = useMemo(() => buildAlavancagemFinanceiraFlow(proposal, params), [proposal, params]);
+  const { correction, summary, traditional, accelerated } = flow;
+  const sorteio = traditional.scenarios[0];
+  const lanceFixo = traditional.scenarios[1];
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-[.12em]" style={{ color: C.navy }}>
+              <TrendingUp className="h-3.5 w-3.5" /> Alavancagem Financeira
+            </div>
+            <h2 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>
+              Estratégias para ampliar capital com consórcio
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm text-slate-600">
+              Compare a alavancagem tradicional, voltada a projetos de prazo maior, com a alavancagem acelerada,
+              que usa lance estratégico, ágio sobre o capital pago e revenda da carta contemplada.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[520px]">
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Correção da carta</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.gold }}>{correction.label} {brPercent(correction.annualRate)}</div>
+              <div className="text-xs text-slate-500">{correction.source} | mês: {brPercent(correction.monthlyRate)}</div>
+            </div>
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Ágio acelerado</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>{brPercent(accelerated.premiumRate)}</div>
+              <div className="text-xs text-slate-500">Parâmetro: Ágio revenda carta</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2">
+        <AlavancagemSelectorCard
+          active={mode === "tradicional"}
+          label="Alavancagem Tradicional"
+          description="Projetos de prazo maior, comparando contemplação por sorteio e lance fixo."
+          onClick={() => setMode("tradicional")}
+        />
+        <AlavancagemSelectorCard
+          active={mode === "acelerada"}
+          label="Alavancagem Acelerada"
+          description="Oferta de lance estratégico, ágio sobre valores pagos e revenda da carta."
+          onClick={() => setMode("acelerada")}
+        />
+      </section>
+
+      {mode === "tradicional" ? (
+        <>
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Crédito contratado" value={brMoney(summary.contractedCredit)} />
+            <Metric label="Crédito na contemplação" value={brMoney(summary.creditAtContemplation)} tone="gold" />
+            <Metric label="Valor investido lance fixo" value={brMoney(lanceFixo.investedValue)} tone="ruby" />
+            <Metric label="Multiplicador lance fixo" value={`${lanceFixo.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`} />
+          </section>
+
+          <section className="grid gap-4 lg:grid-cols-2">
+            <TraditionalScenarioCard scenario={sorteio} tone="gold" />
+            <TraditionalScenarioCard scenario={lanceFixo} tone="ruby" />
+          </section>
+
+          <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+            <div className="border-b px-5 py-4">
+              <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+                <FileSpreadsheet className="h-4 w-4" /> Comparativo tradicional
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-[860px] w-full border-collapse text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+                  <tr>
+                    <th className="p-3 text-left">Estratégia</th>
+                    <th className="p-3 text-right">Mês</th>
+                    <th className="p-3 text-right">Parcelas</th>
+                    <th className="p-3 text-right">Lance próprio</th>
+                    <th className="p-3 text-right">Valor investido</th>
+                    <th className="p-3 text-right">Crédito disponível</th>
+                    <th className="p-3 text-right">Multiplicador</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {traditional.scenarios.map((scenario) => (
+                    <tr key={scenario.key} className="border-t">
+                      <td className="p-3 font-black" style={{ color: scenario.key === "sorteio" ? C.gold : C.ruby }}>{scenario.label}</td>
+                      <td className="p-3 text-right">Mês {scenario.contemplationMonth}</td>
+                      <td className="p-3 text-right">{brMoney(scenario.installmentsPaid)}</td>
+                      <td className="p-3 text-right">{brMoney(scenario.ownBid)}</td>
+                      <td className="p-3 text-right font-semibold">{brMoney(scenario.investedValue)}</td>
+                      <td className="p-3 text-right">{brMoney(scenario.availableCredit)}</td>
+                      <td className="p-3 text-right font-black" style={{ color: C.navy }}>
+                        {scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t bg-slate-50/70">
+                    <td className="p-3 font-black" style={{ color: C.navy }}>Diferença Lance Fixo x Sorteio</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right">{brMoney(summary.ownBidAtContemplation)}</td>
+                    <td className="p-3 text-right font-black" style={{ color: C.ruby }}>{brMoney(traditional.differenceInvested)}</td>
+                    <td className="p-3 text-right font-black" style={{ color: traditional.differenceAvailableCredit >= 0 ? C.gold : C.ruby }}>
+                      {brMoney(traditional.differenceAvailableCredit)}
+                    </td>
+                    <td className="p-3 text-right">-</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Parcelas + lance próprio" value={brMoney(accelerated.investedValue)} tone="gold" />
+            <Metric label="Revenda com ágio" value={brMoney(accelerated.resaleValue)} />
+            <Metric label="Resultado bruto" value={brMoney(accelerated.grossResult)} tone="ruby" />
+            <Metric label="ROI da operação" value={brPercent(accelerated.roi)} tone="gold" />
+            <Metric label="Rentabilidade a.m." value={brPercent(accelerated.monthlyReturn)} />
+            <Metric label="Lance estratégico" value={brMoney(accelerated.strategicBid)} tone="ruby" />
+            <Metric label="Ágio aplicado" value={brPercent(accelerated.premiumRate)} />
+            <Metric label="Crédito disponível" value={brMoney(accelerated.availableCredit)} tone="gold" />
+          </section>
+
+          <section className="grid gap-4 lg:grid-cols-[.9fr_1.1fr]">
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+                <TrendingUp className="h-4 w-4" /> Mecânica acelerada
+              </div>
+              <div className="mt-4 space-y-3 text-sm">
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Mês da contemplação/revenda</span>
+                  <strong style={{ color: C.navy }}>Mês {accelerated.contemplationMonth}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Parcelas pagas</span>
+                  <strong style={{ color: C.navy }}>{brMoney(accelerated.installmentsPaid)}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Lance próprio</span>
+                  <strong style={{ color: C.ruby }}>{brMoney(accelerated.ownBid)}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Lance embutido</span>
+                  <strong style={{ color: C.gold }}>{brMoney(accelerated.embeddedBid)}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Base para ágio</span>
+                  <strong style={{ color: C.navy }}>{brMoney(accelerated.investedValue)}</strong>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500">Ágio financeiro projetado</span>
+                  <strong style={{ color: C.ruby }}>{brMoney(accelerated.premiumValue)}</strong>
+                </div>
+              </div>
+            </div>
+
+            <AlavancagemTimeline flow={flow} />
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PlaceholderModel({ model }: { model: (typeof MODELS)[number] }) {
   return (
     <section className="rounded-xl border bg-white p-8 text-center shadow-sm">
@@ -1246,6 +1522,8 @@ export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubP
         <AquisicaoModel proposal={proposal} params={params} />
       ) : activeModel === "previdencia" ? (
         <PrevidenciaModel proposal={proposal} params={params} />
+      ) : activeModel === "alav_financeira" ? (
+        <AlavancagemFinanceiraModel proposal={proposal} params={params} />
       ) : (
         <PlaceholderModel model={model} />
       )}

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
-import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFlow";
+import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFlow.ts";
 import { buildAquisicaoFlow } from "./fluxos/aquisicaoFlow";
 import { buildExtratoFlow, onlyNumber } from "./fluxos/extratoFlow";
 import { buildPrevidenciaFlow } from "./fluxos/previdenciaFlow";

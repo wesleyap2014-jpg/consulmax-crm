@@ -4,10 +4,17 @@ import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFl
 import { buildAquisicaoFlow } from "./fluxos/aquisicaoFlow";
 import { buildExtratoFlow, onlyNumber } from "./fluxos/extratoFlow";
 import { buildPrevidenciaFlow } from "./fluxos/previdenciaFlow";
-import type { AlavancagemFinanceiraFlow, AlavancagemTraditionalScenario } from "./fluxos/alavancagemFinanceiraFlow";
-import type { AcquisitionChartPoint, AcquisitionComparison, AcquisitionFlow, FinancingSummary } from "./fluxos/aquisicaoFlow";
-import type { ProposalModelRow, ProposalParams } from "./fluxos/extratoFlow";
-import type { PrevidenciaChartPoint, PrevidenciaFlow } from "./fluxos/previdenciaFlow";
+
+type ProposalModelRow = Parameters<typeof buildExtratoFlow>[0];
+type ProposalParams = Parameters<typeof buildExtratoFlow>[1];
+type AcquisitionFlow = ReturnType<typeof buildAquisicaoFlow>;
+type AcquisitionChartPoint = AcquisitionFlow["chart"][number];
+type AcquisitionComparison = AcquisitionFlow["comparisons"][number];
+type FinancingSummary = AcquisitionFlow["sac"];
+type PrevidenciaFlow = ReturnType<typeof buildPrevidenciaFlow>;
+type PrevidenciaChartPoint = PrevidenciaFlow["chart"][number];
+type AlavancagemFinanceiraFlow = ReturnType<typeof buildAlavancagemFinanceiraFlow>;
+type AlavancagemTraditionalScenario = AlavancagemFinanceiraFlow["traditional"]["scenarios"][number];
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
 

@@ -65,6 +65,7 @@ export type ProposalParams = {
   aluguel_pct: number;
   airbnb_pct: number;
   condominio_pct: number;
+  alav_agio_pct: number;
 };
 
 export type ExtratoMonthEntry = {

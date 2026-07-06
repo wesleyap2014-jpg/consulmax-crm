@@ -2,10 +2,12 @@ import {
   buildExtratoFlow,
   creditoLiquido,
   onlyNumber,
-  type ExtratoEventEntry,
-  type ExtratoMonthEntry,
-  type ProposalModelRow,
-  type ProposalParams,
+} from "./extratoFlow";
+import type {
+  ExtratoEventEntry,
+  ExtratoMonthEntry,
+  ProposalModelRow,
+  ProposalParams,
 } from "./extratoFlow";
 
 export type AlavancagemTraditionalScenario = {

@@ -160,12 +160,16 @@ const C = {
   gold: "#B5A573",
 };
 
-function ConsulmaxLogoMark({ compact = false }: { compact?: boolean }) {
+function ConsulmaxLogoMark({ compact = false, featured = false }: { compact?: boolean; featured?: boolean }) {
   const [failed, setFailed] = useState(false);
-  const wrapClass = compact
+  const wrapClass = featured
+    ? "flex h-24 shrink-0 items-center justify-center overflow-visible lg:w-[380px] xl:w-[460px]"
+    : compact
     ? "flex shrink-0 items-center justify-center overflow-visible lg:w-[360px] xl:w-[420px]"
     : "flex shrink-0 items-center justify-center overflow-visible lg:w-[460px]";
-  const imgClass = compact
+  const imgClass = featured
+    ? "h-24 w-auto max-w-[460px] scale-[2.45] object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)] md:h-28 md:scale-[2.65]"
+    : compact
     ? "h-20 w-auto max-w-[360px] scale-150 object-contain drop-shadow-[0_14px_30px_rgba(0,0,0,.22)] md:h-24"
     : "h-28 w-auto max-w-[460px] scale-125 object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)]";
 
@@ -1398,7 +1402,7 @@ export default function PropostasProMax() {
                       Estas são as propostas liberadas pelo consultor. Clique em uma delas para abrir os detalhes.
                     </p>
                   </div>
-                  <ConsulmaxLogoMark compact />
+                  <ConsulmaxLogoMark featured />
                 </div>
               </section>
               <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

@@ -1186,7 +1186,7 @@ function TraditionalScenarioCard({ scenario, tone }: { scenario: AlavancagemTrad
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">{scenario.label}</div>
-          <div className="mt-2 text-2xl font-black" style={{ color }}>{brMoney(scenario.investedValue)}</div>
+          <div className="mt-2 text-2xl font-black" style={{ color }}>{brMoney(scenario.availableCredit)}</div>
           <p className="mt-2 text-sm leading-relaxed text-slate-600">{scenario.description}</p>
         </div>
         <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color }}>
@@ -1200,26 +1200,63 @@ function TraditionalScenarioCard({ scenario, tone }: { scenario: AlavancagemTrad
           <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.installmentsPaid)}</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">Lance próprio</div>
-          <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.ownBid)}</div>
+          <div className="text-xs font-semibold text-slate-500">% de ganho</div>
+          <div className="font-black" style={{ color }}>{brPercent(scenario.gainRate)}</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">Crédito disponível</div>
-          <div className="font-black" style={{ color }}>{brMoney(scenario.availableCredit)}</div>
+          <div className="text-xs font-semibold text-slate-500">Contemplação mês</div>
+          <div className="font-black" style={{ color: C.navy }}>Mês {scenario.contemplationMonth}</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">Multiplicador</div>
-          <div className="font-black" style={{ color: C.navy }}>{scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x</div>
+          <div className="text-xs font-semibold text-slate-500">ROI</div>
+          <div className="font-black" style={{ color: C.navy }}>{brPercent(scenario.saleRoi)}</div>
         </div>
       </div>
 
       <div className="mt-4 rounded-lg p-3 text-sm" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.16), rgba(30,41,63,.05))" }}>
         <div className="flex justify-between gap-3">
-          <span className="font-semibold text-slate-600">Ganho projetado sobre o capital investido</span>
+          <span className="font-semibold text-slate-600">Ganho projetado na venda</span>
           <strong style={{ color }}>{brMoney(scenario.projectedGain)}</strong>
         </div>
       </div>
     </div>
+  );
+}
+
+function SaleStrategyPanel({ traditional }: { traditional: AlavancagemFinanceiraFlow["traditional"] }) {
+  const items = [
+    { label: "Venda (Sorteio)", value: traditional.saleStrategy.lotterySaleValue, tone: "gold" as const },
+    { label: "Lucro (Sorteio)", value: traditional.saleStrategy.lotteryProfit, tone: "navy" as const },
+    { label: "Venda (Lance)", value: traditional.saleStrategy.bidSaleValue, tone: "ruby" as const },
+    { label: "Lucro (Lance)", value: traditional.saleStrategy.bidProfit, tone: "navy" as const },
+  ];
+
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="border-b p-5">
+        <div
+          className="flex w-full items-center justify-center rounded-full px-4 py-3 text-center text-xs font-black uppercase tracking-[.18em] text-white shadow-sm"
+          style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}
+        >
+          Estratégia de venda do crédito
+        </div>
+        <p className="mx-auto mt-3 max-w-3xl text-center text-sm text-slate-600">
+          A venda projetada usa o percentual configurado em Ágio revenda carta aplicado sobre o crédito disponível em cada estratégia.
+        </p>
+      </div>
+
+      <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
+        {items.map((item) => {
+          const color = item.tone === "ruby" ? C.ruby : item.tone === "gold" ? C.gold : C.navy;
+          return (
+            <div key={item.label} className="rounded-xl border bg-slate-50 p-4 shadow-sm">
+              <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{item.label}</div>
+              <div className="mt-2 text-xl font-black" style={{ color }}>{brMoney(item.value)}</div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1228,7 +1265,7 @@ function AlavancagemTimeline({ flow }: { flow: AlavancagemFinanceiraFlow }) {
   const points = [
     { label: "Entrada no grupo", value: flow.entries[0]?.installment || 0, detail: "Primeira parcela" },
     { label: "Contemplação", value: summary.investmentUntilContemplation, detail: `Parcelas + lance próprio no mês ${summary.contemplationMonth}` },
-    { label: "Revenda com ágio", value: accelerated.resaleValue, detail: `Ágio de ${brPercent(accelerated.premiumRate)}` },
+    { label: "Revenda com reforço", value: accelerated.resaleValue, detail: `Reforço de ${brPercent(accelerated.premiumRate)}` },
   ];
 
   return (
@@ -1285,9 +1322,15 @@ function AlavancagemFinanceiraModel({ proposal, params }: ProMaxModelosHubProps)
               <div className="text-xs text-slate-500">{correction.source} | mês: {brPercent(correction.monthlyRate)}</div>
             </div>
             <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
-              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Ágio acelerado</div>
-              <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>{brPercent(accelerated.premiumRate)}</div>
-              <div className="text-xs text-slate-500">Parâmetro: Ágio revenda carta</div>
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">
+                {mode === "tradicional" ? "Ágio revenda carta" : "Reforço venda"}
+              </div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>
+                {brPercent(mode === "tradicional" ? traditional.saleRate : accelerated.premiumRate)}
+              </div>
+              <div className="text-xs text-slate-500">
+                {mode === "tradicional" ? "Aplicado sobre o crédito disponível" : "Aplicado sobre parcelas + lance próprio"}
+              </div>
             </div>
           </div>
         </div>
@@ -1313,8 +1356,8 @@ function AlavancagemFinanceiraModel({ proposal, params }: ProMaxModelosHubProps)
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Metric label="Crédito contratado" value={brMoney(summary.contractedCredit)} />
             <Metric label="Crédito na contemplação" value={brMoney(summary.creditAtContemplation)} tone="gold" />
-            <Metric label="Valor investido lance fixo" value={brMoney(lanceFixo.investedValue)} tone="ruby" />
-            <Metric label="Multiplicador lance fixo" value={`${lanceFixo.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`} />
+            <Metric label="Valor investido até a contemplação" value={brMoney(summary.investmentUntilContemplation)} tone="ruby" />
+            <Metric label="Lance embutido" value={brMoney(summary.embeddedBidAtContemplation)} />
           </section>
 
           <section className="grid gap-4 lg:grid-cols-2">
@@ -1322,54 +1365,7 @@ function AlavancagemFinanceiraModel({ proposal, params }: ProMaxModelosHubProps)
             <TraditionalScenarioCard scenario={lanceFixo} tone="ruby" />
           </section>
 
-          <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
-            <div className="border-b px-5 py-4">
-              <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-                <FileSpreadsheet className="h-4 w-4" /> Comparativo tradicional
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-[860px] w-full border-collapse text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
-                  <tr>
-                    <th className="p-3 text-left">Estratégia</th>
-                    <th className="p-3 text-right">Mês</th>
-                    <th className="p-3 text-right">Parcelas</th>
-                    <th className="p-3 text-right">Lance próprio</th>
-                    <th className="p-3 text-right">Valor investido</th>
-                    <th className="p-3 text-right">Crédito disponível</th>
-                    <th className="p-3 text-right">Multiplicador</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {traditional.scenarios.map((scenario) => (
-                    <tr key={scenario.key} className="border-t">
-                      <td className="p-3 font-black" style={{ color: scenario.key === "sorteio" ? C.gold : C.ruby }}>{scenario.label}</td>
-                      <td className="p-3 text-right">Mês {scenario.contemplationMonth}</td>
-                      <td className="p-3 text-right">{brMoney(scenario.installmentsPaid)}</td>
-                      <td className="p-3 text-right">{brMoney(scenario.ownBid)}</td>
-                      <td className="p-3 text-right font-semibold">{brMoney(scenario.investedValue)}</td>
-                      <td className="p-3 text-right">{brMoney(scenario.availableCredit)}</td>
-                      <td className="p-3 text-right font-black" style={{ color: C.navy }}>
-                        {scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="border-t bg-slate-50/70">
-                    <td className="p-3 font-black" style={{ color: C.navy }}>Diferença Lance Fixo x Sorteio</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right">{brMoney(summary.ownBidAtContemplation)}</td>
-                    <td className="p-3 text-right font-black" style={{ color: C.ruby }}>{brMoney(traditional.differenceInvested)}</td>
-                    <td className="p-3 text-right font-black" style={{ color: traditional.differenceAvailableCredit >= 0 ? C.gold : C.ruby }}>
-                      {brMoney(traditional.differenceAvailableCredit)}
-                    </td>
-                    <td className="p-3 text-right">-</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <SaleStrategyPanel traditional={traditional} />
         </>
       ) : (
         <>

@@ -162,19 +162,22 @@ const C = {
 
 function ConsulmaxLogoMark({ compact = false }: { compact?: boolean }) {
   const [failed, setFailed] = useState(false);
-  const boxClass = compact
-    ? "flex h-16 min-w-[220px] items-center justify-center rounded-lg border border-white/15 bg-white/10 px-5"
-    : "flex h-20 min-w-[280px] items-center justify-center rounded-xl border border-white/15 bg-white/10 px-6";
+  const wrapClass = compact
+    ? "flex shrink-0 items-center justify-center overflow-visible lg:w-[360px] xl:w-[420px]"
+    : "flex shrink-0 items-center justify-center overflow-visible lg:w-[460px]";
+  const imgClass = compact
+    ? "h-20 w-auto max-w-[360px] scale-150 object-contain drop-shadow-[0_14px_30px_rgba(0,0,0,.22)] md:h-24"
+    : "h-28 w-auto max-w-[460px] scale-125 object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)]";
 
   return (
-    <div className={boxClass}>
+    <div className={wrapClass}>
       {failed ? (
-        <div className="text-center text-2xl font-black tracking-tight text-white">Consulmax</div>
+        <div className="text-center text-3xl font-black tracking-tight text-white drop-shadow-[0_12px_26px_rgba(0,0,0,.24)]">Consulmax</div>
       ) : (
         <img
-          src="/logo-consulmax.png?v=3"
+          src="/logo-consulmax.png"
           alt="Consulmax"
-          className="max-h-full max-w-full object-contain"
+          className={imgClass}
           onError={() => setFailed(true)}
         />
       )}
@@ -1481,7 +1484,7 @@ export default function PropostasProMax() {
           <div className="absolute -right-20 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
           <div className="absolute right-24 top-8 h-32 w-32 rounded-full blur-3xl" style={{ background: "rgba(181,165,115,.30)" }} />
 
-          <div className="relative z-[1] flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="relative z-[1] flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
             <div className="max-w-3xl text-white">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[.14em]">
                 <FileText className="h-3.5 w-3.5" /> Consulmax

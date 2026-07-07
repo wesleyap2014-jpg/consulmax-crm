@@ -37,14 +37,14 @@ function ConsulmaxLogoMark() {
   const [failed, setFailed] = useState(false);
 
   return (
-    <div className="flex h-24 min-w-[320px] items-center justify-center rounded-xl border border-white/15 bg-white/10 px-7 shadow-sm">
+    <div className="flex shrink-0 items-center justify-center overflow-visible xl:w-[360px] 2xl:w-[460px]">
       {failed ? (
-        <div className="text-center text-3xl font-black tracking-tight text-white">Consulmax</div>
+        <div className="text-center text-4xl font-black tracking-tight text-white drop-shadow-[0_14px_30px_rgba(0,0,0,.24)]">Consulmax</div>
       ) : (
         <img
-          src="/logo-consulmax.png?v=3"
+          src="/logo-consulmax.png"
           alt="Consulmax"
-          className="max-h-full max-w-full object-contain"
+          className="h-28 w-auto max-w-[460px] scale-125 object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)]"
           onError={() => setFailed(true)}
         />
       )}
@@ -1501,7 +1501,7 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
         style={{ background: "linear-gradient(135deg, #1E293F 0%, #A11C27 100%)", borderColor: "rgba(255,255,255,.22)" }}
       >
         <div className="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
-        <div className="relative z-[1] flex flex-col gap-5 text-white lg:flex-row lg:items-end lg:justify-between">
+        <div className="relative z-[1] flex flex-col gap-5 text-white lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[.12em]">
               <TrendingUp className="h-3.5 w-3.5" /> Modelos Pró Max
@@ -1515,7 +1515,7 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
               para apoiar uma decisão mais segura e mostrar o caminho do investimento com transparência.
             </p>
           </div>
-          <div className="hidden xl:flex xl:flex-1 xl:justify-center">
+          <div className="hidden xl:flex xl:flex-none xl:justify-center">
             <ConsulmaxLogoMark />
           </div>
           <div className="w-full rounded-lg border border-white/20 bg-white/95 p-4 text-slate-900 shadow-sm lg:max-w-sm">

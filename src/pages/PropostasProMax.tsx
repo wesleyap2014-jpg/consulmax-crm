@@ -87,6 +87,7 @@ type Proposal = SimRow & {
 };
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
+type ShareModelKey = ModelKey | "alav_financeira_tradicional" | "alav_financeira_acelerada" | "alav_patrimonial_tradicional" | "alav_patrimonial_otimizada";
 
 type ShareResult = {
   link: string;
@@ -171,7 +172,20 @@ const SHARE_MODEL_OPTIONS: Array<{ key: ModelKey; label: string }> = [
   { key: "equity", label: "Equity" },
 ];
 
-const DEFAULT_SHARE_MODELS: ModelKey[] = ["extrato"];
+const DEFAULT_SHARE_MODELS: ShareModelKey[] = ["extrato"];
+const SHARE_MODEL_KEYS = new Set<ShareModelKey>([
+  "extrato",
+  "aquisicao",
+  "previdencia",
+  "alav_financeira",
+  "alav_financeira_tradicional",
+  "alav_financeira_acelerada",
+  "alav_patrimonial",
+  "alav_patrimonial_tradicional",
+  "alav_patrimonial_otimizada",
+  "cadenciada",
+  "equity",
+]);
 
 function onlyNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -227,10 +241,23 @@ function randomPin() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
-function cleanModels(models: string[] | null | undefined): ModelKey[] {
-  const allowed = new Set(SHARE_MODEL_OPTIONS.map((item) => item.key));
-  const cleaned = (models || []).filter((model): model is ModelKey => allowed.has(model as ModelKey));
+function cleanModels(models: string[] | null | undefined): ShareModelKey[] {
+  const cleaned = (models || []).filter((model): model is ShareModelKey => SHARE_MODEL_KEYS.has(model as ShareModelKey));
   return cleaned.length ? cleaned : DEFAULT_SHARE_MODELS;
+}
+
+function formatRondoniaDate(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Porto_Velho",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date).replace(",", " às");
 }
 
 function aggregateProposal(rows: Proposal[]): Proposal | null {
@@ -559,13 +586,13 @@ export default function PropostasProMax() {
   const [proposalParams, setProposalParams] = useState<ProposalParams>(DEFAULT_PARAMS);
   const [paramsSaving, setParamsSaving] = useState(false);
   const [shareRows, setShareRows] = useState<Proposal[]>([]);
-  const [shareModels, setShareModels] = useState<ModelKey[]>(DEFAULT_SHARE_MODELS);
+  const [shareModels, setShareModels] = useState<ShareModelKey[]>(DEFAULT_SHARE_MODELS);
   const [shareResult, setShareResult] = useState<ShareResult | null>(null);
   const [shareSaving, setShareSaving] = useState(false);
   const [publicPin, setPublicPin] = useState("");
   const [publicLoading, setPublicLoading] = useState(false);
   const [publicRows, setPublicRows] = useState<Proposal[]>([]);
-  const [publicAllowedModels, setPublicAllowedModels] = useState<ModelKey[]>(DEFAULT_SHARE_MODELS);
+  const [publicAllowedModels, setPublicAllowedModels] = useState<ShareModelKey[]>(DEFAULT_SHARE_MODELS);
   const [publicError, setPublicError] = useState("");
 
   useEffect(() => {
@@ -905,6 +932,19 @@ export default function PropostasProMax() {
   );
   const totalSent = useMemo(() => filteredEvents.filter((event) => event.event_type === "sent").length, [filteredEvents]);
   const totalOpened = useMemo(() => filteredEvents.filter((event) => event.event_type === "opened").length, [filteredEvents]);
+  const openedStats = useMemo(() => {
+    const map = new Map<number, { count: number; lastOpenedAt: string }>();
+    for (const event of events) {
+      if (event.event_type !== "opened" || event.simulation_code === null) continue;
+      const current = map.get(event.simulation_code);
+      if (!current || new Date(event.created_at).getTime() > new Date(current.lastOpenedAt).getTime()) {
+        map.set(event.simulation_code, { count: (current?.count || 0) + 1, lastOpenedAt: event.created_at });
+      } else if (current) {
+        current.count += 1;
+      }
+    }
+    return map;
+  }, [events]);
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const paginatedRows = useMemo(
     () => filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
@@ -947,7 +987,29 @@ export default function PropostasProMax() {
   function toggleShareModel(model: ModelKey) {
     setShareModels((prev) => {
       if (model === "extrato") return prev.includes("extrato") ? prev : ["extrato", ...prev];
-      return prev.includes(model) ? prev.filter((item) => item !== model) : [...prev, model];
+      if (prev.includes(model)) {
+        return prev.filter((item) => !String(item).startsWith(model));
+      }
+
+      if (model === "alav_financeira") {
+        return [...prev, "alav_financeira", "alav_financeira_tradicional", "alav_financeira_acelerada"];
+      }
+
+      if (model === "alav_patrimonial") {
+        return [...prev, "alav_patrimonial", "alav_patrimonial_tradicional", "alav_patrimonial_otimizada"];
+      }
+
+      return [...prev, model];
+    });
+  }
+
+  function toggleShareSubModel(model: ShareModelKey, parent: ModelKey) {
+    setShareModels((prev) => {
+      const next = prev.includes(model) ? prev.filter((item) => item !== model) : [...prev, model];
+      const parentSubs = next.filter((item) => String(item).startsWith(`${parent}_`) && item !== parent);
+      if (!next.includes(parent)) next.push(parent);
+      if (!parentSubs.length && prev.includes(model)) return prev;
+      return next;
     });
   }
 
@@ -978,6 +1040,12 @@ export default function PropostasProMax() {
       title: shareRows.length > 1 ? `Propostas ${codes.join(", ")}` : `Proposta #${codes[0]}`,
       simulation_codes: codes,
       allowed_models: cleanModels(shareModels),
+      consultant: {
+        vendedor_nome: shareRows[0]?.vendedor_nome || shareRows[0]?.promax?.vendedor_nome || null,
+        vendedor_telefone: shareRows[0]?.vendedor_telefone || shareRows[0]?.promax?.vendedor_telefone || null,
+        vendedor_email: shareRows[0]?.vendedor_email || shareRows[0]?.promax?.vendedor_email || null,
+        vendedor_foto_url: shareRows[0]?.vendedor_foto_url || shareRows[0]?.promax?.vendedor_foto_url || null,
+      },
       total_credito: shareRows.reduce((sum, row) => sum + creditoContratado(row), 0),
       total_credito_liquido: shareRows.reduce((sum, row) => sum + creditoLiquido(row), 0),
       created_by: authRes.data.user?.id ?? null,
@@ -1506,7 +1574,13 @@ export default function PropostasProMax() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedRows.map((row) => (
+                  {paginatedRows.map((row) => {
+                    const opened = openedStats.get(row.code);
+                    const openedTitle = opened
+                      ? `Proposta visualizada em ${formatRondoniaDate(opened.lastOpenedAt)}. Total de aberturas: ${opened.count}`
+                      : "Proposta não Visualizada";
+
+                    return (
                     <tr
                       key={row.code}
                       className="cursor-pointer border-t hover:bg-slate-50"
@@ -1541,8 +1615,25 @@ export default function PropostasProMax() {
                           <Button type="button" variant="outline" size="sm" className="rounded-lg" onClick={() => openShareDialog([row])}>
                             <Copy className="h-4 w-4" />
                           </Button>
-                          <Button type="button" variant="outline" size="sm" className="rounded-lg" onClick={() => navigate(`/propostas-pro-max/${row.code}`)}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="relative rounded-lg"
+                            title={openedTitle}
+                            onClick={() => navigate(`/propostas-pro-max/${row.code}`)}
+                            style={{
+                              borderColor: opened ? `${C.gold}88` : undefined,
+                              color: opened ? C.gold : undefined,
+                              background: opened ? "rgba(181,165,115,.10)" : undefined,
+                            }}
+                          >
                             <Eye className="h-4 w-4" />
+                            {opened ? (
+                              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-black text-white" style={{ background: C.ruby }}>
+                                {opened.count}
+                              </span>
+                            ) : null}
                           </Button>
                         </div>
                       </td>
@@ -1558,7 +1649,8 @@ export default function PropostasProMax() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {!paginatedRows.length && (
                     <tr>
                       <td className="p-6 text-center text-sm text-slate-500" colSpan={12}>
@@ -1624,21 +1716,64 @@ export default function PropostasProMax() {
                       const checked = shareModels.includes(option.key);
                       const locked = option.key === "extrato";
                       return (
-                        <label
-                          key={option.key}
-                          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold ${checked ? "bg-slate-50" : "bg-white"}`}
-                          style={{ borderColor: checked ? C.ruby : undefined, color: checked ? C.navy : undefined }}
-                        >
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-slate-300"
-                            checked={checked}
-                            disabled={locked}
-                            onChange={() => toggleShareModel(option.key)}
-                          />
-                          {option.label}
-                          {locked ? <span className="ml-auto text-xs text-slate-400">padrão</span> : null}
-                        </label>
+                        <div key={option.key} className="space-y-2">
+                          <label
+                            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold ${checked ? "bg-slate-50" : "bg-white"}`}
+                            style={{ borderColor: checked ? C.ruby : undefined, color: checked ? C.navy : undefined }}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300"
+                              checked={checked}
+                              disabled={locked}
+                              onChange={() => toggleShareModel(option.key)}
+                            />
+                            {option.label}
+                            {locked ? <span className="ml-auto text-xs text-slate-400">padrão</span> : null}
+                          </label>
+
+                          {option.key === "alav_financeira" && checked ? (
+                            <div className="ml-6 grid gap-1 rounded-lg bg-slate-50 p-2 text-xs font-semibold text-slate-600">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={shareModels.includes("alav_financeira_tradicional")}
+                                  onChange={() => toggleShareSubModel("alav_financeira_tradicional", "alav_financeira")}
+                                />
+                                Tradicional
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={shareModels.includes("alav_financeira_acelerada")}
+                                  onChange={() => toggleShareSubModel("alav_financeira_acelerada", "alav_financeira")}
+                                />
+                                Acelerada
+                              </label>
+                            </div>
+                          ) : null}
+
+                          {option.key === "alav_patrimonial" && checked ? (
+                            <div className="ml-6 grid gap-1 rounded-lg bg-slate-50 p-2 text-xs font-semibold text-slate-600">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={shareModels.includes("alav_patrimonial_tradicional")}
+                                  onChange={() => toggleShareSubModel("alav_patrimonial_tradicional", "alav_patrimonial")}
+                                />
+                                Tradicional
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={shareModels.includes("alav_patrimonial_otimizada")}
+                                  onChange={() => toggleShareSubModel("alav_patrimonial_otimizada", "alav_patrimonial")}
+                                />
+                                Otimizada
+                              </label>
+                            </div>
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>

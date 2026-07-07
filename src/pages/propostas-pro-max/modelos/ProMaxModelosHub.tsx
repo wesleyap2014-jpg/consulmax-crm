@@ -1292,12 +1292,21 @@ function AlavancagemTimeline({ flow }: { flow: AlavancagemFinanceiraFlow }) {
   );
 }
 
-function AlavancagemFinanceiraModel({ proposal, params }: ProMaxModelosHubProps) {
+function AlavancagemFinanceiraModel({
+  proposal,
+  params,
+  allowedModes,
+}: ProMaxModelosHubProps & { allowedModes?: AlavancagemFinanceiraMode[] }) {
   const [mode, setMode] = useState<AlavancagemFinanceiraMode>("tradicional");
   const flow = useMemo(() => buildAlavancagemFinanceiraFlow(proposal, params), [proposal, params]);
   const { correction, summary, traditional, accelerated } = flow;
   const sorteio = traditional.scenarios[0];
   const lanceFixo = traditional.scenarios[1];
+  const visibleModes = allowedModes?.length ? allowedModes : (["tradicional", "acelerada"] as AlavancagemFinanceiraMode[]);
+
+  useEffect(() => {
+    if (!visibleModes.includes(mode)) setMode(visibleModes[0] || "tradicional");
+  }, [mode, visibleModes]);
 
   return (
     <div className="space-y-4">
@@ -1337,20 +1346,26 @@ function AlavancagemFinanceiraModel({ proposal, params }: ProMaxModelosHubProps)
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2">
-        <AlavancagemSelectorCard
-          active={mode === "tradicional"}
-          label="Alavancagem Tradicional"
-          description="Projetos de prazo maior, comparando contemplação por sorteio e lance fixo."
-          onClick={() => setMode("tradicional")}
-        />
-        <AlavancagemSelectorCard
-          active={mode === "acelerada"}
-          label="Alavancagem Acelerada"
-          description="Oferta de lance estratégico, ágio sobre valores pagos e revenda da carta."
-          onClick={() => setMode("acelerada")}
-        />
-      </section>
+      {visibleModes.length > 1 ? (
+        <section className="grid gap-3 md:grid-cols-2">
+          {visibleModes.includes("tradicional") ? (
+            <AlavancagemSelectorCard
+              active={mode === "tradicional"}
+              label="Alavancagem Tradicional"
+              description="Projetos de prazo maior, comparando contemplação por sorteio e lance fixo."
+              onClick={() => setMode("tradicional")}
+            />
+          ) : null}
+          {visibleModes.includes("acelerada") ? (
+            <AlavancagemSelectorCard
+              active={mode === "acelerada"}
+              label="Alavancagem Acelerada"
+              description="Oferta de lance estratégico, ágio sobre valores pagos e revenda da carta."
+              onClick={() => setMode("acelerada")}
+            />
+          ) : null}
+        </section>
+      ) : null}
 
       {mode === "tradicional" ? (
         <>
@@ -1444,6 +1459,14 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
     return MODELS.filter((item) => allowed.has(item.key));
   }, [allowedModels]);
   const model = visibleModels.find((item) => item.key === activeModel) || visibleModels[0] || MODELS[0];
+  const allowedAlavFinanceiraModes = useMemo(() => {
+    if (!allowedModels?.length) return undefined;
+    const allowed = new Set(allowedModels);
+    const modes: AlavancagemFinanceiraMode[] = [];
+    if (allowed.has("alav_financeira_tradicional")) modes.push("tradicional");
+    if (allowed.has("alav_financeira_acelerada")) modes.push("acelerada");
+    return modes.length ? modes : undefined;
+  }, [allowedModels]);
   const consultant = getConsultant(proposal);
 
   useEffect(() => {
@@ -1542,7 +1565,7 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
       ) : activeModel === "previdencia" ? (
         <PrevidenciaModel proposal={proposal} params={params} />
       ) : activeModel === "alav_financeira" ? (
-        <AlavancagemFinanceiraModel proposal={proposal} params={params} />
+        <AlavancagemFinanceiraModel proposal={proposal} params={params} allowedModes={allowedAlavFinanceiraModes} />
       ) : (
         <PlaceholderModel model={model} />
       )}

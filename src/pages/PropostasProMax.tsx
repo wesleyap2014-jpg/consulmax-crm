@@ -243,7 +243,7 @@ function randomPin() {
 
 function cleanModels(models: string[] | null | undefined): ShareModelKey[] {
   const cleaned = (models || []).filter((model): model is ShareModelKey => SHARE_MODEL_KEYS.has(model as ShareModelKey));
-  return cleaned.length ? cleaned : DEFAULT_SHARE_MODELS;
+  return cleaned;
 }
 
 function formatRondoniaDate(value: string | null | undefined) {
@@ -534,6 +534,49 @@ function ParamInput({
   );
 }
 
+function PublicProposalCard({ row, onOpen }: { row: Proposal; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="rounded-xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Proposta #{row.code}</div>
+          <div className="mt-1 text-lg font-black" style={{ color: C.navy }}>{row.lead_nome || "Cliente"}</div>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color: C.ruby }}>
+          {row.segmento || "Proposta"}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Crédito contratado</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(creditoContratado(row))}</div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Crédito líquido</div>
+          <div className="font-black" style={{ color: C.ruby }}>{brMoney(creditoLiquido(row))}</div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Parcela inicial</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(parcelaInicial(row))}</div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Administradora</div>
+          <div className="font-black" style={{ color: C.gold }}>{getAdminName(row)}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 text-xs font-black uppercase tracking-[.1em]" style={{ color: C.ruby }}>
+        Ver detalhes
+      </div>
+    </button>
+  );
+}
+
 function SelectFilter({
   value,
   onChange,
@@ -587,12 +630,15 @@ export default function PropostasProMax() {
   const [paramsSaving, setParamsSaving] = useState(false);
   const [shareRows, setShareRows] = useState<Proposal[]>([]);
   const [shareModels, setShareModels] = useState<ShareModelKey[]>(DEFAULT_SHARE_MODELS);
+  const [shareViewMode, setShareViewMode] = useState<"grouped" | "individual">("grouped");
   const [shareResult, setShareResult] = useState<ShareResult | null>(null);
   const [shareSaving, setShareSaving] = useState(false);
   const [publicPin, setPublicPin] = useState("");
   const [publicLoading, setPublicLoading] = useState(false);
   const [publicRows, setPublicRows] = useState<Proposal[]>([]);
   const [publicAllowedModels, setPublicAllowedModels] = useState<ShareModelKey[]>(DEFAULT_SHARE_MODELS);
+  const [publicViewMode, setPublicViewMode] = useState<"grouped" | "individual">("grouped");
+  const [publicActiveCode, setPublicActiveCode] = useState<number | null>(null);
   const [publicError, setPublicError] = useState("");
 
   useEffect(() => {
@@ -970,7 +1016,11 @@ export default function PropostasProMax() {
       ...range,
       generated: filteredRows.filter((row) => isAfter(row.created_at, range.start)).length,
       sent: filteredEvents.filter((event) => event.event_type === "sent" && isAfter(event.created_at, range.start)).length,
-      opened: filteredEvents.filter((event) => event.event_type === "opened" && isAfter(event.created_at, range.start)).length,
+      opened: new Set(
+        filteredEvents
+          .filter((event) => event.event_type === "opened" && event.simulation_code !== null && isAfter(event.created_at, range.start))
+          .map((event) => event.simulation_code)
+      ).size,
     }));
   }, [filteredEvents, filteredRows]);
 
@@ -981,12 +1031,12 @@ export default function PropostasProMax() {
   function openShareDialog(targetRows: Proposal[]) {
     setShareRows(targetRows);
     setShareModels(DEFAULT_SHARE_MODELS);
+    setShareViewMode(targetRows.length > 1 ? "grouped" : "individual");
     setShareResult(null);
   }
 
   function toggleShareModel(model: ModelKey) {
     setShareModels((prev) => {
-      if (model === "extrato") return prev.includes("extrato") ? prev : ["extrato", ...prev];
       if (prev.includes(model)) {
         return prev.filter((item) => !String(item).startsWith(model));
       }
@@ -1000,6 +1050,25 @@ export default function PropostasProMax() {
       }
 
       return [...prev, model];
+    });
+  }
+
+  function toggleAllShareModels() {
+    setShareModels((prev) => {
+      const all: ShareModelKey[] = [
+        "extrato",
+        "aquisicao",
+        "previdencia",
+        "alav_financeira",
+        "alav_financeira_tradicional",
+        "alav_financeira_acelerada",
+        "alav_patrimonial",
+        "alav_patrimonial_tradicional",
+        "alav_patrimonial_otimizada",
+        "cadenciada",
+        "equity",
+      ];
+      return prev.length === all.length ? [] : all;
     });
   }
 
@@ -1040,6 +1109,7 @@ export default function PropostasProMax() {
       title: shareRows.length > 1 ? `Propostas ${codes.join(", ")}` : `Proposta #${codes[0]}`,
       simulation_codes: codes,
       allowed_models: cleanModels(shareModels),
+      view_mode: shareViewMode,
       consultant: {
         vendedor_nome: shareRows[0]?.vendedor_nome || shareRows[0]?.promax?.vendedor_nome || null,
         vendedor_telefone: shareRows[0]?.vendedor_telefone || shareRows[0]?.promax?.vendedor_telefone || null,
@@ -1050,6 +1120,12 @@ export default function PropostasProMax() {
       total_credito_liquido: shareRows.reduce((sum, row) => sum + creditoLiquido(row), 0),
       created_by: authRes.data.user?.id ?? null,
     };
+
+    if (!payload.allowed_models.length) {
+      setShareSaving(false);
+      alert("Selecione pelo menos um modelo para o cliente visualizar.");
+      return;
+    }
 
     const { error: insertError } = await supabase.from("proposal_pro_max_shares").insert(payload);
 
@@ -1108,11 +1184,13 @@ export default function PropostasProMax() {
     const response = data as {
       rows?: Proposal[];
       params?: Partial<ProposalParams>;
-      share?: { allowed_models?: string[] };
+      share?: { allowed_models?: string[]; view_mode?: "grouped" | "individual" };
     };
 
     setPublicRows((response.rows || []) as Proposal[]);
     setPublicAllowedModels(cleanModels(response.share?.allowed_models));
+    setPublicViewMode(response.share?.view_mode === "individual" ? "individual" : "grouped");
+    setPublicActiveCode(null);
     setProposalParams({ ...DEFAULT_PARAMS, ...(response.params || {}) });
     setPublicLoading(false);
   }
@@ -1240,6 +1318,7 @@ export default function PropostasProMax() {
 
   if (shareSlug) {
     const publicProposal = aggregateProposal(publicRows);
+    const publicActiveProposal = publicRows.find((row) => row.code === publicActiveCode) || null;
 
     return (
       <div className="min-h-screen bg-slate-50 p-4 md:p-6">
@@ -1272,6 +1351,35 @@ export default function PropostasProMax() {
                 Acessar proposta
               </Button>
             </section>
+          ) : publicViewMode === "individual" && !publicActiveProposal ? (
+            <>
+              <section
+                className="relative overflow-hidden rounded-xl border p-5 shadow-sm"
+                style={{ background: "linear-gradient(135deg, #1E293F 0%, #A11C27 100%)", borderColor: "rgba(255,255,255,.22)" }}
+              >
+                <div className="relative z-[1] text-white">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[.12em]">
+                    <FileText className="h-3.5 w-3.5" /> Propostas Consulmax
+                  </div>
+                  <h1 className="mt-3 text-2xl font-black md:text-4xl">Escolha a proposta para visualizar</h1>
+                  <p className="mt-2 max-w-3xl text-sm text-white/78">
+                    Estas são as propostas liberadas pelo consultor. Clique em uma delas para abrir os detalhes.
+                  </p>
+                </div>
+              </section>
+              <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {publicRows.map((row) => (
+                  <PublicProposalCard key={row.code} row={row} onOpen={() => setPublicActiveCode(row.code)} />
+                ))}
+              </section>
+            </>
+          ) : publicActiveProposal ? (
+            <>
+              <Button type="button" variant="outline" className="rounded-lg" onClick={() => setPublicActiveCode(null)}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Voltar para propostas
+              </Button>
+              <ProMaxModelosHub proposal={publicActiveProposal} params={proposalParams} allowedModels={publicAllowedModels} />
+            </>
           ) : (
             <ProMaxModelosHub proposal={publicProposal} params={proposalParams} allowedModels={publicAllowedModels} />
           )}
@@ -1709,12 +1817,47 @@ export default function PropostasProMax() {
                   </div>
                 </div>
 
+                {shareRows.length > 1 ? (
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Modo de visualização</div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        className="rounded-lg border p-3 text-left text-sm font-semibold"
+                        style={{ borderColor: shareViewMode === "grouped" ? C.ruby : undefined, color: shareViewMode === "grouped" ? C.navy : undefined }}
+                        onClick={() => setShareViewMode("grouped")}
+                      >
+                        <div className="font-black">Agrupada</div>
+                        <div className="mt-1 text-xs text-slate-500">Somar propostas em uma visão única.</div>
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border p-3 text-left text-sm font-semibold"
+                        style={{ borderColor: shareViewMode === "individual" ? C.ruby : undefined, color: shareViewMode === "individual" ? C.navy : undefined }}
+                        onClick={() => setShareViewMode("individual")}
+                      >
+                        <div className="font-black">Individualizada</div>
+                        <div className="mt-1 text-xs text-slate-500">Mostrar cards separados para cada proposta.</div>
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div>
-                  <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Modelos visíveis para o cliente</div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Modelos visíveis para o cliente</div>
+                    <label className="flex items-center gap-2 text-xs font-black text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={shareModels.length === SHARE_MODEL_KEYS.size}
+                        onChange={toggleAllShareModels}
+                      />
+                      Marcar todos
+                    </label>
+                  </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {SHARE_MODEL_OPTIONS.map((option) => {
                       const checked = shareModels.includes(option.key);
-                      const locked = option.key === "extrato";
                       return (
                         <div key={option.key} className="space-y-2">
                           <label
@@ -1725,11 +1868,9 @@ export default function PropostasProMax() {
                               type="checkbox"
                               className="h-4 w-4 rounded border-slate-300"
                               checked={checked}
-                              disabled={locked}
                               onChange={() => toggleShareModel(option.key)}
                             />
                             {option.label}
-                            {locked ? <span className="ml-auto text-xs text-slate-400">padrão</span> : null}
                           </label>
 
                           {option.key === "alav_financeira" && checked ? (
@@ -1808,11 +1949,11 @@ export default function PropostasProMax() {
                 ) : null}
 
                 <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
-                  <Button type="button" variant="outline" className="rounded-lg" onClick={() => createShare(false)} disabled={shareSaving}>
+                  <Button type="button" variant="outline" className="rounded-lg" onClick={() => createShare(false)} disabled={shareSaving || !shareModels.length}>
                     {shareSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Copy className="mr-2 h-4 w-4" />}
                     Gerar e copiar
                   </Button>
-                  <Button type="button" className="rounded-lg text-white" style={{ background: C.ruby }} onClick={() => createShare(true)} disabled={shareSaving}>
+                  <Button type="button" className="rounded-lg text-white" style={{ background: C.ruby }} onClick={() => createShare(true)} disabled={shareSaving || !shareModels.length}>
                     {shareSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Link2 className="mr-2 h-4 w-4" />}
                     Gerar e abrir WhatsApp
                   </Button>

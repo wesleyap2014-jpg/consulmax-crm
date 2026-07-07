@@ -84,6 +84,7 @@ export const router = createBrowserRouter([
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
+  { path: "/pm/:shareSlug", element: withSuspense(<PropostasProMax />) },
 
   { path: "/ponto", element: withSuspense(<PublicPonto />) },
   { path: "/registro-ponto", element: <Navigate to="/ponto" replace /> },
@@ -161,6 +162,7 @@ export const router = createBrowserRouter([
 
           { path: "propostas", element: withSuspense(<Propostas />) },
           { path: "propostas-pro-max", element: withSuspense(<PropostasProMax />) },
+          { path: "propostas-pro-max/unificar", element: withSuspense(<PropostasProMax />) },
           { path: "propostas-pro-max/:code", element: withSuspense(<PropostasProMax />) },
           { path: "propostas-cadenciado", element: withSuspense(<PropostasCadenciado />) },
           { path: "comissoes", element: withSuspense(<Comissoes />) },

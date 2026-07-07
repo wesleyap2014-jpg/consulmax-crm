@@ -1,6 +1,6 @@
 // src/pages/PropostasProMax.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ import {
   Loader2,
   Search,
   Settings2,
+  X,
 } from "lucide-react";
 
 type SimRow = {
@@ -83,6 +84,14 @@ type ProposalEvent = {
 
 type Proposal = SimRow & {
   promax?: ProMaxMetadata;
+};
+
+type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
+
+type ShareResult = {
+  link: string;
+  pin: string;
+  message: string;
 };
 
 type UserDirectoryRow = {
@@ -152,6 +161,18 @@ const C = {
 
 const PAGE_SIZE = 10;
 
+const SHARE_MODEL_OPTIONS: Array<{ key: ModelKey; label: string }> = [
+  { key: "extrato", label: "Extrato" },
+  { key: "aquisicao", label: "Aquisição" },
+  { key: "previdencia", label: "Previdência" },
+  { key: "alav_financeira", label: "Alav. Financeira" },
+  { key: "alav_patrimonial", label: "Alav. Patrimonial" },
+  { key: "cadenciada", label: "Cadenciada" },
+  { key: "equity", label: "Equity" },
+];
+
+const DEFAULT_SHARE_MODELS: ModelKey[] = ["extrato"];
+
 function onlyNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value !== "string") return 0;
@@ -193,6 +214,55 @@ function formatPercentFraction(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}%`;
+}
+
+function randomSlug(length = 8) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(length);
+  window.crypto?.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("").toLowerCase();
+}
+
+function randomPin() {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
+
+function cleanModels(models: string[] | null | undefined): ModelKey[] {
+  const allowed = new Set(SHARE_MODEL_OPTIONS.map((item) => item.key));
+  const cleaned = (models || []).filter((model): model is ModelKey => allowed.has(model as ModelKey));
+  return cleaned.length ? cleaned : DEFAULT_SHARE_MODELS;
+}
+
+function aggregateProposal(rows: Proposal[]): Proposal | null {
+  if (!rows.length) return null;
+  if (rows.length === 1) return rows[0];
+
+  const first = rows[0];
+  const sum = (key: string) => rows.reduce((total, row) => total + onlyNumber(row[key]), 0);
+
+  return {
+    ...first,
+    code: Number(String(rows.map((row) => row.code).join("")).slice(0, 12)) || first.code,
+    lead_nome: `${first.lead_nome || "Cliente"} - proposta unificada`,
+    lead_telefone: first.lead_telefone,
+    segmento: "Unificado",
+    grupo: rows.map((row) => row.grupo).filter(Boolean).join(" + "),
+    administradora: [...new Set(rows.map((row) => getAdminName(row)).filter(Boolean))].join(" + ") || first.administradora,
+    credito: sum("credito"),
+    valor_categoria: sum("valor_categoria"),
+    novo_credito: sum("novo_credito"),
+    parcela_ate_1_ou_2: sum("parcela_ate_1_ou_2"),
+    parcela_demais: sum("parcela_demais"),
+    parcela_escolhida: sum("parcela_escolhida"),
+    lance_ofertado_valor: sum("lance_ofertado_valor"),
+    lance_embutido_valor: sum("lance_embutido_valor"),
+    lance_proprio_valor: sum("lance_proprio_valor"),
+    promax: {
+      ...first.promax,
+      simulation_code: first.code,
+      administradora: "Múltiplas propostas",
+    },
+  };
 }
 
 function rowText(row: Proposal, keys: string[], fallback = "Não informado") {
@@ -467,8 +537,10 @@ function SelectFilter({
 
 export default function PropostasProMax() {
   const navigate = useNavigate();
+  const location = useLocation();
   const params = useParams();
   const activeCode = params.code ? Number(params.code) : null;
+  const shareSlug = params.shareSlug || "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -486,6 +558,15 @@ export default function PropostasProMax() {
   const [paramsOpen, setParamsOpen] = useState(false);
   const [proposalParams, setProposalParams] = useState<ProposalParams>(DEFAULT_PARAMS);
   const [paramsSaving, setParamsSaving] = useState(false);
+  const [shareRows, setShareRows] = useState<Proposal[]>([]);
+  const [shareModels, setShareModels] = useState<ModelKey[]>(DEFAULT_SHARE_MODELS);
+  const [shareResult, setShareResult] = useState<ShareResult | null>(null);
+  const [shareSaving, setShareSaving] = useState(false);
+  const [publicPin, setPublicPin] = useState("");
+  const [publicLoading, setPublicLoading] = useState(false);
+  const [publicRows, setPublicRows] = useState<Proposal[]>([]);
+  const [publicAllowedModels, setPublicAllowedModels] = useState<ModelKey[]>(DEFAULT_SHARE_MODELS);
+  const [publicError, setPublicError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -493,6 +574,21 @@ export default function PropostasProMax() {
     async function load() {
       setLoading(true);
       setError("");
+
+      if (shareSlug) {
+        const paramsRes = await supabase
+          .from("proposal_pro_max_parameters")
+          .select("params")
+          .eq("id", "global")
+          .maybeSingle();
+
+        if (!alive) return;
+        if (!paramsRes.error && paramsRes.data?.params) {
+          setProposalParams({ ...DEFAULT_PARAMS, ...(paramsRes.data.params as Partial<ProposalParams>) });
+        }
+        setLoading(false);
+        return;
+      }
 
       const { data, error: rowsError } = await supabase
         .from("sim_simulations")
@@ -704,7 +800,7 @@ export default function PropostasProMax() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [shareSlug]);
 
   const usersById = useMemo(() => {
     const map = new Map<string, UserDirectoryRow>();
@@ -792,6 +888,13 @@ export default function PropostasProMax() {
 
   const activeRow = useMemo(() => rows.find((row) => row.code === activeCode) || null, [activeCode, rows]);
   const selectedRows = useMemo(() => rows.filter((row) => selected.includes(row.code)), [rows, selected]);
+  const unifiedCodes = useMemo(() => {
+    const search = new URLSearchParams(location.search);
+    const raw = search.get("codes") || "";
+    return raw.split(",").map((code) => Number(code.trim())).filter((code) => Number.isFinite(code));
+  }, [location.search]);
+  const unifiedRows = useMemo(() => rows.filter((row) => unifiedCodes.includes(row.code)), [rows, unifiedCodes]);
+  const unifiedRow = useMemo(() => aggregateProposal(unifiedRows), [unifiedRows]);
   const totalCredit = useMemo(() => filteredRows.reduce((sum, row) => sum + creditoContratado(row), 0), [filteredRows]);
   const totalLiquidCredit = useMemo(() => filteredRows.reduce((sum, row) => sum + creditoLiquido(row), 0), [filteredRows]);
   const selectedTotalCredit = useMemo(() => selectedRows.reduce((sum, row) => sum + creditoContratado(row), 0), [selectedRows]);
@@ -833,6 +936,117 @@ export default function PropostasProMax() {
 
   function toggleSelected(code: number) {
     setSelected((prev) => (prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code]));
+  }
+
+  function openShareDialog(targetRows: Proposal[]) {
+    setShareRows(targetRows);
+    setShareModels(DEFAULT_SHARE_MODELS);
+    setShareResult(null);
+  }
+
+  function toggleShareModel(model: ModelKey) {
+    setShareModels((prev) => {
+      if (model === "extrato") return prev.includes("extrato") ? prev : ["extrato", ...prev];
+      return prev.includes(model) ? prev.filter((item) => item !== model) : [...prev, model];
+    });
+  }
+
+  function shareMessage(targetRows: Proposal[], link: string, pin: string) {
+    const lead = targetRows[0]?.lead_nome || "cliente";
+    const title = targetRows.length > 1 ? "suas propostas Consulmax" : "sua proposta Consulmax";
+    return [
+      `Olá, ${lead}. Segue ${title}:`,
+      "",
+      `Acesse: ${link}`,
+      `Senha: ${pin}`,
+      "",
+      "Clique no link e digite a senha para visualizar a proposta.",
+    ].join("\n");
+  }
+
+  async function createShare(openWhatsapp = false) {
+    if (!shareRows.length) return;
+
+    setShareSaving(true);
+    const authRes = await supabase.auth.getUser();
+    const codes = shareRows.map((row) => row.code);
+    const pin = randomPin();
+    const slug = randomSlug();
+    const payload = {
+      public_slug: slug,
+      access_pin: pin,
+      title: shareRows.length > 1 ? `Propostas ${codes.join(", ")}` : `Proposta #${codes[0]}`,
+      simulation_codes: codes,
+      allowed_models: cleanModels(shareModels),
+      total_credito: shareRows.reduce((sum, row) => sum + creditoContratado(row), 0),
+      total_credito_liquido: shareRows.reduce((sum, row) => sum + creditoLiquido(row), 0),
+      created_by: authRes.data.user?.id ?? null,
+    };
+
+    const { error: insertError } = await supabase.from("proposal_pro_max_shares").insert(payload);
+
+    if (insertError) {
+      setShareSaving(false);
+      alert(`Não foi possível criar o link seguro: ${insertError.message}`);
+      return;
+    }
+
+    await supabase.from("proposal_pro_max_events").insert(
+      codes.map((code) => ({
+        simulation_code: code,
+        event_type: "sent",
+        channel: openWhatsapp ? "whatsapp" : "link",
+        metadata: { public_slug: slug, allowed_models: payload.allowed_models },
+      }))
+    );
+
+    const link = `${window.location.origin}/pm/${slug}`;
+    const message = shareMessage(shareRows, link, pin);
+    await navigator.clipboard?.writeText(message);
+    setEvents((prev) => [
+      ...prev,
+      ...codes.map((code) => ({ simulation_code: code, event_type: "sent", created_at: new Date().toISOString() })),
+    ]);
+    setShareResult({ link, pin, message });
+    setShareSaving(false);
+
+    if (openWhatsapp) {
+      const phone = shareRows.length === 1 ? String(shareRows[0].lead_telefone || "").replace(/\D/g, "") : "";
+      const normalizedPhone = phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "";
+      const url = normalizedPhone
+        ? `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message)}`
+        : `https://wa.me/?text=${encodeURIComponent(message)}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  async function unlockPublicShare() {
+    if (!shareSlug || publicPin.length < 4) return;
+
+    setPublicLoading(true);
+    setPublicError("");
+
+    const { data, error: rpcError } = await supabase.rpc("open_proposal_pro_max_share", {
+      p_slug: shareSlug,
+      p_pin: publicPin,
+    });
+
+    if (rpcError || !data?.ok) {
+      setPublicError("Senha inválida ou link expirado.");
+      setPublicLoading(false);
+      return;
+    }
+
+    const response = data as {
+      rows?: Proposal[];
+      params?: Partial<ProposalParams>;
+      share?: { allowed_models?: string[] };
+    };
+
+    setPublicRows((response.rows || []) as Proposal[]);
+    setPublicAllowedModels(cleanModels(response.share?.allowed_models));
+    setProposalParams({ ...DEFAULT_PARAMS, ...(response.params || {}) });
+    setPublicLoading(false);
   }
 
   async function persistProposalParams(next: ProposalParams) {
@@ -954,6 +1168,72 @@ export default function PropostasProMax() {
       : `${window.location.origin}/propostas-pro-max/unificadas/${data.id}`;
 
     await navigator.clipboard?.writeText(link);
+  }
+
+  if (shareSlug) {
+    const publicProposal = aggregateProposal(publicRows);
+
+    return (
+      <div className="min-h-screen bg-slate-50 p-4 md:p-6">
+        <div className="mx-auto w-full max-w-none space-y-4">
+          {!publicProposal ? (
+            <section className="mx-auto mt-10 max-w-md rounded-xl border bg-white p-6 shadow-sm">
+              <div className="text-xs font-black uppercase tracking-[.14em] text-slate-500">Proposta Consulmax</div>
+              <h1 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>Acesso seguro</h1>
+              <p className="mt-2 text-sm text-slate-600">
+                Digite a senha de 4 dígitos enviada pelo consultor para visualizar a proposta.
+              </p>
+              <Input
+                className="mt-5 h-12 rounded-lg text-center text-xl font-black tracking-[.35em]"
+                value={publicPin}
+                onChange={(event) => setPublicPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") unlockPublicShare();
+                }}
+                placeholder="0000"
+              />
+              {publicError ? <div className="mt-3 text-sm font-semibold text-red-700">{publicError}</div> : null}
+              <Button
+                type="button"
+                className="mt-5 h-11 w-full rounded-lg text-white"
+                style={{ background: C.ruby }}
+                onClick={unlockPublicShare}
+                disabled={publicLoading || publicPin.length < 4}
+              >
+                {publicLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
+                Acessar proposta
+              </Button>
+            </section>
+          ) : (
+            <ProMaxModelosHub proposal={publicProposal} params={proposalParams} allowedModels={publicAllowedModels} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (location.pathname.endsWith("/unificar")) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-4 md:p-6">
+        <div className="mx-auto w-full max-w-none space-y-4">
+          <Button type="button" variant="outline" className="rounded-lg" onClick={() => navigate("/propostas-pro-max")}>
+            <ArrowLeft className="mr-2 h-4 w-4" /> Voltar para lista
+          </Button>
+
+          {loading ? (
+            <section className="flex items-center gap-2 rounded-lg border bg-white p-6 text-sm text-slate-600 shadow-sm">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando propostas selecionadas...
+            </section>
+          ) : unifiedRow ? (
+            <ProMaxModelosHub proposal={unifiedRow} params={proposalParams} />
+          ) : (
+            <section className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+              Nenhuma proposta válida foi encontrada para a visualização unificada.
+            </section>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (activeCode) {
@@ -1140,8 +1420,17 @@ export default function PropostasProMax() {
               <div className="text-sm text-slate-600">Crédito contratado selecionado: {brMoney(selectedTotalCredit)}</div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" className="rounded-lg" onClick={generateUnifiedLink} disabled={selectedRows.length < 2}>
-                <Link2 className="mr-2 h-4 w-4" /> Link unificado
+              <Button type="button" variant="outline" className="rounded-lg" onClick={() => openShareDialog(selectedRows)} disabled={selectedRows.length < 1}>
+                <Link2 className="mr-2 h-4 w-4" /> Enviar link seguro
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-lg"
+                onClick={() => navigate(`/propostas-pro-max/unificar?codes=${selectedRows.map((row) => row.code).join(",")}`)}
+                disabled={selectedRows.length < 2}
+              >
+                <Eye className="mr-2 h-4 w-4" /> Visualizar unificado
               </Button>
               <Button
                 type="button"
@@ -1249,10 +1538,10 @@ export default function PropostasProMax() {
                       <td className="p-3 text-right font-black" style={{ color: C.ruby }}>{brMoney(creditoLiquido(row))}</td>
                       <td className="p-3 text-center" onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-center gap-1">
-                          <Button type="button" variant="outline" size="sm" className="rounded-lg" onClick={() => copyLink(row)}>
+                          <Button type="button" variant="outline" size="sm" className="rounded-lg" onClick={() => openShareDialog([row])}>
                             <Copy className="h-4 w-4" />
                           </Button>
-                          <Button type="button" variant="outline" size="sm" className="rounded-lg" onClick={() => markSent(row)}>
+                          <Button type="button" variant="outline" size="sm" className="rounded-lg" onClick={() => navigate(`/propostas-pro-max/${row.code}`)}>
                             <Eye className="h-4 w-4" />
                           </Button>
                         </div>
@@ -1292,6 +1581,111 @@ export default function PropostasProMax() {
             os modelos visuais por estratégia, correção de crédito antes/depois da contemplação e link público rastreável.
           </p>
         </section>
+
+        {shareRows.length > 0 && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
+            <section className="w-full max-w-2xl overflow-hidden rounded-xl border bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+                <div>
+                  <h3 className="text-xl font-black" style={{ color: C.navy }}>
+                    Enviar proposta segura
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Escolha os modelos liberados. O cliente acessa pelo link curto e senha de 4 dígitos.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg border p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                  onClick={() => {
+                    setShareRows([]);
+                    setShareResult(null);
+                  }}
+                  aria-label="Fechar envio"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4 p-5">
+                <div className="rounded-lg bg-slate-50 p-4 text-sm">
+                  <div className="font-black" style={{ color: C.navy }}>
+                    {shareRows.length === 1 ? `#${shareRows[0].code} - ${shareRows[0].lead_nome || "Cliente"}` : `${shareRows.length} propostas selecionadas`}
+                  </div>
+                  <div className="mt-1 text-slate-600">
+                    Crédito total: {brMoney(shareRows.reduce((sum, row) => sum + creditoContratado(row), 0))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Modelos visíveis para o cliente</div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {SHARE_MODEL_OPTIONS.map((option) => {
+                      const checked = shareModels.includes(option.key);
+                      const locked = option.key === "extrato";
+                      return (
+                        <label
+                          key={option.key}
+                          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold ${checked ? "bg-slate-50" : "bg-white"}`}
+                          style={{ borderColor: checked ? C.ruby : undefined, color: checked ? C.navy : undefined }}
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-300"
+                            checked={checked}
+                            disabled={locked}
+                            onChange={() => toggleShareModel(option.key)}
+                          />
+                          {option.label}
+                          {locked ? <span className="ml-auto text-xs text-slate-400">padrão</span> : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {shareResult ? (
+                  <div className="rounded-lg border bg-slate-50 p-4 text-sm">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Link curto</div>
+                        <div className="mt-1 break-all font-black" style={{ color: C.navy }}>{shareResult.link}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Senha</div>
+                        <div className="mt-1 text-2xl font-black tracking-[.25em]" style={{ color: C.ruby }}>{shareResult.pin}</div>
+                      </div>
+                    </div>
+                    <textarea
+                      className="mt-3 h-32 w-full rounded-lg border bg-white p-3 text-sm"
+                      value={shareResult.message}
+                      readOnly
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-3 rounded-lg"
+                      onClick={() => navigator.clipboard?.writeText(shareResult.message)}
+                    >
+                      <Copy className="mr-2 h-4 w-4" /> Copiar mensagem
+                    </Button>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                  <Button type="button" variant="outline" className="rounded-lg" onClick={() => createShare(false)} disabled={shareSaving}>
+                    {shareSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Copy className="mr-2 h-4 w-4" />}
+                    Gerar e copiar
+                  </Button>
+                  <Button type="button" className="rounded-lg text-white" style={{ background: C.ruby }} onClick={() => createShare(true)} disabled={shareSaving}>
+                    {shareSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Link2 className="mr-2 h-4 w-4" />}
+                    Gerar e abrir WhatsApp
+                  </Button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </div>
   );

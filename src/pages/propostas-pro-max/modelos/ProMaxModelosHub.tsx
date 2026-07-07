@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
 import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFlow.ts";
 import { buildAquisicaoFlow } from "./fluxos/aquisicaoFlow";
@@ -21,6 +21,7 @@ type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "a
 type ProMaxModelosHubProps = {
   proposal: ProposalModelRow;
   params: ProposalParams;
+  allowedModels?: string[];
 };
 
 type AcquisitionDetailKey = "consortium" | "sac" | "price";
@@ -1435,10 +1436,21 @@ function PlaceholderModel({ model }: { model: (typeof MODELS)[number] }) {
   );
 }
 
-export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubProps) {
+export default function ProMaxModelosHub({ proposal, params, allowedModels }: ProMaxModelosHubProps) {
   const [activeModel, setActiveModel] = useState<ModelKey>("extrato");
-  const model = MODELS.find((item) => item.key === activeModel) || MODELS[0];
+  const visibleModels = useMemo(() => {
+    if (!allowedModels?.length) return MODELS;
+    const allowed = new Set(allowedModels);
+    return MODELS.filter((item) => allowed.has(item.key));
+  }, [allowedModels]);
+  const model = visibleModels.find((item) => item.key === activeModel) || visibleModels[0] || MODELS[0];
   const consultant = getConsultant(proposal);
+
+  useEffect(() => {
+    if (visibleModels.length && !visibleModels.some((item) => item.key === activeModel)) {
+      setActiveModel(visibleModels[0].key);
+    }
+  }, [activeModel, visibleModels]);
 
   return (
     <div className="space-y-4">
@@ -1503,7 +1515,7 @@ export default function ProMaxModelosHub({ proposal, params }: ProMaxModelosHubP
       </section>
 
       <section className="grid gap-2 md:grid-cols-4 xl:grid-cols-7">
-        {MODELS.map((item) => {
+        {visibleModels.map((item) => {
           const active = item.key === activeModel;
           return (
             <button

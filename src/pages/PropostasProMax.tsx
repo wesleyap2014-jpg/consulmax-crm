@@ -160,6 +160,28 @@ const C = {
   gold: "#B5A573",
 };
 
+function ConsulmaxLogoMark({ compact = false }: { compact?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  const boxClass = compact
+    ? "flex h-16 min-w-[220px] items-center justify-center rounded-lg border border-white/15 bg-white/10 px-5"
+    : "flex h-20 min-w-[280px] items-center justify-center rounded-xl border border-white/15 bg-white/10 px-6";
+
+  return (
+    <div className={boxClass}>
+      {failed ? (
+        <div className="text-center text-2xl font-black tracking-tight text-white">Consulmax</div>
+      ) : (
+        <img
+          src="/logo-consulmax.png?v=3"
+          alt="Consulmax"
+          className="max-h-full max-w-full object-contain"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
 const PAGE_SIZE = 10;
 
 const SHARE_MODEL_OPTIONS: Array<{ key: ModelKey; label: string }> = [
@@ -976,8 +998,14 @@ export default function PropostasProMax() {
     () => events.filter((event) => event.simulation_code !== null && filteredCodeSet.has(event.simulation_code)),
     [events, filteredCodeSet]
   );
-  const totalSent = useMemo(() => filteredEvents.filter((event) => event.event_type === "sent").length, [filteredEvents]);
-  const totalOpened = useMemo(() => filteredEvents.filter((event) => event.event_type === "opened").length, [filteredEvents]);
+  const totalSent = useMemo(
+    () => new Set(filteredEvents.filter((event) => event.event_type === "sent").map((event) => event.simulation_code)).size,
+    [filteredEvents]
+  );
+  const totalOpened = useMemo(
+    () => new Set(filteredEvents.filter((event) => event.event_type === "opened").map((event) => event.simulation_code)).size,
+    [filteredEvents]
+  );
   const openedStats = useMemo(() => {
     const map = new Map<number, { count: number; lastOpenedAt: string }>();
     for (const event of events) {
@@ -1357,14 +1385,17 @@ export default function PropostasProMax() {
                 className="relative overflow-hidden rounded-xl border p-5 shadow-sm"
                 style={{ background: "linear-gradient(135deg, #1E293F 0%, #A11C27 100%)", borderColor: "rgba(255,255,255,.22)" }}
               >
-                <div className="relative z-[1] text-white">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[.12em]">
-                    <FileText className="h-3.5 w-3.5" /> Propostas Consulmax
+                <div className="relative z-[1] flex flex-col gap-5 text-white lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[.12em]">
+                      <FileText className="h-3.5 w-3.5" /> Propostas Consulmax
+                    </div>
+                    <h1 className="mt-3 text-2xl font-black md:text-4xl">Escolha a proposta para visualizar</h1>
+                    <p className="mt-2 max-w-3xl text-sm text-white/78">
+                      Estas são as propostas liberadas pelo consultor. Clique em uma delas para abrir os detalhes.
+                    </p>
                   </div>
-                  <h1 className="mt-3 text-2xl font-black md:text-4xl">Escolha a proposta para visualizar</h1>
-                  <p className="mt-2 max-w-3xl text-sm text-white/78">
-                    Estas são as propostas liberadas pelo consultor. Clique em uma delas para abrir os detalhes.
-                  </p>
+                  <ConsulmaxLogoMark compact />
                 </div>
               </section>
               <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1478,6 +1509,10 @@ export default function PropostasProMax() {
                   Selecionar lista filtrada
                 </Button>
               </div>
+            </div>
+
+            <div className="hidden 2xl:flex 2xl:flex-1 2xl:justify-center">
+              <ConsulmaxLogoMark compact />
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[720px] xl:grid-cols-4">

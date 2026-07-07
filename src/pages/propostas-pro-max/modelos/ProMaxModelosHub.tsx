@@ -33,6 +33,25 @@ const C = {
   gold: "#B5A573",
 };
 
+function ConsulmaxLogoMark() {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <div className="flex h-24 min-w-[320px] items-center justify-center rounded-xl border border-white/15 bg-white/10 px-7 shadow-sm">
+      {failed ? (
+        <div className="text-center text-3xl font-black tracking-tight text-white">Consulmax</div>
+      ) : (
+        <img
+          src="/logo-consulmax.png?v=3"
+          alt="Consulmax"
+          className="max-h-full max-w-full object-contain"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
 const MODELS: Array<{ key: ModelKey; label: string; description: string }> = [
   { key: "extrato", label: "Extrato", description: "Correção da carta, crédito líquido e parcelas projetadas." },
   { key: "aquisicao", label: "Aquisição", description: "Modelo de compra do bem ou objetivo do cliente." },
@@ -1495,6 +1514,9 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
               Uma visão clara da sua estratégia, com crédito, lance, contemplação e evolução das parcelas organizados
               para apoiar uma decisão mais segura e mostrar o caminho do investimento com transparência.
             </p>
+          </div>
+          <div className="hidden xl:flex xl:flex-1 xl:justify-center">
+            <ConsulmaxLogoMark />
           </div>
           <div className="w-full rounded-lg border border-white/20 bg-white/95 p-4 text-slate-900 shadow-sm lg:max-w-sm">
             <div className="flex items-center gap-3">

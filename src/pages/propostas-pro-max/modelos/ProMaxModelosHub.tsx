@@ -1190,7 +1190,7 @@ function TraditionalScenarioCard({ scenario, tone }: { scenario: AlavancagemTrad
           <p className="mt-2 text-sm leading-relaxed text-slate-600">{scenario.description}</p>
         </div>
         <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color }}>
-          Mês {scenario.contemplationMonth}
+          Contemplação mês {scenario.contemplationMonth}
         </div>
       </div>
 
@@ -1204,8 +1204,8 @@ function TraditionalScenarioCard({ scenario, tone }: { scenario: AlavancagemTrad
           <div className="font-black" style={{ color }}>{brPercent(scenario.gainRate)}</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">Contemplação mês</div>
-          <div className="font-black" style={{ color: C.navy }}>Mês {scenario.contemplationMonth}</div>
+          <div className="text-xs font-semibold text-slate-500">TIR</div>
+          <div className="font-black" style={{ color: C.navy }}>{brPercent(scenario.tirMonthly)} a.m.</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
           <div className="text-xs font-semibold text-slate-500">ROI</div>

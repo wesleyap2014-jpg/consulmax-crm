@@ -40,6 +40,57 @@ function saleStrategy(availableCredit, installmentsPaid, investedValue, saleRate
   };
 }
 
+function npv(cashflows, rate) {
+  return cashflows.reduce((sum, value, index) => sum + value / Math.pow(1 + rate, index), 0);
+}
+
+function calculateMonthlyIrr(cashflows) {
+  const hasPositive = cashflows.some((value) => value > 0);
+  const hasNegative = cashflows.some((value) => value < 0);
+  if (!hasPositive || !hasNegative) return 0;
+
+  let low = -0.9999;
+  let high = 10;
+  let lowValue = npv(cashflows, low);
+  let highValue = npv(cashflows, high);
+
+  if (lowValue * highValue > 0) return 0;
+
+  for (let iteration = 0; iteration < 100; iteration += 1) {
+    const mid = (low + high) / 2;
+    const midValue = npv(cashflows, mid);
+    if (Math.abs(midValue) < 0.000001) return mid;
+
+    if (lowValue * midValue <= 0) {
+      high = mid;
+      highValue = midValue;
+    } else {
+      low = mid;
+      lowValue = midValue;
+    }
+  }
+
+  return (low + high) / 2;
+}
+
+function scenarioIrr(entries, contemplationMonth, saleValue, ownBid) {
+  const cashflows = [0];
+
+  for (let month = 1; month <= contemplationMonth; month += 1) {
+    const entry = entries.find((item) => item.month === month);
+    const installment = entry?.installment || 0;
+    const bid = month === contemplationMonth ? ownBid : 0;
+    const sale = month === contemplationMonth ? saleValue : 0;
+    cashflows.push(sale - installment - bid);
+  }
+
+  const monthly = calculateMonthlyIrr(cashflows);
+  return {
+    monthly,
+    annual: monthly > -1 ? Math.pow(1 + monthly, 12) - 1 : 0,
+  };
+}
+
 export function buildAlavancagemFinanceiraFlow(proposal, params) {
   const extrato = buildExtratoFlow(proposal, params);
   const entries = monthEntries(extrato.entries);
@@ -70,6 +121,8 @@ export function buildAlavancagemFinanceiraFlow(proposal, params) {
     : 0;
   const sorteioSale = saleStrategy(creditAtContemplation, installmentsPaid, lotteryInvested, traditionalSaleRate);
   const lanceSale = saleStrategy(availableAtContemplation, installmentsPaid, fixedBidInvested, traditionalSaleRate);
+  const sorteioIrr = scenarioIrr(entries, contemplationMonth, sorteioSale.saleValue, 0);
+  const lanceIrr = scenarioIrr(entries, contemplationMonth, lanceSale.saleValue, ownBid);
 
   const sorteio = {
     key: "sorteio",
@@ -87,6 +140,8 @@ export function buildAlavancagemFinanceiraFlow(proposal, params) {
     saleValue: sorteioSale.saleValue,
     saleProfit: sorteioSale.saleProfit,
     saleRoi: sorteioSale.saleRoi,
+    tirMonthly: sorteioIrr.monthly,
+    tirAnnual: sorteioIrr.annual,
   };
 
   const lanceFixo = {
@@ -105,6 +160,8 @@ export function buildAlavancagemFinanceiraFlow(proposal, params) {
     saleValue: lanceSale.saleValue,
     saleProfit: lanceSale.saleProfit,
     saleRoi: lanceSale.saleRoi,
+    tirMonthly: lanceIrr.monthly,
+    tirAnnual: lanceIrr.annual,
   };
 
   const eventsByMonth = new Map();

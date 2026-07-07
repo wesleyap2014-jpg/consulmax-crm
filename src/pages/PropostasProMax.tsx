@@ -165,12 +165,12 @@ function ConsulmaxLogoMark({ compact = false, featured = false }: { compact?: bo
   const wrapClass = featured
     ? "flex h-24 shrink-0 items-center justify-center overflow-visible lg:w-[380px] xl:w-[460px]"
     : compact
-    ? "flex shrink-0 items-center justify-center overflow-visible lg:w-[360px] xl:w-[420px]"
+    ? "flex shrink-0 items-center justify-center overflow-visible lg:w-[430px] xl:w-[520px]"
     : "flex shrink-0 items-center justify-center overflow-visible lg:w-[460px]";
   const imgClass = featured
     ? "h-24 w-auto max-w-[460px] scale-[2.45] object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)] md:h-28 md:scale-[2.65]"
     : compact
-    ? "h-20 w-auto max-w-[360px] scale-150 object-contain drop-shadow-[0_14px_30px_rgba(0,0,0,.22)] md:h-24"
+    ? "h-24 w-auto max-w-[520px] scale-[2.05] object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)] md:h-28 md:scale-[2.2]"
     : "h-28 w-auto max-w-[460px] scale-125 object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)]";
 
   return (
@@ -1518,11 +1518,11 @@ export default function PropostasProMax() {
               </div>
             </div>
 
-            <div className="hidden 2xl:flex 2xl:flex-1 2xl:justify-center">
+            <div className="hidden xl:flex xl:flex-1 xl:justify-center">
               <ConsulmaxLogoMark compact />
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[720px] xl:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[430px] xl:grid-cols-2">
               <div className="rounded-lg border border-white/20 bg-white/95 p-3">
                 <div className="text-xs font-semibold text-slate-500">Propostas</div>
                 <div className="mt-1 text-2xl font-black" style={{ color: C.navy }}>{filteredRows.length}</div>

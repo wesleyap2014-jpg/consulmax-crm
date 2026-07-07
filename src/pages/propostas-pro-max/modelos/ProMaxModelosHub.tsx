@@ -37,14 +37,14 @@ function ConsulmaxLogoMark() {
   const [failed, setFailed] = useState(false);
 
   return (
-    <div className="flex shrink-0 items-center justify-center overflow-visible xl:w-[360px] 2xl:w-[460px]">
+    <div className="flex shrink-0 items-center justify-center overflow-visible xl:w-[360px] 2xl:w-[430px]">
       {failed ? (
         <div className="text-center text-4xl font-black tracking-tight text-white drop-shadow-[0_14px_30px_rgba(0,0,0,.24)]">Consulmax</div>
       ) : (
         <img
           src="/logo-consulmax.png"
           alt="Consulmax"
-          className="h-28 w-auto max-w-[460px] scale-125 object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)]"
+          className="h-32 w-auto max-w-[430px] scale-[1.7] object-contain drop-shadow-[0_16px_34px_rgba(0,0,0,.24)]"
           onError={() => setFailed(true)}
         />
       )}
@@ -1515,7 +1515,7 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
               para apoiar uma decisão mais segura e mostrar o caminho do investimento com transparência.
             </p>
           </div>
-          <div className="hidden xl:flex xl:flex-none xl:justify-center">
+          <div className="hidden xl:flex xl:flex-1 xl:justify-end xl:pr-5 2xl:pr-7">
             <ConsulmaxLogoMark />
           </div>
           <div className="w-full rounded-lg border border-white/20 bg-white/95 p-4 text-slate-900 shadow-sm lg:max-w-sm">

@@ -364,7 +364,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   let availableAtContemplation = Math.max(0, creditAtContemplation - embeddedBidAtContemplation);
   let investmentUntilContemplation = 0;
 
-  while (month <= plannedMonths && balance > 0 && guard < 420) {
+  while (month <= plannedMonths && guard < 420) {
     guard += 1;
 
     if (month > 1 && (month - 1) % 12 === 0) {
@@ -408,7 +408,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
 
     const initialBalance = balance;
     const installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
-    const monthlyPayment = Math.min(installment, balance);
+    const monthlyPayment = balance > 0 ? Math.min(installment, balance) : 0;
     payments += monthlyPayment;
     balance = Math.max(0, balance - monthlyPayment);
 

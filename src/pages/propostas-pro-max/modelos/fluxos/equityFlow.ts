@@ -168,6 +168,14 @@ function annualToMonthly(annualRate: number) {
   return annualRate > 0 ? Math.pow(1 + annualRate, 1 / 12) - 1 : 0;
 }
 
+function moneyForEvent(value: number) {
+  return value.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+  });
+}
+
 function financingPayment(principal: number, term: number, monthlyRate: number) {
   const safeTerm = Math.max(1, Math.round(term));
   if (monthlyRate <= 0) return principal / safeTerm;
@@ -317,7 +325,7 @@ function buildLotteryInstallmentDetails(
       const remainingTerm = Math.max(1, safeTotalMonths - month + 1);
       balance += correctionValue;
       postInstallmentExtra += correctionValue / remainingTerm;
-      eventText = `Correção via sorteio: saldo devedor corrigido em ${brMoney(correctionValue)} e parcela ajustada conforme regra do Extrato.`;
+      eventText = `Correção via sorteio: saldo devedor corrigido em ${moneyForEvent(correctionValue)} e parcela ajustada conforme regra do Extrato.`;
     }
 
     const installment = balance > 0 ? Math.min(balance, basePostInstallment + postInstallmentExtra) : 0;
@@ -491,7 +499,8 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const debtAfterBid = Math.max(0, debtBeforeBid - strategicBid);
   const bidInstallmentDetails = buildBidInstallmentDetails(entries, events);
   const lotteryTerm = Math.max(1, extrato.summary.planTerm || totalMonths);
-  const lotteryInstallmentDetails = buildLotteryInstallmentDetails(entries, events, contemplationMonth, lotteryTerm, annualRate);
+  const correctionAnnualRate = Math.max(0, extrato.index.annualRate || 0);
+  const lotteryInstallmentDetails = buildLotteryInstallmentDetails(entries, events, contemplationMonth, lotteryTerm, correctionAnnualRate);
   const lotteryTotalPaid = lotteryInstallmentDetails.reduce((sum, entry) => sum + entry.installment, 0);
   const lotteryPostContemplationInstallment =
     lotteryInstallmentDetails.find((entry) => entry.month > contemplationMonth)?.installment ||

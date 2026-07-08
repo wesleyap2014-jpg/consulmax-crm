@@ -304,8 +304,8 @@ function buildLotteryInstallmentDetails(
   let balance = Math.max(0, balanceAfterContemplation);
   for (let month = safeContemplationMonth + 1; month <= safeTotalMonths && balance > 0; month += 1) {
     const originalEntry = entries.find((entry) => entry.month === month);
-    const remainingTerm = Math.max(1, safeTotalMonths - month + 1);
-    const installment = Math.min(balance, balance / remainingTerm);
+    const planTerm = Math.max(1, safeTotalMonths);
+    const installment = Math.min(balance, balance / planTerm);
     const initialBalance = balance;
     balance = Math.max(0, balance - installment);
     accumulatedPayments += installment;
@@ -479,7 +479,7 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const lotteryTotalPaid = lotteryInstallmentDetails.reduce((sum, entry) => sum + entry.installment, 0);
   const lotteryPostContemplationInstallment =
     lotteryInstallmentDetails.find((entry) => entry.month > contemplationMonth)?.installment ||
-    (totalMonths > contemplationMonth ? debtBeforeBid / Math.max(1, totalMonths - contemplationMonth) : 0);
+    (debtBeforeBid > 0 ? debtBeforeBid / Math.max(1, totalMonths) : 0);
   const bidPostContemplationInstallment =
     entries.find((entry) => entry.month > contemplationMonth)?.installment ||
     postContemplationInstallment;

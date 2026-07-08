@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
+import { BarChart3, CalendarDays, FileSpreadsheet, House, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
 import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFlow.ts";
 import { buildAlavancagemPatrimonialFlow } from "./fluxos/alavancagemPatrimonialFlow.ts";
 import { buildAquisicaoFlow } from "./fluxos/aquisicaoFlow";
@@ -1872,35 +1872,86 @@ function EquityDirectFlowCard({
   const color = tone === "ruby" ? C.ruby : C.gold;
   const isLance = scenario.key === "lance";
   const lanceText = isLance
-    ? `com lance proprio de ${brMoney(scenario.bidPaid)}${scenario.embeddedBidUsed > 0 ? ` e lance embutido de ${brMoney(scenario.embeddedBidUsed)}` : ""}`
-    : "sem lance pago";
-  const steps = [
+    ? `via lance, com lance proprio de ${brMoney(scenario.bidPaid)}${scenario.embeddedBidUsed > 0 ? ` e lance embutido de ${brMoney(scenario.embeddedBidUsed)}` : ""}`
+    : "via sorteio, sem lance pago";
+
+  const flowSteps: Array<{
+    key: string;
+    title: string;
+    value?: string;
+    helper: string;
+    accent?: "navy" | "ruby" | "gold";
+    visual?: "money" | "guarantee";
+  }> = [
     {
+      key: "entrada",
       title: "Entrada hoje",
       value: brMoney(scenario.firstInstallment),
       helper: "Você entra hoje pagando a primeira parcela da carta.",
-    },
-    {
-      title: "Parcelas mensais",
-      value: brMoney(scenario.postContemplationInstallment),
-      helper: "Assume o fluxo mensal projetado para sustentar a operação.",
-    },
-    {
-      title: `Contemplação mês ${scenario.contemplationMonth}`,
-      value: brMoney(scenario.creditReleased),
-      helper: `Você é contemplado ${isLance ? "via lance" : "via sorteio"}, ${lanceText}.`,
-    },
-    {
-      title: "Alienação do imóvel",
-      value: brMoney(scenario.creditReleased),
-      helper: "Você aliena o próprio imóvel como garantia e recebe o crédito liberado para usar estrategicamente.",
-    },
-    {
-      title: "Reinvestimento",
-      value: brMoney(scenario.leverageAmount),
-      helper: "Você reinveste o dinheiro no negócio para gerar mais lucro, caixa e expansão patrimonial.",
+      accent: tone,
     },
   ];
+
+  if (scenario.contemplationMonth > 1) {
+    flowSteps.push({
+      key: "pre",
+      title: "Parcelas pre",
+      value: brMoney(scenario.firstInstallment),
+      helper: `Mantem as parcelas mensais ate a contemplacao projetada no mes ${scenario.contemplationMonth}.`,
+      accent: "navy",
+    });
+  }
+
+  flowSteps.push({
+    key: "contemplacao",
+    title: `Contemplação mês ${scenario.contemplationMonth}`,
+    value: brMoney(scenario.creditReleased),
+    helper: `Você é contemplado ${lanceText}.`,
+    accent: tone,
+  });
+
+  flowSteps.push({
+    key: "pos",
+    title: "Parcela pos",
+    value: brMoney(scenario.postContemplationInstallment),
+    helper: "Apos a contemplacao, voce assume o fluxo mensal projetado da operacao.",
+    accent: "navy",
+  });
+
+  flowSteps.push({
+    key: "alienacao",
+    title: "Alienação do imóvel",
+    helper: "Você aliena o proprio imovel como garantia, viabilizando a liberacao do credito para uso estrategico.",
+    accent: "navy",
+    visual: "guarantee",
+  });
+
+  flowSteps.push({
+    key: "reinvestimento",
+    title: "Reinvestimento",
+    value: brMoney(scenario.creditReleased),
+    helper: "O valor total do credito liberado pode ser reinvestido no negocio para gerar mais lucro, caixa e expansao patrimonial.",
+    accent: tone,
+  });
+
+  const desktopPositions = flowSteps.length >= 6
+    ? [
+        "left-1/2 top-3 -translate-x-1/2",
+        "right-3 top-[18%]",
+        "right-4 bottom-[19%]",
+        "left-1/2 bottom-3 -translate-x-1/2",
+        "left-4 bottom-[19%]",
+        "left-3 top-[18%]",
+      ]
+    : [
+        "left-1/2 top-3 -translate-x-1/2",
+        "right-3 top-[22%]",
+        "right-8 bottom-[18%]",
+        "left-8 bottom-[18%]",
+        "left-3 top-[22%]",
+      ];
+
+  const accentColor = (accent?: "navy" | "ruby" | "gold") => accent === "ruby" ? C.ruby : accent === "gold" ? C.gold : C.navy;
 
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm" style={{ borderColor: tone === "ruby" ? "rgba(161,28,39,.38)" : "rgba(181,165,115,.42)" }}>
@@ -1918,10 +1969,10 @@ function EquityDirectFlowCard({
         </div>
       </div>
 
-      <div className="relative min-h-[520px] overflow-hidden bg-[radial-gradient(circle_at_center,rgba(181,165,115,.18),rgba(248,250,252,.76)_44%,rgba(255,255,255,.96)_74%)] p-5">
-        <div className="absolute left-1/2 top-1/2 h-[330px] w-[330px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-300/80" />
-        <div className="absolute left-1/2 top-1/2 h-[230px] w-[230px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-200/90" />
-        <div className="absolute left-1/2 top-1/2 z-[1] flex h-36 w-36 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border bg-white text-center shadow-xl">
+      <div className="relative overflow-hidden bg-[radial-gradient(circle_at_center,rgba(181,165,115,.18),rgba(248,250,252,.76)_44%,rgba(255,255,255,.96)_74%)] p-4 lg:min-h-[620px]">
+        <div className="hidden lg:block absolute left-1/2 top-1/2 h-[360px] w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-300/80" />
+        <div className="hidden lg:block absolute left-1/2 top-1/2 h-[248px] w-[248px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-200/90" />
+        <div className="hidden lg:flex absolute left-1/2 top-1/2 z-[1] h-40 w-40 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border bg-white text-center shadow-xl">
           <div className="text-[11px] font-black uppercase tracking-[.13em] text-slate-500">Alavancagem</div>
           <div className="mt-1 text-2xl font-black" style={{ color }}>
             {scenario.leverageMultiplier.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x
@@ -1929,27 +1980,66 @@ function EquityDirectFlowCard({
           <div className="mt-1 px-3 text-[11px] font-semibold text-slate-500">sobre o capital investido</div>
         </div>
 
-        {steps.map((step, index) => {
-          const positions = [
-            "left-1/2 top-4 -translate-x-1/2",
-            "right-6 top-[24%]",
-            "right-10 bottom-[18%]",
-            "left-10 bottom-[18%]",
-            "left-6 top-[24%]",
-          ];
-          return (
-            <div key={step.title} className={`absolute z-[2] w-[245px] rounded-xl border bg-white/95 p-4 shadow-lg backdrop-blur ${positions[index]}`}>
+        <div className="grid gap-4 lg:hidden">
+          <div className="mx-auto flex h-36 w-36 flex-col items-center justify-center rounded-full border bg-white text-center shadow-xl">
+            <div className="text-[11px] font-black uppercase tracking-[.13em] text-slate-500">Alavancagem</div>
+            <div className="mt-1 text-2xl font-black" style={{ color }}>
+              {scenario.leverageMultiplier.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x
+            </div>
+            <div className="mt-1 px-3 text-[11px] font-semibold text-slate-500">sobre o capital investido</div>
+          </div>
+          {flowSteps.map((step, index) => (
+            <div key={step.key} className="rounded-xl border bg-white p-4 shadow-md">
               <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black text-white" style={{ background: index % 2 ? C.navy : color }}>
+                <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black text-white" style={{ background: accentColor(step.accent) }}>
                   {index + 1}
                 </span>
                 <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{step.title}</div>
               </div>
-              <div className="mt-2 text-xl font-black" style={{ color }}>{step.value}</div>
+              {step.visual === "guarantee" ? (
+                <div className="mt-3 flex items-center gap-3" style={{ color: C.navy }}>
+                  <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
+                    <House className="h-6 w-6" />
+                    <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow">
+                      <Lock className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                  <div className="text-sm font-black">Imóvel em garantia</div>
+                </div>
+              ) : (
+                <div className="mt-2 text-xl font-black" style={{ color: accentColor(step.accent) }}>{step.value}</div>
+              )}
               <p className="mt-2 text-xs leading-relaxed text-slate-500">{step.helper}</p>
             </div>
-          );
-        })}
+          ))}
+        </div>
+
+        <div className="hidden lg:block">
+          {flowSteps.map((step, index) => (
+            <div key={step.key} className={`absolute z-[2] w-[200px] rounded-xl border bg-white/95 p-4 shadow-lg backdrop-blur ${desktopPositions[index]}`}>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black text-white" style={{ background: accentColor(step.accent) }}>
+                  {index + 1}
+                </span>
+                <div className="text-[11px] font-black uppercase tracking-[.1em] text-slate-500">{step.title}</div>
+              </div>
+              {step.visual === "guarantee" ? (
+                <div className="mt-3 flex items-center gap-3" style={{ color: C.navy }}>
+                  <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
+                    <House className="h-6 w-6" />
+                    <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow">
+                      <Lock className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                  <div className="text-sm font-black">Imóvel em garantia</div>
+                </div>
+              ) : (
+                <div className="mt-2 text-xl font-black" style={{ color: accentColor(step.accent) }}>{step.value}</div>
+              )}
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">{step.helper}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );

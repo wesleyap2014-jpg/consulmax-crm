@@ -86,8 +86,15 @@ type Proposal = SimRow & {
   promax?: ProMaxMetadata;
 };
 
-type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
-type ShareModelKey = ModelKey | "alav_financeira_tradicional" | "alav_financeira_acelerada" | "alav_patrimonial_tradicional" | "alav_patrimonial_otimizada";
+type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "equity" | "blindagem_caixa";
+type ShareModelKey =
+  | ModelKey
+  | "alav_financeira_tradicional"
+  | "alav_financeira_acelerada"
+  | "alav_patrimonial_tradicional"
+  | "alav_patrimonial_otimizada"
+  | "equity_direto"
+  | "equity_cadenciado";
 
 type ShareResult = {
   link: string;
@@ -136,6 +143,10 @@ type ProposalParams = {
   airbnb_pct: number;
   condominio_pct: number;
   alav_agio_pct: number;
+  equity_home_anual: number;
+  equity_pronaf_anual: number;
+  equity_pronamp_anual: number;
+  equity_demais_anual: number;
 };
 
 const DEFAULT_PARAMS: ProposalParams = {
@@ -152,6 +163,10 @@ const DEFAULT_PARAMS: ProposalParams = {
   airbnb_pct: 0.15,
   condominio_pct: 0.08,
   alav_agio_pct: 0.2,
+  equity_home_anual: 0.149,
+  equity_pronaf_anual: 0.08,
+  equity_pronamp_anual: 0.12,
+  equity_demais_anual: 0.18,
 };
 
 const C = {
@@ -197,8 +212,8 @@ const SHARE_MODEL_OPTIONS: Array<{ key: ModelKey; label: string }> = [
   { key: "previdencia", label: "Previdência" },
   { key: "alav_financeira", label: "Alav. Financeira" },
   { key: "alav_patrimonial", label: "Alav. Patrimonial" },
-  { key: "cadenciada", label: "Cadenciada" },
   { key: "equity", label: "Equity" },
+  { key: "blindagem_caixa", label: "Blindagem de Caixa" },
 ];
 
 const DEFAULT_SHARE_MODELS: ShareModelKey[] = ["extrato"];
@@ -212,8 +227,10 @@ const SHARE_MODEL_KEYS = new Set<ShareModelKey>([
   "alav_patrimonial",
   "alav_patrimonial_tradicional",
   "alav_patrimonial_otimizada",
-  "cadenciada",
   "equity",
+  "equity_direto",
+  "equity_cadenciado",
+  "blindagem_caixa",
 ]);
 
 function onlyNumber(value: unknown): number {
@@ -1084,6 +1101,10 @@ export default function PropostasProMax() {
         return [...prev, "alav_patrimonial", "alav_patrimonial_tradicional", "alav_patrimonial_otimizada"];
       }
 
+      if (model === "equity") {
+        return [...prev, "equity", "equity_direto", "equity_cadenciado"];
+      }
+
       return [...prev, model];
     });
   }
@@ -1100,8 +1121,10 @@ export default function PropostasProMax() {
         "alav_patrimonial",
         "alav_patrimonial_tradicional",
         "alav_patrimonial_otimizada",
-        "cadenciada",
         "equity",
+        "equity_direto",
+        "equity_cadenciado",
+        "blindagem_caixa",
       ];
       return prev.length === all.length ? [] : all;
     });
@@ -1588,6 +1611,10 @@ export default function PropostasProMax() {
               <ParamInput label="Airbnb" value={proposalParams.airbnb_pct} onChange={(value) => updateProposalParam("airbnb_pct", value)} />
               <ParamInput label="Condomínio" value={proposalParams.condominio_pct} onChange={(value) => updateProposalParam("condominio_pct", value)} />
               <ParamInput label="Ágio revenda carta" value={proposalParams.alav_agio_pct} onChange={(value) => updateProposalParam("alav_agio_pct", value)} />
+              <ParamInput label="Home Equity ano" value={proposalParams.equity_home_anual} onChange={(value) => updateProposalParam("equity_home_anual", value)} />
+              <ParamInput label="Pronaf ano" value={proposalParams.equity_pronaf_anual} onChange={(value) => updateProposalParam("equity_pronaf_anual", value)} />
+              <ParamInput label="Pronamp ano" value={proposalParams.equity_pronamp_anual} onChange={(value) => updateProposalParam("equity_pronamp_anual", value)} />
+              <ParamInput label="Demais linhas ano" value={proposalParams.equity_demais_anual} onChange={(value) => updateProposalParam("equity_demais_anual", value)} />
             </div>
           </section>
         )}
@@ -1953,6 +1980,27 @@ export default function PropostasProMax() {
                                   onChange={() => toggleShareSubModel("alav_patrimonial_otimizada", "alav_patrimonial")}
                                 />
                                 Otimizada
+                              </label>
+                            </div>
+                          ) : null}
+
+                          {option.key === "equity" && checked ? (
+                            <div className="ml-6 grid gap-1 rounded-lg bg-slate-50 p-2 text-xs font-semibold text-slate-600">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={shareModels.includes("equity_direto")}
+                                  onChange={() => toggleShareSubModel("equity_direto", "equity")}
+                                />
+                                Direto
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={shareModels.includes("equity_cadenciado")}
+                                  onChange={() => toggleShareSubModel("equity_cadenciado", "equity")}
+                                />
+                                Cadenciado
                               </label>
                             </div>
                           ) : null}

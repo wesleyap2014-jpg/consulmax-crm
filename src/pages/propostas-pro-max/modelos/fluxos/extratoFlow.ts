@@ -66,6 +66,10 @@ export type ProposalParams = {
   airbnb_pct: number;
   condominio_pct: number;
   alav_agio_pct: number;
+  equity_home_anual: number;
+  equity_pronaf_anual: number;
+  equity_pronamp_anual: number;
+  equity_demais_anual: number;
 };
 
 export type ExtratoMonthEntry = {

@@ -3,6 +3,7 @@ import { BarChart3, CalendarDays, FileSpreadsheet, LineChart, Lock, Phone, Trend
 import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFlow.ts";
 import { buildAlavancagemPatrimonialFlow } from "./fluxos/alavancagemPatrimonialFlow.ts";
 import { buildAquisicaoFlow } from "./fluxos/aquisicaoFlow";
+import { buildEquityFlow } from "./fluxos/equityFlow";
 import { buildExtratoFlow, onlyNumber } from "./fluxos/extratoFlow";
 import { buildPrevidenciaFlow } from "./fluxos/previdenciaFlow";
 
@@ -18,8 +19,10 @@ type AlavancagemFinanceiraFlow = ReturnType<typeof buildAlavancagemFinanceiraFlo
 type AlavancagemTraditionalScenario = AlavancagemFinanceiraFlow["traditional"]["scenarios"][number];
 type AlavancagemPatrimonialFlow = ReturnType<typeof buildAlavancagemPatrimonialFlow>;
 type PatrimonialChartPoint = AlavancagemPatrimonialFlow["chart"][number];
+type EquityFlow = ReturnType<typeof buildEquityFlow>;
+type EquityMode = "direto" | "cadenciado";
 
-type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "cadenciada" | "equity";
+type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "equity" | "blindagem_caixa";
 
 type ProMaxModelosHubProps = {
   proposal: ProposalModelRow;
@@ -62,8 +65,8 @@ const MODELS: Array<{ key: ModelKey; label: string; description: string }> = [
   { key: "previdencia", label: "Previdência", description: "Comparativo de longo prazo e reserva futura." },
   { key: "alav_financeira", label: "Alav. Financeira", description: "Uso de capital próprio, lance e custo de oportunidade." },
   { key: "alav_patrimonial", label: "Alavancagem Patrimonial", description: "Construção de patrimônio com carta corrigida." },
-  { key: "cadenciada", label: "Cadenciada", description: "Estratégia com múltiplas cartas e fases de aquisição." },
-  { key: "equity", label: "Equity", description: "Estratégia orientada a participação, entrada e saída." },
+  { key: "equity", label: "Equity", description: "Capital com garantia planejada, direto ou cadenciado." },
+  { key: "blindagem_caixa", label: "Blindagem de Caixa", description: "Reestruturação de dívida cara e preservação de caixa." },
 ];
 
 const PROJECTION_PAGE_SIZE = 12;
@@ -1747,6 +1750,262 @@ function AlavancagemPatrimonialModel({
   );
 }
 
+function EquityFlowBoard({ scenario }: { scenario: EquityFlow["direct"] }) {
+  return (
+    <section className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <LineChart className="h-4 w-4" /> Como o fluxo financeiro funciona
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            Uma leitura visual da operação: capital, lance, crédito liberado, renda gerada e custo mensal da carta.
+          </p>
+        </div>
+        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color: C.ruby }}>
+          {scenario.label}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
+        {scenario.steps.map((step, index) => {
+          const color = step.tone === "ruby" ? C.ruby : step.tone === "gold" ? C.gold : C.navy;
+          const connector = index < scenario.steps.length - 1;
+          return (
+            <div key={step.label} className="relative rounded-xl border bg-slate-50 p-4 shadow-sm">
+              {connector ? (
+                <div className="absolute -right-3 top-1/2 z-[1] hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-white text-sm font-black shadow-sm md:flex" style={{ color }}>
+                  →
+                </div>
+              ) : null}
+              <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{step.label}</div>
+              <div className="mt-2 text-xl font-black" style={{ color }}>{brMoney(step.value)}</div>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">{step.helper}</p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function EquityCompetitorTable({ flow }: { flow: EquityFlow }) {
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="border-b px-5 py-4">
+        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+          <FileSpreadsheet className="h-4 w-4" /> Comparativo com linhas de crédito
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          Compara o crédito liberado do Equity com linhas tradicionais, usando as taxas configuradas nos parâmetros.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[860px] w-full border-collapse text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+            <tr>
+              <th className="p-3 text-left">Linha</th>
+              <th className="p-3 text-right">Taxa a.m.</th>
+              <th className="p-3 text-right">Taxa a.a.</th>
+              <th className="p-3 text-right">Parcela estimada</th>
+              <th className="p-3 text-right">Total pago</th>
+              <th className="p-3 text-right">Juros/custo</th>
+              <th className="p-3 text-right">Diferença vs consórcio</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t">
+              <td className="p-3 font-black" style={{ color: C.gold }}>Equity com consórcio</td>
+              <td className="p-3 text-right">{brPercent(flow.direct.effectiveMonthlyCostRate)}</td>
+              <td className="p-3 text-right">{brPercent(flow.direct.effectiveAnnualCostRate)}</td>
+              <td className="p-3 text-right">{brMoney(flow.direct.monthlyConsortiumCost)}</td>
+              <td className="p-3 text-right font-semibold">{brMoney(flow.direct.totalPaid)}</td>
+              <td className="p-3 text-right">{brMoney(flow.direct.totalCost)}</td>
+              <td className="p-3 text-right font-black">-</td>
+            </tr>
+            {flow.competitors.map((item) => (
+              <tr key={item.key} className="border-t">
+                <td className="p-3 font-black" style={{ color: C.navy }}>{item.label}</td>
+                <td className="p-3 text-right">{brPercent(item.monthlyRate)}</td>
+                <td className="p-3 text-right">{brPercent(item.annualRate)}</td>
+                <td className="p-3 text-right">{brMoney(item.monthlyPayment)}</td>
+                <td className="p-3 text-right font-semibold">{brMoney(item.totalPaid)}</td>
+                <td className="p-3 text-right">{brMoney(item.totalInterest)}</td>
+                <td className="p-3 text-right font-black" style={{ color: item.differenceVsConsortium >= 0 ? C.ruby : C.gold }}>
+                  {brMoney(item.differenceVsConsortium)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function EquityCadencedCycles({ cycles }: { cycles: EquityFlow["cadenced"]["cycles"] }) {
+  return (
+    <section className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+        <BarChart3 className="h-4 w-4" /> Esteira cadenciada
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        {cycles.map((cycle) => (
+          <div key={cycle.cycle} className="rounded-xl border bg-slate-50 p-4 shadow-sm">
+            <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Ciclo {cycle.cycle} | mês {cycle.month}</div>
+            <div className="mt-2 text-xl font-black" style={{ color: cycle.cycle === 3 ? C.ruby : C.gold }}>
+              {brMoney(cycle.accumulatedEquity)}
+            </div>
+            <div className="mt-3 space-y-2 text-xs">
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Crédito em operação</span><strong>{brMoney(cycle.creditReleased)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Renda do ativo</span><strong>{brMoney(cycle.assetIncome)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Renda financeira</span><strong>{brMoney(cycle.investmentIncome)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Resultado mensal</span><strong>{brMoney(cycle.netPosition)}</strong></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EquityModel({
+  proposal,
+  params,
+  allowedModes,
+}: ProMaxModelosHubProps & { allowedModes?: EquityMode[] }) {
+  const [mode, setMode] = useState<EquityMode>("direto");
+  const flow = useMemo(() => buildEquityFlow(proposal, params), [proposal, params]);
+  const visibleModes = allowedModes?.length ? allowedModes : (["direto", "cadenciado"] as EquityMode[]);
+  const scenario = mode === "direto" ? flow.direct : flow.cadenced;
+
+  useEffect(() => {
+    if (!visibleModes.includes(mode)) setMode(visibleModes[0] || "direto");
+  }, [mode, visibleModes]);
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-[.12em]" style={{ color: C.navy }}>
+              <TrendingUp className="h-3.5 w-3.5" /> Equity com Consórcio
+            </div>
+            <h2 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>
+              Capital estratégico sem vender participação
+            </h2>
+            <p className="mt-2 max-w-4xl text-sm text-slate-600">
+              Equity com consórcio é uma forma de estruturar capital usando carta contemplada: o cliente aporta uma parte
+              como lance, preserva capital aplicado, libera crédito para aquisição/projeto/garantia e compara o custo com linhas
+              como Home Equity, Pronaf, Pronamp e demais créditos.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[560px]">
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Quanto eu pego?</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.gold }}>{brMoney(scenario.creditReleased)}</div>
+              <div className="text-xs text-slate-500">Crédito disponível no modelo selecionado</div>
+            </div>
+            <div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm">
+              <div className="text-xs font-bold uppercase tracking-[.08em] text-slate-500">Qual o custo?</div>
+              <div className="mt-1 text-xl font-black" style={{ color: C.ruby }}>{brPercent(scenario.effectiveMonthlyCostRate)} a.m.</div>
+              <div className="text-xs text-slate-500">{brPercent(scenario.effectiveAnnualCostRate)} a.a. equivalente</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {visibleModes.length > 1 ? (
+        <section className="grid gap-3 md:grid-cols-2">
+          {visibleModes.includes("direto") ? (
+            <AlavancagemSelectorCard
+              active={mode === "direto"}
+              label="Equity Direto"
+              description="Uma carta, uma contemplação e uma tese clara de crédito, renda e capital preservado."
+              onClick={() => setMode("direto")}
+            />
+          ) : null}
+          {visibleModes.includes("cadenciado") ? (
+            <AlavancagemSelectorCard
+              active={mode === "cadenciado"}
+              label="Equity Cadenciado"
+              description="Repete a tese em ciclos para formar uma esteira de capital e patrimônio."
+              onClick={() => setMode("cadenciado")}
+            />
+          ) : null}
+        </section>
+      ) : null}
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Crédito contratado" value={brMoney(flow.summary.contractedCredit)} />
+        <Metric label="Crédito liberado" value={brMoney(scenario.creditReleased)} tone="gold" />
+        <Metric label="Capital preservado" value={brMoney(scenario.capitalPreserved)} />
+        <Metric label="Lance estratégico" value={brMoney(scenario.strategicBid)} tone="ruby" />
+        <Metric label="Renda financeira mês" value={brMoney(scenario.monthlyInvestmentIncome)} tone="gold" />
+        <Metric label="Renda do ativo mês" value={brMoney(scenario.monthlyAssetIncome)} />
+        <Metric label="Resultado mensal" value={brMoney(scenario.monthlyNetPosition)} tone={scenario.monthlyNetPosition >= 0 ? "gold" : "ruby"} />
+        <Metric label="ROI projetado" value={brPercent(scenario.roi)} tone="ruby" />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[.85fr_1.15fr]">
+        <div className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <FileSpreadsheet className="h-4 w-4" /> Como funciona?
+          </div>
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Mês da contemplação</span>
+              <strong style={{ color: C.navy }}>Mês {flow.summary.contemplationMonth}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Crédito na contemplação</span>
+              <strong style={{ color: C.gold }}>{brMoney(flow.summary.creditAtContemplation)}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Lance embutido</span>
+              <strong style={{ color: C.navy }}>{brMoney(flow.summary.embeddedBidAtContemplation)}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Lance próprio</span>
+              <strong style={{ color: C.ruby }}>{brMoney(flow.summary.ownBidAtContemplation)}</strong>
+            </div>
+            <div className="flex justify-between gap-4 border-b pb-2">
+              <span className="text-slate-500">Renda do ativo</span>
+              <strong style={{ color: C.navy }}>{brPercent(flow.income.assetMonthlyRate)} a.m.</strong>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">CDI aplicado no capital preservado</span>
+              <strong style={{ color: C.gold }}>{brPercent(flow.cdi.monthlyRate)} a.m.</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <TrendingUp className="h-4 w-4" /> Quanto eu ganho?
+          </div>
+          <div className="mt-4 rounded-xl p-5" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.20), rgba(161,28,39,.08))" }}>
+            <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Ganho projetado da tese</div>
+            <div className="mt-2 text-3xl font-black" style={{ color: C.ruby }}>{brMoney(scenario.projectedGain)}</div>
+            <p className="mt-2 text-sm text-slate-600">
+              Considera crédito liberado, capital preservado, resultado anual estimado e custo total do consórcio no modelo selecionado.
+            </p>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <Metric label="Multiplicador" value={`${scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`} />
+            <Metric label="Resultado anual" value={brMoney(scenario.annualNetPosition)} tone={scenario.annualNetPosition >= 0 ? "gold" : "ruby"} />
+          </div>
+        </div>
+      </section>
+
+      <EquityFlowBoard scenario={scenario} />
+      {mode === "cadenciado" ? <EquityCadencedCycles cycles={flow.cadenced.cycles} /> : null}
+      <EquityCompetitorTable flow={flow} />
+    </div>
+  );
+}
+
 function PlaceholderModel({ model }: { model: (typeof MODELS)[number] }) {
   return (
     <section className="rounded-xl border bg-white p-8 text-center shadow-sm">
@@ -1783,6 +2042,14 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
     const modes: AlavancagemPatrimonialMode[] = [];
     if (allowed.has("alav_patrimonial_tradicional")) modes.push("tradicional");
     if (allowed.has("alav_patrimonial_otimizada")) modes.push("otimizada");
+    return modes.length ? modes : undefined;
+  }, [allowedModels]);
+  const allowedEquityModes = useMemo(() => {
+    if (!allowedModels?.length) return undefined;
+    const allowed = new Set(allowedModels);
+    const modes: EquityMode[] = [];
+    if (allowed.has("equity_direto")) modes.push("direto");
+    if (allowed.has("equity_cadenciado")) modes.push("cadenciado");
     return modes.length ? modes : undefined;
   }, [allowedModels]);
   const consultant = getConsultant(proposal);
@@ -1889,6 +2156,8 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
         <AlavancagemFinanceiraModel proposal={proposal} params={params} allowedModes={allowedAlavFinanceiraModes} />
       ) : activeModel === "alav_patrimonial" ? (
         <AlavancagemPatrimonialModel proposal={proposal} params={params} allowedModes={allowedAlavPatrimonialModes} />
+      ) : activeModel === "equity" ? (
+        <EquityModel proposal={proposal} params={params} allowedModes={allowedEquityModes} />
       ) : (
         <PlaceholderModel model={model} />
       )}

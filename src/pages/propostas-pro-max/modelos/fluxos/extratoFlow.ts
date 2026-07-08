@@ -41,6 +41,12 @@ export type ProposalModelRow = {
   parcela_termo?: number | string | null;
   parcela_limitante?: number | string | null;
   nova_parcela_sem_limite?: number | string | null;
+  seguro?: number | string | null;
+  valor_seguro?: number | string | null;
+  seguro_mensal?: number | string | null;
+  seguro_vida?: number | string | null;
+  seguro_prestamista?: number | string | null;
+  parcela_seguro?: number | string | null;
   antecip_parcelas?: number | string | null;
   promax?: {
     administradora?: string | null;
@@ -268,6 +274,33 @@ function monthlyAnticipationValue(row: ProposalModelRow) {
   return Math.max(0, parcelaInicial(row) - demaisParcelas(row));
 }
 
+function explicitInsuranceInstallment(row: ProposalModelRow) {
+  const direct =
+    onlyNumber(row.seguro_mensal) ||
+    onlyNumber(row.valor_seguro) ||
+    onlyNumber(row.seguro) ||
+    onlyNumber(row.seguro_vida) ||
+    onlyNumber(row.seguro_prestamista) ||
+    onlyNumber(row.parcela_seguro);
+
+  if (direct > 0) return direct;
+
+  for (const key of [
+    "seguro_mensal",
+    "valor_seguro",
+    "seguro",
+    "seguro_vida",
+    "seguro_prestamista",
+    "parcela_seguro",
+  ]) {
+    const value = row[key];
+    const parsed = onlyNumber(value);
+    if (parsed > 0) return parsed;
+  }
+
+  return 0;
+}
+
 function lancePago(row: ProposalModelRow) {
   return (
     onlyNumber(row.lance_ofertado_valor) ||
@@ -335,6 +368,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   const firstInstallment = parcelaInicial(proposal);
   const nextInstallments = demaisParcelas(proposal);
   const postContemplationInstallment = parcelaAposContemplacao(proposal);
+  const explicitPostContemplationInsurance = explicitInsuranceInstallment(proposal);
   const debt = onlyNumber(proposal.saldo_devedor_final) || Math.max(0, baseCredit - lancePago(proposal));
   const adminTaxPct = normalizeFraction(proposal.adm_tax_pct);
   const reserveTaxPct = normalizeFraction(proposal.fr_tax_pct);
@@ -398,7 +432,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
               `Saldo pré: ${brMoney(correctionBase)}`,
               `Correção: ${brMoney(correctionValue)}`,
               `Impacto mensal: ${brMoney(correctionValue / Math.max(1, plannedMonths - month + 1))}`,
-              `Nova parcela: ${brMoney(postContemplationAmortization + postContemplationInstallmentExtra + postContemplationInsurance)}`,
+              `Nova parcela: ${brMoney(baseInstallmentForMonth(proposal, month, true) * installmentCorrectionFactor + postContemplationInstallmentExtra)}`,
             ]
           : [
               "Base: crédito contratado",
@@ -416,16 +450,10 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
     let amortizationPayment = balance > 0 ? Math.min(installment, balance) : 0;
 
     if (contemplated) {
-      const regularPostBase =
-        postContemplationRegularBase ||
-        parcelaAposContemplacao(proposal) * installmentCorrectionFactor + postContemplationInstallmentExtra;
-      const tableDifferential = Math.max(0, scheduledTableInstallment - regularPostBase);
-      amortizationPayment = balance > 0
-        ? Math.min(balance, postContemplationAmortization + postContemplationInstallmentExtra)
-        : 0;
-      installment = amortizationPayment > 0
-        ? amortizationPayment + postContemplationInsurance + tableDifferential
-        : 0;
+      const explicitInsurance = Math.min(Math.max(0, postContemplationInsurance), Math.max(0, scheduledTableInstallment));
+      const amortizableInstallment = Math.max(0, scheduledTableInstallment - explicitInsurance);
+      amortizationPayment = balance > 0 ? Math.min(balance, amortizableInstallment) : 0;
+      installment = amortizationPayment > 0 ? amortizationPayment + explicitInsurance : 0;
     }
 
     payments += installment;
@@ -460,12 +488,8 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
         baseInstallmentForMonth(proposal, month + 1, true) * installmentCorrectionFactor + postContemplationInstallmentExtra;
       postContemplationRegularBase = regularInstallmentAfterContemplation;
       postContemplationAmortization = balance > 0 ? balance / effectiveNewTerm : 0;
-      postContemplationInsurance = Math.max(0, regularInstallmentAfterContemplation - postContemplationAmortization);
-      const nextInstallmentAfterContemplation =
-        postContemplationAmortization +
-        postContemplationInstallmentExtra +
-        postContemplationInsurance +
-        Math.max(0, tableInstallmentAfterContemplation - regularInstallmentAfterContemplation);
+      postContemplationInsurance = explicitPostContemplationInsurance;
+      const nextInstallmentAfterContemplation = tableInstallmentAfterContemplation;
 
       payments += paidBid;
       contemplated = true;

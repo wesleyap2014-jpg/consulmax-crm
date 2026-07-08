@@ -276,11 +276,11 @@ function buildLotteryInstallmentDetails(
   entries: ExtratoMonthEntry[],
   events: ExtratoEventEntry[],
   contemplationMonth: number,
-  totalMonths: number
+  postContemplationTerm: number
 ): EquityInstallmentDetailEntry[] {
   const rows: EquityInstallmentDetailEntry[] = [];
   const safeContemplationMonth = Math.max(1, contemplationMonth);
-  const safeTotalMonths = Math.max(safeContemplationMonth, totalMonths);
+  const safePostTerm = Math.max(1, Math.round(postContemplationTerm));
   let accumulatedPayments = 0;
   let balanceAfterContemplation = 0;
   let lastCredit = entries[0]?.credit || 0;
@@ -302,11 +302,13 @@ function buildLotteryInstallmentDetails(
   }
 
   let balance = Math.max(0, balanceAfterContemplation);
-  for (let month = safeContemplationMonth + 1; month <= safeTotalMonths && balance > 0; month += 1) {
+  const fixedInstallment = balance > 0 ? balance / safePostTerm : 0;
+  const lastMonth = safeContemplationMonth + safePostTerm;
+
+  for (let month = safeContemplationMonth + 1; month <= lastMonth && balance > 0; month += 1) {
     const originalEntry = entries.find((entry) => entry.month === month);
-    const planTerm = Math.max(1, safeTotalMonths);
-    const installment = Math.min(balance, balance / planTerm);
     const initialBalance = balance;
+    const installment = Math.min(balance, fixedInstallment);
     balance = Math.max(0, balance - installment);
     accumulatedPayments += installment;
     lastCredit = originalEntry?.credit || lastCredit;
@@ -319,7 +321,7 @@ function buildLotteryInstallmentDetails(
       payments: accumulatedPayments,
       endingBalance: balance,
       eventText: month === safeContemplationMonth + 1
-        ? "Recalculo via sorteio: saldo devedor dividido pelo prazo restante, sem abatimento de lance."
+        ? "Recalculo via sorteio: saldo devedor dividido pelo prazo informado no prazo da venda, sem abatimento de lance."
         : "",
     });
   }
@@ -428,6 +430,7 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const entries = monthEntries(extrato.entries);
   const events = eventEntries(extrato.entries);
   const totalMonths = Math.max(1, extrato.totalMonths);
+  const lotteryTerm = Math.max(1, Math.round(onlyNumber(proposal.prazo_venda) || extrato.summary.planTerm || totalMonths));
   const rawContemplationMonth = Math.round(onlyNumber(proposal.parcela_contemplacao));
   const contemplationMonth = Math.min(totalMonths, Math.max(1, rawContemplationMonth || 1));
   const cdiAnnualRate = normalizeFraction(params.cdi_anual);
@@ -475,11 +478,11 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const debtBeforeBid = contemplationEntry?.endingBalance || 0;
   const debtAfterBid = Math.max(0, debtBeforeBid - strategicBid);
   const bidInstallmentDetails = buildBidInstallmentDetails(entries, events);
-  const lotteryInstallmentDetails = buildLotteryInstallmentDetails(entries, events, contemplationMonth, totalMonths);
+  const lotteryInstallmentDetails = buildLotteryInstallmentDetails(entries, events, contemplationMonth, lotteryTerm);
   const lotteryTotalPaid = lotteryInstallmentDetails.reduce((sum, entry) => sum + entry.installment, 0);
   const lotteryPostContemplationInstallment =
     lotteryInstallmentDetails.find((entry) => entry.month > contemplationMonth)?.installment ||
-    (debtBeforeBid > 0 ? debtBeforeBid / Math.max(1, totalMonths) : 0);
+    (debtBeforeBid > 0 ? debtBeforeBid / lotteryTerm : 0);
   const bidPostContemplationInstallment =
     entries.find((entry) => entry.month > contemplationMonth)?.installment ||
     postContemplationInstallment;
@@ -494,7 +497,7 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     bidPaid: 0,
     debtAfterContemplation: debtBeforeBid,
     totalCost: lotteryTotalCost,
-    term: totalMonths,
+    term: lotteryTerm,
     firstInstallment,
     postContemplationInstallment: lotteryPostContemplationInstallment,
     contemplationMonth,

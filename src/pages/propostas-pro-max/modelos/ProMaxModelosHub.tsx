@@ -1869,6 +1869,144 @@ function EquityCadencedCycles({ cycles }: { cycles: EquityFlow["cadenced"]["cycl
   );
 }
 
+function EquityDirectProjectCost({ flow }: { flow: EquityFlow }) {
+  const { direct, summary } = flow;
+  const leverageLabel = direct.leverageOnBid > 0
+    ? `${direct.leverageOnBid.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`
+    : `${direct.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
+
+  return (
+    <section className="grid gap-4 lg:grid-cols-[.9fr_1.1fr]">
+      <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+          <TrendingUp className="h-4 w-4" /> Custo do projeto
+        </div>
+        <div className="mt-4 rounded-xl p-5" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.20), rgba(161,28,39,.08))" }}>
+          <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Custos totais / alavancagem</div>
+          <div className="mt-2 text-3xl font-black" style={{ color: C.ruby }}>{brPercent(direct.projectCostMonthlyRate)} a.m.</div>
+          <div className="mt-1 text-lg font-black" style={{ color: C.navy }}>{brPercent(direct.projectCostAnnualRate)} a.a.</div>
+          <p className="mt-2 text-sm text-slate-600">
+            Taxa efetiva aproximada pela relação entre custo total do consórcio e crédito disponível, descapitalizada pelo prazo do projeto.
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+          <FileSpreadsheet className="h-4 w-4" /> Leitura financeira
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-semibold text-slate-500">Custo total do projeto</div>
+            <div className="font-black" style={{ color: C.ruby }}>{brMoney(direct.totalCost)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-semibold text-slate-500">Alavancagem</div>
+            <div className="font-black" style={{ color: C.gold }}>{leverageLabel}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-semibold text-slate-500">Lance próprio</div>
+            <div className="font-black" style={{ color: C.ruby }}>{brMoney(summary.ownBidAtContemplation)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-semibold text-slate-500">Lance embutido</div>
+            <div className="font-black" style={{ color: C.navy }}>{brMoney(summary.embeddedBidAtContemplation)}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EquityCashFlowTable({ scenario, contemplationMonth }: { scenario: EquityFlow["direct"]; contemplationMonth: number }) {
+  const rows = scenario.cashFlow.filter((entry) => entry.month >= contemplationMonth).slice(0, 12);
+
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="border-b px-5 py-4">
+        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+          <LineChart className="h-4 w-4" /> Fluxo de caixa projetado
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          Primeiros 12 meses a partir da contemplação, somando renda financeira, renda do ativo e parcela do consórcio.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[760px] w-full border-collapse text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+            <tr>
+              <th className="p-3 text-left">Mês</th>
+              <th className="p-3 text-right">Renda financeira</th>
+              <th className="p-3 text-right">Renda do ativo</th>
+              <th className="p-3 text-right">Parcela</th>
+              <th className="p-3 text-right">Fluxo líquido</th>
+              <th className="p-3 text-right">Acumulado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((entry) => (
+              <tr key={entry.month} className="border-t">
+                <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
+                <td className="p-3 text-right">{brMoney(entry.investmentIncome)}</td>
+                <td className="p-3 text-right">{brMoney(entry.assetIncome)}</td>
+                <td className="p-3 text-right" style={{ color: C.ruby }}>{brMoney(entry.installment)}</td>
+                <td className="p-3 text-right font-black" style={{ color: entry.netCashFlow >= 0 ? C.gold : C.ruby }}>{brMoney(entry.netCashFlow)}</td>
+                <td className="p-3 text-right font-semibold">{brMoney(entry.accumulatedCashFlow)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function EquityInstallmentFlowTable({ scenario }: { scenario: EquityFlow["direct"] }) {
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="border-b px-5 py-4">
+        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+          <CalendarDays className="h-4 w-4" /> Fluxo de vencimento das parcelas
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          Fluxo mês a mês vindo do Extrato, preservando correção, contemplação, lance e novo prazo.
+        </p>
+      </div>
+      <div className="max-h-[440px] overflow-auto">
+        <table className="min-w-[760px] w-full border-collapse text-sm">
+          <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+            <tr>
+              <th className="p-3 text-left">Mês</th>
+              <th className="p-3 text-left">Fase</th>
+              <th className="p-3 text-right">Parcela</th>
+              <th className="p-3 text-right">Saldo devedor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {scenario.installmentFlow.map((entry) => (
+              <tr key={entry.month} className="border-t">
+                <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
+                <td className="p-3">
+                  <span
+                    className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black"
+                    style={{ color: entry.phase === "contemplacao" ? C.ruby : entry.phase === "pos_contemplacao" ? C.gold : C.navy }}
+                  >
+                    {entry.dueLabel}
+                  </span>
+                </td>
+                <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
+                <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
+                  {brMoney(entry.endingBalance)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function EquityModel({
   proposal,
   params,
@@ -1937,70 +2075,92 @@ function EquityModel({
         </section>
       ) : null}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Crédito contratado" value={brMoney(flow.summary.contractedCredit)} />
-        <Metric label="Crédito liberado" value={brMoney(scenario.creditReleased)} tone="gold" />
-        <Metric label="Capital preservado" value={brMoney(scenario.capitalPreserved)} />
-        <Metric label="Lance estratégico" value={brMoney(scenario.strategicBid)} tone="ruby" />
-        <Metric label="Renda financeira mês" value={brMoney(scenario.monthlyInvestmentIncome)} tone="gold" />
-        <Metric label="Renda do ativo mês" value={brMoney(scenario.monthlyAssetIncome)} />
-        <Metric label="Resultado mensal" value={brMoney(scenario.monthlyNetPosition)} tone={scenario.monthlyNetPosition >= 0 ? "gold" : "ruby"} />
-        <Metric label="ROI projetado" value={brPercent(scenario.roi)} tone="ruby" />
-      </section>
+      {mode === "direto" ? (
+        <>
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Crédito contratado" value={brMoney(flow.summary.contractedCredit)} />
+            <Metric label="Crédito disponível na contemplação" value={brMoney(flow.summary.availableAtContemplation)} tone="gold" />
+            <Metric label="Valor do lance" value={brMoney(scenario.strategicBid)} tone="ruby" />
+            <Metric
+              label="Alavancagem"
+              value={`${(scenario.leverageOnBid || scenario.leverageMultiple).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`}
+              tone="gold"
+            />
+          </section>
 
-      <section className="grid gap-4 lg:grid-cols-[.85fr_1.15fr]">
-        <div className="rounded-xl border bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-            <FileSpreadsheet className="h-4 w-4" /> Como funciona?
-          </div>
-          <div className="mt-4 space-y-3 text-sm">
-            <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">Mês da contemplação</span>
-              <strong style={{ color: C.navy }}>Mês {flow.summary.contemplationMonth}</strong>
-            </div>
-            <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">Crédito na contemplação</span>
-              <strong style={{ color: C.gold }}>{brMoney(flow.summary.creditAtContemplation)}</strong>
-            </div>
-            <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">Lance embutido</span>
-              <strong style={{ color: C.navy }}>{brMoney(flow.summary.embeddedBidAtContemplation)}</strong>
-            </div>
-            <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">Lance próprio</span>
-              <strong style={{ color: C.ruby }}>{brMoney(flow.summary.ownBidAtContemplation)}</strong>
-            </div>
-            <div className="flex justify-between gap-4 border-b pb-2">
-              <span className="text-slate-500">Renda do ativo</span>
-              <strong style={{ color: C.navy }}>{brPercent(flow.income.assetMonthlyRate)} a.m.</strong>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-slate-500">CDI aplicado no capital preservado</span>
-              <strong style={{ color: C.gold }}>{brPercent(flow.cdi.monthlyRate)} a.m.</strong>
-            </div>
-          </div>
-        </div>
+          <EquityDirectProjectCost flow={flow} />
+          <EquityFlowBoard scenario={scenario} />
+          <EquityCashFlowTable scenario={flow.direct} contemplationMonth={flow.summary.contemplationMonth} />
+          <EquityInstallmentFlowTable scenario={flow.direct} />
+        </>
+      ) : (
+        <>
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Crédito contratado" value={brMoney(flow.summary.contractedCredit)} />
+            <Metric label="Crédito liberado" value={brMoney(scenario.creditReleased)} tone="gold" />
+            <Metric label="Capital preservado" value={brMoney(scenario.capitalPreserved)} />
+            <Metric label="Lance estratégico" value={brMoney(scenario.strategicBid)} tone="ruby" />
+            <Metric label="Renda financeira mês" value={brMoney(scenario.monthlyInvestmentIncome)} tone="gold" />
+            <Metric label="Renda do ativo mês" value={brMoney(scenario.monthlyAssetIncome)} />
+            <Metric label="Resultado mensal" value={brMoney(scenario.monthlyNetPosition)} tone={scenario.monthlyNetPosition >= 0 ? "gold" : "ruby"} />
+            <Metric label="ROI projetado" value={brPercent(scenario.roi)} tone="ruby" />
+          </section>
 
-        <div className="rounded-xl border bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-            <TrendingUp className="h-4 w-4" /> Quanto eu ganho?
-          </div>
-          <div className="mt-4 rounded-xl p-5" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.20), rgba(161,28,39,.08))" }}>
-            <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Ganho projetado da tese</div>
-            <div className="mt-2 text-3xl font-black" style={{ color: C.ruby }}>{brMoney(scenario.projectedGain)}</div>
-            <p className="mt-2 text-sm text-slate-600">
-              Considera crédito liberado, capital preservado, resultado anual estimado e custo total do consórcio no modelo selecionado.
-            </p>
-          </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <Metric label="Multiplicador" value={`${scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`} />
-            <Metric label="Resultado anual" value={brMoney(scenario.annualNetPosition)} tone={scenario.annualNetPosition >= 0 ? "gold" : "ruby"} />
-          </div>
-        </div>
-      </section>
+          <section className="grid gap-4 lg:grid-cols-[.85fr_1.15fr]">
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+                <FileSpreadsheet className="h-4 w-4" /> Como funciona?
+              </div>
+              <div className="mt-4 space-y-3 text-sm">
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Mês da contemplação</span>
+                  <strong style={{ color: C.navy }}>Mês {flow.summary.contemplationMonth}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Crédito na contemplação</span>
+                  <strong style={{ color: C.gold }}>{brMoney(flow.summary.creditAtContemplation)}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Lance embutido</span>
+                  <strong style={{ color: C.navy }}>{brMoney(flow.summary.embeddedBidAtContemplation)}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Lance próprio</span>
+                  <strong style={{ color: C.ruby }}>{brMoney(flow.summary.ownBidAtContemplation)}</strong>
+                </div>
+                <div className="flex justify-between gap-4 border-b pb-2">
+                  <span className="text-slate-500">Renda do ativo</span>
+                  <strong style={{ color: C.navy }}>{brPercent(flow.income.assetMonthlyRate)} a.m.</strong>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500">CDI aplicado no capital preservado</span>
+                  <strong style={{ color: C.gold }}>{brPercent(flow.cdi.monthlyRate)} a.m.</strong>
+                </div>
+              </div>
+            </div>
 
-      <EquityFlowBoard scenario={scenario} />
-      {mode === "cadenciado" ? <EquityCadencedCycles cycles={flow.cadenced.cycles} /> : null}
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+                <TrendingUp className="h-4 w-4" /> Quanto eu ganho?
+              </div>
+              <div className="mt-4 rounded-xl p-5" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.20), rgba(161,28,39,.08))" }}>
+                <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Ganho projetado da tese</div>
+                <div className="mt-2 text-3xl font-black" style={{ color: C.ruby }}>{brMoney(scenario.projectedGain)}</div>
+                <p className="mt-2 text-sm text-slate-600">
+                  Considera crédito liberado, capital preservado, resultado anual estimado e custo total do consórcio no modelo selecionado.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <Metric label="Multiplicador" value={`${scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`} />
+                <Metric label="Resultado anual" value={brMoney(scenario.annualNetPosition)} tone={scenario.annualNetPosition >= 0 ? "gold" : "ruby"} />
+              </div>
+            </div>
+          </section>
+
+          <EquityFlowBoard scenario={scenario} />
+          <EquityCadencedCycles cycles={flow.cadenced.cycles} />
+        </>
+      )}
       <EquityCompetitorTable flow={flow} />
     </div>
   );

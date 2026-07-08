@@ -26,6 +26,23 @@ export type EquityFlowStep = {
   tone: "navy" | "ruby" | "gold";
 };
 
+export type EquityCashFlowEntry = {
+  month: number;
+  investmentIncome: number;
+  assetIncome: number;
+  installment: number;
+  netCashFlow: number;
+  accumulatedCashFlow: number;
+};
+
+export type EquityInstallmentFlowEntry = {
+  month: number;
+  phase: "antes_contemplacao" | "contemplacao" | "pos_contemplacao";
+  dueLabel: string;
+  installment: number;
+  endingBalance: number;
+};
+
 export type EquityScenario = {
   key: EquityMode;
   label: string;
@@ -43,9 +60,14 @@ export type EquityScenario = {
   projectedGain: number;
   roi: number;
   leverageMultiple: number;
+  leverageOnBid: number;
   totalPaid: number;
   totalCost: number;
+  projectCostMonthlyRate: number;
+  projectCostAnnualRate: number;
   steps: EquityFlowStep[];
+  cashFlow: EquityCashFlowEntry[];
+  installmentFlow: EquityInstallmentFlowEntry[];
 };
 
 export type EquityCycle = {
@@ -242,6 +264,9 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const totalPaid = totalInstallments + ownBid;
   const totalCost = Math.max(0, totalPaid - creditReleased);
   const consortiumMonthlyCostRate = creditReleased > 0 ? postContemplationInstallment / creditReleased : 0;
+  const totalProjectCostRate = creditReleased > 0 ? totalCost / creditReleased : 0;
+  const projectCostMonthlyRate = totalProjectCostRate > 0 ? Math.pow(1 + totalProjectCostRate, 1 / totalMonths) - 1 : 0;
+  const projectCostAnnualRate = Math.pow(1 + projectCostMonthlyRate, 12) - 1;
   const capitalBase = Math.max(creditReleased, strategicBid + Math.max(0, creditReleased - strategicBid));
   const capitalPreserved = Math.max(0, capitalBase - ownBid);
   const monthlyInvestmentIncome = capitalPreserved * cdiMonthlyRate;
@@ -251,6 +276,43 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const projectedGain = Math.max(0, creditReleased + capitalPreserved + annualNetPosition - totalPaid);
   const roi = totalPaid > 0 ? projectedGain / totalPaid : 0;
   const leverageMultiple = totalPaid > 0 ? (creditReleased + capitalPreserved) / totalPaid : 0;
+  const leverageOnBid = strategicBid > 0 ? creditReleased / strategicBid : 0;
+  const installmentFlow: EquityInstallmentFlowEntry[] = entries.map((entry) => ({
+    month: entry.month,
+    phase:
+      entry.month < contemplationMonth
+        ? "antes_contemplacao"
+        : entry.month === contemplationMonth
+        ? "contemplacao"
+        : "pos_contemplacao",
+    dueLabel:
+      entry.month < contemplationMonth
+        ? "Antes da contemplação"
+        : entry.month === contemplationMonth
+        ? "Contemplação"
+        : "Pós-contemplação",
+    installment: entry.installment,
+    endingBalance: entry.endingBalance,
+  }));
+  const cashFlow: EquityCashFlowEntry[] = [];
+  let accumulatedCashFlow = 0;
+
+  for (const entry of entries) {
+    const activeAfterContemplation = entry.month >= contemplationMonth;
+    const investmentIncome = activeAfterContemplation ? monthlyInvestmentIncome : 0;
+    const assetIncome = activeAfterContemplation ? monthlyAssetIncome : 0;
+    const netCashFlow = investmentIncome + assetIncome - entry.installment;
+    accumulatedCashFlow += netCashFlow;
+
+    cashFlow.push({
+      month: entry.month,
+      investmentIncome,
+      assetIncome,
+      installment: entry.installment,
+      netCashFlow,
+      accumulatedCashFlow,
+    });
+  }
 
   const direct: EquityScenario = {
     key: "direto",
@@ -269,8 +331,11 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     projectedGain,
     roi,
     leverageMultiple,
+    leverageOnBid,
     totalPaid,
     totalCost,
+    projectCostMonthlyRate,
+    projectCostAnnualRate,
     steps: scenarioSteps({
       capitalBase,
       strategicBid,
@@ -281,6 +346,8 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
       monthlyConsortiumCost: postContemplationInstallment,
       monthlyNetPosition,
     }),
+    cashFlow,
+    installmentFlow,
   };
 
   const cycles: EquityCycle[] = [];
@@ -336,8 +403,11 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     projectedGain: cadencedProjectedGain,
     roi: cadencedTotalPaid > 0 ? cadencedProjectedGain / cadencedTotalPaid : 0,
     leverageMultiple: cadencedTotalPaid > 0 ? (cadencedCreditReleased + cadencedCapitalPreserved) / cadencedTotalPaid : 0,
+    leverageOnBid: strategicBid > 0 ? cadencedCreditReleased / (strategicBid * 3) : 0,
     totalPaid: cadencedTotalPaid,
     totalCost: totalCost * 3,
+    projectCostMonthlyRate,
+    projectCostAnnualRate,
     steps: scenarioSteps({
       capitalBase: capitalBase * 3,
       strategicBid: strategicBid * 3,
@@ -348,6 +418,19 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
       monthlyConsortiumCost: cadencedCost,
       monthlyNetPosition: cadencedMonthlyNet,
     }),
+    cashFlow: cashFlow.map((entry) => ({
+      ...entry,
+      investmentIncome: entry.investmentIncome * 3,
+      assetIncome: entry.assetIncome * 3,
+      installment: entry.installment * 3,
+      netCashFlow: entry.netCashFlow * 3,
+      accumulatedCashFlow: entry.accumulatedCashFlow * 3,
+    })),
+    installmentFlow: installmentFlow.map((entry) => ({
+      ...entry,
+      installment: entry.installment * 3,
+      endingBalance: entry.endingBalance * 3,
+    })),
     cycles,
   };
 

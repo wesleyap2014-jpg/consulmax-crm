@@ -21,6 +21,7 @@ type AlavancagemPatrimonialFlow = ReturnType<typeof buildAlavancagemPatrimonialF
 type PatrimonialChartPoint = AlavancagemPatrimonialFlow["chart"][number];
 type EquityFlow = ReturnType<typeof buildEquityFlow>;
 type EquityMode = "direto" | "cadenciado";
+type EquityDirectDetailKey = "sorteio" | "lance";
 
 type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "equity" | "blindagem_caixa";
 
@@ -1750,7 +1751,75 @@ function AlavancagemPatrimonialModel({
   );
 }
 
-function EquityFlowBoard({ scenario }: { scenario: EquityFlow["direct"] }) {
+function EquityFlowBoard({ scenario, flow }: { scenario: EquityFlow["direct"]; flow?: EquityFlow }) {
+  const nodes = flow
+    ? [
+        {
+          label: "Credito contratado",
+          value: brMoney(flow.summary.contractedCredit),
+          helper: "Ponto de partida da carta usada na operacao.",
+          tone: "navy" as const,
+          className: "left-1/2 top-4 -translate-x-1/2",
+        },
+        {
+          label: "Lance proprio",
+          value: brMoney(flow.summary.ownBidAtContemplation),
+          helper: "Aporte direto usado na estrategia via lance.",
+          tone: "ruby" as const,
+          className: "right-8 top-20",
+        },
+        {
+          label: "Credito via lance",
+          value: brMoney(flow.directComparisons.bid.creditReleased),
+          helper: "Credito liquido depois do lance utilizado.",
+          tone: "ruby" as const,
+          className: "right-8 top-1/2 -translate-y-1/2",
+        },
+        {
+          label: "Projeto/garantia",
+          value: brMoney(flow.directComparisons.bid.leverageAmount),
+          helper: "Capital de terceiros liberado para executar a tese.",
+          tone: "gold" as const,
+          className: "right-24 bottom-12",
+        },
+        {
+          label: "Parcela consorcio",
+          value: brMoney(flow.summary.postContemplationInstallment),
+          helper: "Fluxo mensal reajustado pelo motor do Extrato.",
+          tone: "ruby" as const,
+          className: "left-1/2 bottom-4 -translate-x-1/2",
+        },
+        {
+          label: "Saldo devedor",
+          value: brMoney(flow.directComparisons.bid.debtAfterContemplation),
+          helper: "Saldo remanescente depois da contemplacao.",
+          tone: "navy" as const,
+          className: "left-8 top-1/2 -translate-y-1/2",
+        },
+        {
+          label: "Credito via sorteio",
+          value: brMoney(flow.directComparisons.lottery.creditReleased),
+          helper: "Credito integral disponivel sem lance proprio.",
+          tone: "gold" as const,
+          className: "left-8 top-20",
+        },
+      ]
+    : scenario.steps.slice(0, 7).map((step, index) => ({
+        label: step.label,
+        value: brMoney(step.value),
+        helper: step.helper,
+        tone: step.tone,
+        className: [
+          "left-1/2 top-4 -translate-x-1/2",
+          "right-8 top-20",
+          "right-8 top-1/2 -translate-y-1/2",
+          "right-24 bottom-12",
+          "left-1/2 bottom-4 -translate-x-1/2",
+          "left-8 top-1/2 -translate-y-1/2",
+          "left-8 top-20",
+        ][index],
+      }));
+
   return (
     <section className="rounded-xl border bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -1759,7 +1828,7 @@ function EquityFlowBoard({ scenario }: { scenario: EquityFlow["direct"] }) {
             <LineChart className="h-4 w-4" /> Como o fluxo financeiro funciona
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Uma leitura visual da operação: capital, lance, crédito liberado, renda gerada e custo mensal da carta.
+            Uma leitura visual da operacao: carta, contemplacao, credito liberado, saldo devedor e custo mensal.
           </p>
         </div>
         <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color: C.ruby }}>
@@ -1767,19 +1836,22 @@ function EquityFlowBoard({ scenario }: { scenario: EquityFlow["direct"] }) {
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-4">
-        {scenario.steps.map((step, index) => {
+      <div className="relative mt-5 min-h-[520px] overflow-hidden rounded-2xl border bg-[radial-gradient(circle_at_center,rgba(181,165,115,.18),rgba(248,250,252,.72)_42%,rgba(255,255,255,.95)_72%)] p-5">
+        <div className="absolute left-1/2 top-1/2 z-[1] flex h-40 w-40 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border bg-white text-center shadow-xl">
+          <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Equity</div>
+          <div className="mt-1 text-2xl font-black" style={{ color: C.navy }}>
+            {flow ? `${flow.directComparisons.bid.leverageMultiplier.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x` : `${scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`}
+          </div>
+          <div className="mt-1 px-3 text-[11px] font-semibold text-slate-500">multiplicador da alavancagem</div>
+        </div>
+        <div className="absolute left-1/2 top-1/2 h-[330px] w-[330px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-300/80" />
+        <div className="absolute left-1/2 top-1/2 h-[430px] w-[430px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-200/80" />
+        {nodes.map((step) => {
           const color = step.tone === "ruby" ? C.ruby : step.tone === "gold" ? C.gold : C.navy;
-          const connector = index < scenario.steps.length - 1;
           return (
-            <div key={step.label} className="relative rounded-xl border bg-slate-50 p-4 shadow-sm">
-              {connector ? (
-                <div className="absolute -right-3 top-1/2 z-[1] hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-white text-sm font-black shadow-sm md:flex" style={{ color }}>
-                  →
-                </div>
-              ) : null}
+            <div key={step.label} className={`absolute z-[2] w-[250px] rounded-xl border bg-white/95 p-4 shadow-lg backdrop-blur ${step.className}`}>
               <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{step.label}</div>
-              <div className="mt-2 text-xl font-black" style={{ color }}>{brMoney(step.value)}</div>
+              <div className="mt-2 text-xl font-black" style={{ color }}>{step.value}</div>
               <p className="mt-2 text-xs leading-relaxed text-slate-500">{step.helper}</p>
             </div>
           );
@@ -1790,6 +1862,8 @@ function EquityFlowBoard({ scenario }: { scenario: EquityFlow["direct"] }) {
 }
 
 function EquityCompetitorTable({ flow }: { flow: EquityFlow }) {
+  const equityBase = flow.directComparisons.bid;
+
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
       <div className="border-b px-5 py-4">
@@ -1816,11 +1890,11 @@ function EquityCompetitorTable({ flow }: { flow: EquityFlow }) {
           <tbody>
             <tr className="border-t">
               <td className="p-3 font-black" style={{ color: C.gold }}>Equity com consórcio</td>
-              <td className="p-3 text-right">{brPercent(flow.direct.effectiveMonthlyCostRate)}</td>
-              <td className="p-3 text-right">{brPercent(flow.direct.effectiveAnnualCostRate)}</td>
+              <td className="p-3 text-right">{brPercent(equityBase.compoundCetMonthly)}</td>
+              <td className="p-3 text-right">{brPercent(equityBase.compoundCetAnnual)}</td>
               <td className="p-3 text-right">{brMoney(flow.direct.monthlyConsortiumCost)}</td>
-              <td className="p-3 text-right font-semibold">{brMoney(flow.direct.totalPaid)}</td>
-              <td className="p-3 text-right">{brMoney(flow.direct.totalCost)}</td>
+              <td className="p-3 text-right font-semibold">{brMoney(equityBase.totalInvested + equityBase.debtAfterContemplation)}</td>
+              <td className="p-3 text-right">{brMoney(equityBase.totalCost)}</td>
               <td className="p-3 text-right font-black">-</td>
             </tr>
             {flow.competitors.map((item) => (
@@ -1915,6 +1989,153 @@ function EquityDirectProjectCost({ flow }: { flow: EquityFlow }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function EquityDirectComparisonCard({
+  scenario,
+  tone,
+  onOpenDetails,
+}: {
+  scenario: EquityFlow["directComparisons"]["lottery"];
+  tone: "gold" | "ruby";
+  onOpenDetails: () => void;
+}) {
+  const color = tone === "ruby" ? C.ruby : C.gold;
+  const multiplier = `${scenario.leverageMultiplier.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}x`;
+
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm" style={{ borderColor: tone === "ruby" ? "rgba(161,28,39,.42)" : "rgba(181,165,115,.42)" }}>
+      <div className="border-b p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-black uppercase tracking-[.14em]" style={{ color }}>{scenario.label}</div>
+            <div className="mt-2 text-3xl font-black" style={{ color }}>{brMoney(scenario.creditReleased)}</div>
+            <p className="mt-2 text-sm text-slate-600">{scenario.description}</p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color }}>
+            {multiplier}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid gap-3 p-5 sm:grid-cols-2">
+        <Metric label="Credito liberado" value={brMoney(scenario.creditReleased)} tone={tone} />
+        <Metric label="Parcelas pagas ate a contemplacao" value={brMoney(scenario.installmentsPaidUntilContemplation)} />
+        <Metric label="Lance pago" value={brMoney(scenario.bidPaid)} tone={scenario.bidPaid > 0 ? "ruby" : undefined} />
+        <Metric label="Total investido" value={brMoney(scenario.totalInvested)} />
+        <Metric label="Alavancagem" value={brMoney(scenario.leverageAmount)} tone="gold" />
+        <Metric label="Multiplicador da alavancagem" value={multiplier} tone={tone} />
+        <Metric label="Saldo devedor apos contemplacao" value={brMoney(scenario.debtAfterContemplation)} />
+        <button
+          type="button"
+          onClick={onOpenDetails}
+          className="rounded-lg border bg-slate-50 px-4 py-3 text-left text-xs font-black uppercase tracking-[.1em] transition hover:bg-white"
+          style={{ color }}
+        >
+          Ver detalhamento das parcelas
+        </button>
+      </div>
+
+      <div className="border-t bg-slate-50/70 p-5">
+        <div className="inline-flex rounded-full px-3 py-1 text-xs font-black uppercase tracking-[.12em] text-white" style={{ background: `linear-gradient(90deg, ${C.navy}, ${color})` }}>
+          Indicadores da Operacao
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <Metric label="Prazo medio" value={`${scenario.averageTerm} meses`} />
+          <Metric label="Lance efetivo" value={brPercent(scenario.effectiveBidRate)} tone={tone} />
+          <Metric label="CET simples a.m." value={brPercent(scenario.simpleCetMonthly)} />
+          <Metric label="CET simples a.a." value={brPercent(scenario.simpleCetAnnual)} />
+          <Metric label="CET comp. a.m." value={brPercent(scenario.compoundCetMonthly)} tone="gold" />
+          <Metric label="CET comp. a.a." value={brPercent(scenario.compoundCetAnnual)} tone="ruby" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EquityParcelDetailOverlay({
+  open,
+  flow,
+  onClose,
+}: {
+  open: EquityDirectDetailKey | null;
+  flow: EquityFlow;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  const scenario = open === "sorteio" ? flow.directComparisons.lottery : flow.directComparisons.bid;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
+      <section className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+          <div>
+            <h3 className="text-xl font-black" style={{ color: C.navy }}>
+              Equity {scenario.label} - Detalhamento das Parcelas
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Parcelas projetadas pelo mesmo motor do Extrato, preservando correcao, contemplacao, lance e saldo devedor.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+            aria-label="Fechar detalhamento"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-3 border-b bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Metric label="Credito liberado" value={brMoney(scenario.creditReleased)} tone={open === "lance" ? "ruby" : "gold"} />
+          <Metric label="Prazo" value={`${flow.summary.planTerm} meses`} />
+          <Metric label="Total investido" value={brMoney(scenario.totalInvested)} />
+          <Metric label="Saldo devedor" value={brMoney(scenario.debtAfterContemplation)} tone="ruby" />
+        </div>
+
+        <div className="overflow-auto">
+          <table className="min-w-[1020px] w-full border-collapse text-sm">
+            <thead className="sticky top-0 bg-white text-xs uppercase tracking-[.08em] text-slate-500 shadow-sm">
+              <tr>
+                <th className="p-3 text-left">Mes</th>
+                <th className="p-3 text-right">Credito</th>
+                <th className="p-3 text-right">Saldo inicial</th>
+                <th className="p-3 text-right">Parcela</th>
+                <th className="p-3 text-right">Pago acumulado</th>
+                <th className="p-3 text-right">Saldo final</th>
+                <th className="p-3 text-left">Evento do Extrato</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flow.consortiumEntries.map((entry) => {
+                const events = flow.consortiumEvents.filter((event) => event.month === entry.month);
+                return (
+                  <tr key={entry.month} className="border-t">
+                    <td className="p-3 font-black" style={{ color: C.navy }}>Mes {entry.month}</td>
+                    <td className="p-3 text-right">{brMoney(entry.credit)}</td>
+                    <td className="p-3 text-right">{brMoney(entry.initialBalance)}</td>
+                    <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
+                    <td className="p-3 text-right">{brMoney(entry.payments)}</td>
+                    <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
+                      {brMoney(entry.endingBalance)}
+                    </td>
+                    <td className="max-w-[320px] p-3 text-xs text-slate-600">
+                      {events.length ? events.map((event) => `${event.title}: ${event.details.join(" | ")}`).join(" / ") : "-"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2013,6 +2234,7 @@ function EquityModel({
   allowedModes,
 }: ProMaxModelosHubProps & { allowedModes?: EquityMode[] }) {
   const [mode, setMode] = useState<EquityMode>("direto");
+  const [directDetailOpen, setDirectDetailOpen] = useState<EquityDirectDetailKey | null>(null);
   const flow = useMemo(() => buildEquityFlow(proposal, params), [proposal, params]);
   const visibleModes = allowedModes?.length ? allowedModes : (["direto", "cadenciado"] as EquityMode[]);
   const scenario = mode === "direto" ? flow.direct : flow.cadenced;
@@ -2079,19 +2301,26 @@ function EquityModel({
         <>
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Metric label="Crédito contratado" value={brMoney(flow.summary.contractedCredit)} />
-            <Metric label="Crédito disponível na contemplação" value={brMoney(flow.summary.availableAtContemplation)} tone="gold" />
-            <Metric label="Valor do lance" value={brMoney(scenario.strategicBid)} tone="ruby" />
-            <Metric
-              label="Alavancagem"
-              value={`${(scenario.leverageOnBid || scenario.leverageMultiple).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`}
+            <Metric label="Crédito Via Sorteio" value={brMoney(flow.directComparisons.lottery.creditReleased)} tone="gold" />
+            <Metric label="Crédito Via Lance" value={brMoney(flow.directComparisons.bid.creditReleased)} tone="ruby" />
+            <Metric label="Lance Próprio" value={brMoney(flow.summary.ownBidAtContemplation)} tone="ruby" />
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-2">
+            <EquityDirectComparisonCard
+              scenario={flow.directComparisons.lottery}
               tone="gold"
+              onOpenDetails={() => setDirectDetailOpen("sorteio")}
+            />
+            <EquityDirectComparisonCard
+              scenario={flow.directComparisons.bid}
+              tone="ruby"
+              onOpenDetails={() => setDirectDetailOpen("lance")}
             />
           </section>
 
-          <EquityDirectProjectCost flow={flow} />
-          <EquityFlowBoard scenario={scenario} />
-          <EquityCashFlowTable scenario={flow.direct} contemplationMonth={flow.summary.contemplationMonth} />
-          <EquityInstallmentFlowTable scenario={flow.direct} />
+          <EquityFlowBoard scenario={scenario} flow={flow} />
+          <EquityParcelDetailOverlay open={directDetailOpen} flow={flow} onClose={() => setDirectDetailOpen(null)} />
         </>
       ) : (
         <>

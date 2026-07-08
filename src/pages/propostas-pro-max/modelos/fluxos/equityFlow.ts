@@ -2,6 +2,8 @@ import {
   buildExtratoFlow,
   creditoLiquido,
   onlyNumber,
+  type ExtratoEventEntry,
+  type ExtratoMonthEntry,
   type ProposalModelRow,
   type ProposalParams,
 } from "./extratoFlow";
@@ -24,6 +26,26 @@ export type EquityFlowStep = {
   value: number;
   helper: string;
   tone: "navy" | "ruby" | "gold";
+};
+
+export type EquityDirectScenario = {
+  key: "sorteio" | "lance";
+  label: string;
+  description: string;
+  creditReleased: number;
+  installmentsPaidUntilContemplation: number;
+  bidPaid: number;
+  totalInvested: number;
+  leverageAmount: number;
+  leverageMultiplier: number;
+  debtAfterContemplation: number;
+  averageTerm: number;
+  effectiveBidRate: number;
+  simpleCetMonthly: number;
+  simpleCetAnnual: number;
+  compoundCetMonthly: number;
+  compoundCetAnnual: number;
+  totalCost: number;
 };
 
 export type EquityCashFlowEntry = {
@@ -109,10 +131,16 @@ export type EquityFlow = {
     consortiumMonthlyCostRate: number;
   };
   direct: EquityScenario;
+  directComparisons: {
+    lottery: EquityDirectScenario;
+    bid: EquityDirectScenario;
+  };
   cadenced: EquityScenario & {
     cycles: EquityCycle[];
   };
   competitors: EquityCompetitor[];
+  consortiumEntries: ExtratoMonthEntry[];
+  consortiumEvents: ExtratoEventEntry[];
 };
 
 function normalizeFraction(value: unknown) {
@@ -132,7 +160,67 @@ function financingPayment(principal: number, term: number, monthlyRate: number) 
 }
 
 function monthEntries(entries: ReturnType<typeof buildExtratoFlow>["entries"]) {
-  return entries.filter((entry) => entry.kind === "month");
+  return entries.filter((entry): entry is ExtratoMonthEntry => entry.kind === "month");
+}
+
+function eventEntries(entries: ReturnType<typeof buildExtratoFlow>["entries"]) {
+  return entries.filter((entry): entry is ExtratoEventEntry => entry.kind === "event");
+}
+
+function sumInstallmentsUntil(entries: ExtratoMonthEntry[], month: number) {
+  return entries
+    .filter((entry) => entry.month <= month)
+    .reduce((sum, entry) => sum + entry.installment, 0);
+}
+
+function buildDirectScenario({
+  key,
+  label,
+  description,
+  creditReleased,
+  installmentsPaidUntilContemplation,
+  bidPaid,
+  debtAfterContemplation,
+  totalCost,
+  term,
+}: {
+  key: "sorteio" | "lance";
+  label: string;
+  description: string;
+  creditReleased: number;
+  installmentsPaidUntilContemplation: number;
+  bidPaid: number;
+  debtAfterContemplation: number;
+  totalCost: number;
+  term: number;
+}): EquityDirectScenario {
+  const totalInvested = installmentsPaidUntilContemplation + bidPaid;
+  const leverageAmount = Math.max(0, creditReleased - totalInvested);
+  const safeTerm = Math.max(1, term);
+  const costBase = Math.max(1, leverageAmount);
+  const totalCet = Math.max(0, totalCost) / costBase;
+  const simpleCetMonthly = totalCet / safeTerm;
+  const compoundCetMonthly = totalCet > 0 ? Math.pow(1 + totalCet, 1 / safeTerm) - 1 : 0;
+
+  return {
+    key,
+    label,
+    description,
+    creditReleased,
+    installmentsPaidUntilContemplation,
+    bidPaid,
+    totalInvested,
+    leverageAmount,
+    leverageMultiplier: totalInvested > 0 ? leverageAmount / totalInvested : 0,
+    debtAfterContemplation,
+    averageTerm: Math.round(safeTerm),
+    effectiveBidRate: creditReleased > 0 ? bidPaid / creditReleased : 0,
+    simpleCetMonthly,
+    simpleCetAnnual: simpleCetMonthly * 12,
+    compoundCetMonthly,
+    compoundCetAnnual: Math.pow(1 + compoundCetMonthly, 12) - 1,
+    totalCost,
+  };
 }
 
 function scenarioSteps({
@@ -234,6 +322,7 @@ function buildCompetitor(
 export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalParams): EquityFlow {
   const extrato = buildExtratoFlow(proposal, params);
   const entries = monthEntries(extrato.entries);
+  const events = eventEntries(extrato.entries);
   const totalMonths = Math.max(1, extrato.totalMonths);
   const rawContemplationMonth = Math.round(onlyNumber(proposal.parcela_contemplacao));
   const contemplationMonth = Math.min(totalMonths, Math.max(1, rawContemplationMonth || 1));
@@ -261,6 +350,7 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     0;
   const firstInstallment = extrato.summary.firstInstallment || entries[0]?.installment || 0;
   const totalInstallments = entries.reduce((sum, entry) => sum + entry.installment, 0);
+  const installmentsPaidUntilContemplation = sumInstallmentsUntil(entries, contemplationMonth);
   const totalPaid = totalInstallments + ownBid;
   const totalCost = Math.max(0, totalPaid - creditReleased);
   const consortiumMonthlyCostRate = creditReleased > 0 ? postContemplationInstallment / creditReleased : 0;
@@ -277,6 +367,33 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const roi = totalPaid > 0 ? projectedGain / totalPaid : 0;
   const leverageMultiple = totalPaid > 0 ? (creditReleased + capitalPreserved) / totalPaid : 0;
   const leverageOnBid = strategicBid > 0 ? creditReleased / strategicBid : 0;
+  const contemplationEntry = entries.find((entry) => entry.month === contemplationMonth);
+  const debtBeforeBid = contemplationEntry?.endingBalance || 0;
+  const debtAfterBid = Math.max(0, debtBeforeBid - strategicBid);
+  const lotteryTotalCost = Math.max(0, totalInstallments - creditAtContemplation);
+  const bidTotalCost = Math.max(0, totalPaid - creditReleased);
+  const lotteryScenario = buildDirectScenario({
+    key: "sorteio",
+    label: "Via Sorteio",
+    description: "Considera contemplação sem lance, usando o crédito total disponível no momento da contemplação.",
+    creditReleased: creditAtContemplation,
+    installmentsPaidUntilContemplation,
+    bidPaid: 0,
+    debtAfterContemplation: debtBeforeBid,
+    totalCost: lotteryTotalCost,
+    term: totalMonths,
+  });
+  const bidScenario = buildDirectScenario({
+    key: "lance",
+    label: "Via Lance",
+    description: "Considera contemplação com lance estratégico, reduzindo o crédito disponível pelo lance embutido.",
+    creditReleased,
+    installmentsPaidUntilContemplation,
+    bidPaid: ownBid,
+    debtAfterContemplation: debtAfterBid,
+    totalCost: bidTotalCost,
+    term: totalMonths,
+  });
   const installmentFlow: EquityInstallmentFlowEntry[] = entries.map((entry) => ({
     month: entry.month,
     phase:
@@ -469,7 +586,13 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
       consortiumMonthlyCostRate,
     },
     direct,
+    directComparisons: {
+      lottery: lotteryScenario,
+      bid: bidScenario,
+    },
     cadenced,
     competitors,
+    consortiumEntries: entries,
+    consortiumEvents: events,
   };
 }

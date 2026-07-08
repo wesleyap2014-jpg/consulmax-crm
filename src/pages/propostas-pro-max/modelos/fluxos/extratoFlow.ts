@@ -356,6 +356,8 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   let payments = 0;
   let installmentCorrectionFactor = 1;
   let postContemplationInstallmentExtra = 0;
+  let postContemplationAmortization = 0;
+  let postContemplationInsurance = 0;
   let contemplated = false;
   let guard = 0;
   let creditAtContemplation = contemplationMonth > 0 ? contractedCredit : contractedCredit;
@@ -394,7 +396,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
               `Saldo pré: ${brMoney(correctionBase)}`,
               `Correção: ${brMoney(correctionValue)}`,
               `Impacto mensal: ${brMoney(correctionValue / Math.max(1, plannedMonths - month + 1))}`,
-              `Nova parcela: ${brMoney(baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + postContemplationInstallmentExtra)}`,
+              `Nova parcela: ${brMoney(postContemplationAmortization + postContemplationInstallmentExtra + postContemplationInsurance)}`,
             ]
           : [
               "Base: crédito contratado",
@@ -407,17 +409,25 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
     }
 
     const initialBalance = balance;
-    const installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
-    const monthlyPayment = balance > 0 ? Math.min(installment, balance) : 0;
-    payments += monthlyPayment;
-    balance = Math.max(0, balance - monthlyPayment);
+    let installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
+    let amortizationPayment = balance > 0 ? Math.min(installment, balance) : 0;
+
+    if (contemplated) {
+      amortizationPayment = balance > 0
+        ? Math.min(balance, postContemplationAmortization + postContemplationInstallmentExtra)
+        : 0;
+      installment = amortizationPayment > 0 ? amortizationPayment + postContemplationInsurance : 0;
+    }
+
+    payments += installment;
+    balance = Math.max(0, balance - amortizationPayment);
 
     entries.push({
       kind: "month",
       month,
       credit,
       initialBalance,
-      installment: monthlyPayment,
+      installment,
       payments,
       endingBalance: balance,
     });
@@ -426,8 +436,6 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       const balanceBeforeBid = balance;
       const correctedBid = bidAtCredit(proposal, credit, contractedCredit);
       const paidBid = correctedBid.total || bidPaid;
-      const nextInstallmentAfterContemplation =
-        baseInstallmentForMonth(proposal, month + 1, true) * installmentCorrectionFactor + postContemplationInstallmentExtra;
 
       creditAtContemplation = credit;
       embeddedBidAtContemplation = correctedBid.embedded;
@@ -435,6 +443,14 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       availableAtContemplation = Math.max(0, credit - correctedBid.embedded);
       investmentUntilContemplation = payments + correctedBid.own;
       balance = Math.max(0, balance - paidBid);
+
+      const effectiveNewTerm = Math.max(1, newTerm || plannedMonths - month);
+      const fullInstallmentAfterContemplation =
+        baseInstallmentForMonth(proposal, month + 1, true) * installmentCorrectionFactor + postContemplationInstallmentExtra;
+      postContemplationAmortization = balance > 0 ? balance / effectiveNewTerm : 0;
+      postContemplationInsurance = Math.max(0, fullInstallmentAfterContemplation - postContemplationAmortization);
+      const nextInstallmentAfterContemplation = postContemplationAmortization + postContemplationInstallmentExtra + postContemplationInsurance;
+
       payments += paidBid;
       contemplated = true;
 
@@ -448,6 +464,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
           `Saldo antes do lance: ${brMoney(balanceBeforeBid)}`,
           `Saldo após o lance: ${brMoney(balance)}`,
           `Nova parcela: ${brMoney(nextInstallmentAfterContemplation)}`,
+          ...(postContemplationInsurance > 0 ? [`Seguro/encargos não amortizáveis: ${brMoney(postContemplationInsurance)}`] : []),
           `Novo prazo: ${newTerm || "-"} meses`,
         ],
       });

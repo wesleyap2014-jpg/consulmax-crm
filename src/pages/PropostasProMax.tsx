@@ -334,6 +334,7 @@ function aggregateProposal(rows: Proposal[]): Proposal | null {
       ...first.promax,
       simulation_code: first.code,
       administradora: "Múltiplas propostas",
+      cadenced_rows: rows,
     },
   };
 }

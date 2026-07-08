@@ -2145,6 +2145,201 @@ function EquityCadencedCycles({ cycles }: { cycles: EquityFlow["cadenced"]["cycl
   );
 }
 
+
+function EquityCadencedStrategyTable({ strategy }: { strategy: EquityFlow["cadenced"]["strategy"] }) {
+  const totals = {
+    credit: strategy.totalCredit,
+    term: strategy.quotas.reduce((sum, item) => sum + item.term, 0),
+    initialInstallment: strategy.totalInitialInstallments,
+    totalBid: strategy.totalBid,
+    embeddedBid: strategy.totalEmbeddedBid,
+    ownBid: strategy.totalOwnBid,
+    creditReleased: strategy.totalCreditReleased,
+    postInstallment: strategy.totalPostInstallments,
+    leverage: strategy.totalLeverage,
+    debt: strategy.totalDebtAfterContemplation,
+  };
+
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="border-b px-5 py-4">
+        <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+          <FileSpreadsheet className="h-4 w-4" /> Estratégia de contemplação em cadência
+        </div>
+        <p className="mt-1 text-sm text-slate-600">
+          Cada simulação representa uma cota. O mesmo lance próprio é reaproveitado para contemplar uma sequência de cartas, liberando alavancagem a cada ciclo.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[1180px] w-full border-collapse text-sm">
+          <thead className="text-xs uppercase tracking-[.08em] text-white" style={{ background: C.navy }}>
+            <tr>
+              <th className="p-3 text-left">Cota</th>
+              <th className="p-3 text-right">Crédito</th>
+              <th className="p-3 text-right">Taxa Adm</th>
+              <th className="p-3 text-right">FR</th>
+              <th className="p-3 text-right">Prazo</th>
+              <th className="p-3 text-right">Parcela inicial</th>
+              <th className="p-3 text-right">Lance total</th>
+              <th className="p-3 text-right">Lance embutido</th>
+              <th className="p-3 text-right">Lance próprio</th>
+              <th className="p-3 text-right">Crédito líquido</th>
+              <th className="p-3 text-right">Parcela pós</th>
+              <th className="p-3 text-right">Parc. após</th>
+              <th className="p-3 text-right">Alavancagem</th>
+              <th className="p-3 text-right">SD pós</th>
+            </tr>
+          </thead>
+          <tbody>
+            {strategy.quotas.map((item) => (
+              <tr key={`${item.code}-${item.index}`} className="border-t odd:bg-slate-50/80">
+                <td className="p-3 font-black" style={{ color: C.navy }}>#{item.code || item.index}</td>
+                <td className="p-3 text-right">{brMoney(item.credit)}</td>
+                <td className="p-3 text-right">{brPercent(item.adminRate)}</td>
+                <td className="p-3 text-right">{brPercent(item.reserveRate)}</td>
+                <td className="p-3 text-right">{item.term}</td>
+                <td className="p-3 text-right">{brMoney(item.initialInstallment)}</td>
+                <td className="p-3 text-right">{brMoney(item.totalBid)}</td>
+                <td className="p-3 text-right">{brMoney(item.embeddedBid)}</td>
+                <td className="p-3 text-right font-semibold">{brMoney(item.ownBid)}</td>
+                <td className="p-3 text-right font-semibold">{brMoney(item.creditReleased)}</td>
+                <td className="p-3 text-right">{brMoney(item.postInstallment)}</td>
+                <td className="p-3 text-right">{item.postInstallmentsCount}x</td>
+                <td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(item.leverageAmount)}</td>
+                <td className="p-3 text-right">{brMoney(item.debtAfterContemplation)}</td>
+              </tr>
+            ))}
+            <tr className="border-t bg-slate-100 font-black">
+              <td className="p-3">Totais</td>
+              <td className="p-3 text-right">{brMoney(totals.credit)}</td>
+              <td className="p-3 text-right">-</td>
+              <td className="p-3 text-right">-</td>
+              <td className="p-3 text-right">{totals.term}</td>
+              <td className="p-3 text-right">{brMoney(totals.initialInstallment)}</td>
+              <td className="p-3 text-right">{brMoney(totals.totalBid)}</td>
+              <td className="p-3 text-right">{brMoney(totals.embeddedBid)}</td>
+              <td className="p-3 text-right">{brMoney(totals.ownBid)}</td>
+              <td className="p-3 text-right">{brMoney(totals.creditReleased)}</td>
+              <td className="p-3 text-right">{brMoney(totals.postInstallment)}</td>
+              <td className="p-3 text-right">-</td>
+              <td className="p-3 text-right" style={{ color: C.gold }}>{brMoney(totals.leverage)}</td>
+              <td className="p-3 text-right">{brMoney(totals.debt)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function EquityCadencedParcelFlow({ strategy }: { strategy: EquityFlow["cadenced"]["strategy"] }) {
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="px-5 py-4 text-sm font-black text-white" style={{ background: C.navy }}>Fluxo de Parcelas</div>
+      <div className="p-5">
+        <table className="w-full border-collapse text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+            <tr><th className="p-3 text-left">Parcela</th><th className="p-3 text-right">Valor</th></tr>
+          </thead>
+          <tbody>
+            {strategy.parcelFlow.map((row) => (
+              <tr key={row.label} className="border-t odd:bg-slate-50/60"><td className="p-3 text-slate-600">{row.label}</td><td className="p-3 text-right font-semibold">{brMoney(row.value)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function EquityCadencedCashFlow({ strategy }: { strategy: EquityFlow["cadenced"]["strategy"] }) {
+  const totalOut = strategy.cashFlow.reduce((sum, row) => sum + row.outflow, 0);
+  const totalIn = strategy.cashFlow.reduce((sum, row) => sum + row.inflow, 0);
+  const totalNet = strategy.cashFlow.reduce((sum, row) => sum + row.net, 0);
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="px-5 py-4 text-sm font-black text-white" style={{ background: C.ruby }}>Fluxo de Caixa Projetado</div>
+      <div className="p-5">
+        <table className="w-full border-collapse text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
+            <tr><th className="p-3 text-left">Mês</th><th className="p-3 text-right">Saídas</th><th className="p-3 text-right">Entradas</th><th className="p-3 text-right">Líquido</th></tr>
+          </thead>
+          <tbody>
+            {strategy.cashFlow.map((row) => (
+              <tr key={row.label} className="border-t odd:bg-slate-50/60"><td className="p-3 font-semibold text-slate-600">{row.label}</td><td className="p-3 text-right">{brMoney(row.outflow)}</td><td className="p-3 text-right">{brMoney(row.inflow)}</td><td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(row.net)}</td></tr>
+            ))}
+            <tr className="border-t bg-slate-100 font-black"><td className="p-3">Totais</td><td className="p-3 text-right">{brMoney(totalOut)}</td><td className="p-3 text-right">{brMoney(totalIn)}</td><td className="p-3 text-right" style={{ color: C.gold }}>{brMoney(totalNet)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function EquityCadencedIndicators({ strategy }: { strategy: EquityFlow["cadenced"]["strategy"] }) {
+  const indicators = strategy.indicators;
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="px-5 py-4 text-sm font-black text-white" style={{ background: C.navy }}>Indicadores da operação</div>
+      <div className="grid gap-3 p-5 sm:grid-cols-2">
+        <Metric label="Prazo Médio" value={`${indicators.averageTerm} meses`} tone="ruby" />
+        <Metric label="Lance Efetivo" value={brPercent(indicators.effectiveBidRate)} tone="ruby" />
+        <Metric label="CET simples a.m." value={brPercent(indicators.simpleCetMonthly)} />
+        <Metric label="CET simples a.a." value={brPercent(indicators.simpleCetAnnual)} />
+        <Metric label="CET comp. a.m." value={brPercent(indicators.compoundCetMonthly)} />
+        <Metric label="CET comp. a.a." value={brPercent(indicators.compoundCetAnnual)} />
+      </div>
+      <div className="px-5 pb-5 text-xs text-slate-500">CET calculado sobre a alavancagem total gerada pela cadência.</div>
+    </section>
+  );
+}
+
+function EquityCadencedCycleBoard({ strategy }: { strategy: EquityFlow["cadenced"]["strategy"] }) {
+  const steps = [
+    ["Entrada no consórcio", "O cliente entra com várias cartas organizadas como cotas da estratégia."],
+    ["Oferta o lance", `Usa um lance próprio estratégico de ${brMoney(strategy.reusableBid)} para buscar a primeira contemplação.`],
+    ["Contempla a carta", "A carta contemplada libera crédito líquido e transforma o lance em alavancagem."],
+    ["Recebe crédito", "Recebe o valor do lance de volta dentro do crédito e embolsa a alavancagem gerada."],
+    ["Reaplica o lance", "O mesmo valor de lance próprio volta para contemplar a próxima carta."],
+    ["Repete o ciclo", `O ciclo se repete até contemplar ${strategy.quotaCount} cota(s), somando ${brMoney(strategy.totalLeverage)} de alavancagem.`],
+  ];
+  return (
+    <section className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}><TrendingUp className="h-4 w-4" /> Fluxo financeiro cadenciado</div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {steps.map(([title, helper], index) => (
+          <div key={title} className="rounded-xl border bg-slate-50 p-4 shadow-sm">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-black text-white" style={{ background: index % 2 ? C.ruby : C.navy }}>{index + 1}</div>
+            <div className="mt-3 text-xs font-black uppercase tracking-[.1em] text-slate-500">{title}</div>
+            <p className="mt-2 text-xs leading-relaxed text-slate-600">{helper}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EquityCadencedModel({ flow }: { flow: EquityFlow }) {
+  const strategy = flow.cadenced.strategy;
+  return (
+    <>
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Cotas em cadência" value={`${strategy.quotaCount}`} />
+        <Metric label="Lance reutilizável" value={brMoney(strategy.reusableBid)} tone="ruby" />
+        <Metric label="Crédito líquido total" value={brMoney(strategy.totalCreditReleased)} tone="gold" />
+        <Metric label="Alavancagem total" value={brMoney(strategy.totalLeverage)} tone="gold" />
+      </section>
+      <EquityCadencedCycleBoard strategy={strategy} />
+      <EquityCadencedStrategyTable strategy={strategy} />
+      <section className="grid gap-4 xl:grid-cols-[1fr_1fr_.75fr]">
+        <EquityCadencedParcelFlow strategy={strategy} />
+        <EquityCadencedCashFlow strategy={strategy} />
+        <EquityCadencedIndicators strategy={strategy} />
+      </section>
+    </>
+  );
+}
+
 function EquityDirectProjectCost({ flow }: { flow: EquityFlow }) {
   const { direct, summary } = flow;
   const leverageLabel = direct.leverageOnBid > 0
@@ -2525,72 +2720,7 @@ function EquityModel({
           <EquityParcelDetailOverlay open={directDetailOpen} flow={flow} onClose={() => setDirectDetailOpen(null)} />
         </>
       ) : (
-        <>
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric label="Crédito contratado" value={brMoney(flow.summary.contractedCredit)} />
-            <Metric label="Crédito liberado" value={brMoney(scenario.creditReleased)} tone="gold" />
-            <Metric label="Capital preservado" value={brMoney(scenario.capitalPreserved)} />
-            <Metric label="Lance estratégico" value={brMoney(scenario.strategicBid)} tone="ruby" />
-            <Metric label="Renda financeira mês" value={brMoney(scenario.monthlyInvestmentIncome)} tone="gold" />
-            <Metric label="Renda do ativo mês" value={brMoney(scenario.monthlyAssetIncome)} />
-            <Metric label="Resultado mensal" value={brMoney(scenario.monthlyNetPosition)} tone={scenario.monthlyNetPosition >= 0 ? "gold" : "ruby"} />
-            <Metric label="ROI projetado" value={brPercent(scenario.roi)} tone="ruby" />
-          </section>
-
-          <section className="grid gap-4 lg:grid-cols-[.85fr_1.15fr]">
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-                <FileSpreadsheet className="h-4 w-4" /> Como funciona?
-              </div>
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="flex justify-between gap-4 border-b pb-2">
-                  <span className="text-slate-500">Mês da contemplação</span>
-                  <strong style={{ color: C.navy }}>Mês {flow.summary.contemplationMonth}</strong>
-                </div>
-                <div className="flex justify-between gap-4 border-b pb-2">
-                  <span className="text-slate-500">Crédito na contemplação</span>
-                  <strong style={{ color: C.gold }}>{brMoney(flow.summary.creditAtContemplation)}</strong>
-                </div>
-                <div className="flex justify-between gap-4 border-b pb-2">
-                  <span className="text-slate-500">Lance embutido</span>
-                  <strong style={{ color: C.navy }}>{brMoney(flow.summary.embeddedBidAtContemplation)}</strong>
-                </div>
-                <div className="flex justify-between gap-4 border-b pb-2">
-                  <span className="text-slate-500">Lance próprio</span>
-                  <strong style={{ color: C.ruby }}>{brMoney(flow.summary.ownBidAtContemplation)}</strong>
-                </div>
-                <div className="flex justify-between gap-4 border-b pb-2">
-                  <span className="text-slate-500">Renda do ativo</span>
-                  <strong style={{ color: C.navy }}>{brPercent(flow.income.assetMonthlyRate)} a.m.</strong>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-slate-500">CDI aplicado no capital preservado</span>
-                  <strong style={{ color: C.gold }}>{brPercent(flow.cdi.monthlyRate)} a.m.</strong>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-                <TrendingUp className="h-4 w-4" /> Quanto eu ganho?
-              </div>
-              <div className="mt-4 rounded-xl p-5" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.20), rgba(161,28,39,.08))" }}>
-                <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Ganho projetado da tese</div>
-                <div className="mt-2 text-3xl font-black" style={{ color: C.ruby }}>{brMoney(scenario.projectedGain)}</div>
-                <p className="mt-2 text-sm text-slate-600">
-                  Considera crédito liberado, capital preservado, resultado anual estimado e custo total do consórcio no modelo selecionado.
-                </p>
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <Metric label="Multiplicador" value={`${scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`} />
-                <Metric label="Resultado anual" value={brMoney(scenario.annualNetPosition)} tone={scenario.annualNetPosition >= 0 ? "gold" : "ruby"} />
-              </div>
-            </div>
-          </section>
-
-          <EquityFlowBoard scenario={scenario} />
-          <EquityCadencedCycles cycles={flow.cadenced.cycles} />
-        </>
+        <EquityCadencedModel flow={flow} />
       )}
       <EquityCompetitorTable flow={flow} />
     </div>

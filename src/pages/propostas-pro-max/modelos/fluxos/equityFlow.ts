@@ -118,6 +118,53 @@ export type EquityCycle = {
   accumulatedEquity: number;
 };
 
+export type EquityCadencedQuota = {
+  index: number;
+  code: number | string;
+  credit: number;
+  adminRate: number;
+  reserveRate: number;
+  term: number;
+  initialInstallment: number;
+  totalBid: number;
+  embeddedBid: number;
+  ownBid: number;
+  creditReleased: number;
+  postInstallment: number;
+  postInstallmentsCount: number;
+  leverageAmount: number;
+  debtAfterContemplation: number;
+};
+
+export type EquityCadencedParcelFlowEntry = { label: string; value: number };
+export type EquityCadencedCashFlowEntry = { label: string; outflow: number; inflow: number; net: number };
+export type EquityCadencedIndicators = {
+  averageTerm: number;
+  effectiveBidRate: number;
+  simpleCetMonthly: number;
+  simpleCetAnnual: number;
+  compoundCetMonthly: number;
+  compoundCetAnnual: number;
+};
+export type EquityCadencedStrategy = {
+  quotaCount: number;
+  reusableBid: number;
+  totalCredit: number;
+  totalCreditReleased: number;
+  totalOwnBid: number;
+  totalEmbeddedBid: number;
+  totalBid: number;
+  totalLeverage: number;
+  totalDebtAfterContemplation: number;
+  totalInitialInstallments: number;
+  totalPostInstallments: number;
+  totalCost: number;
+  quotas: EquityCadencedQuota[];
+  parcelFlow: EquityCadencedParcelFlowEntry[];
+  cashFlow: EquityCadencedCashFlowEntry[];
+  indicators: EquityCadencedIndicators;
+};
+
 export type EquityFlow = {
   correction: {
     label: string;
@@ -152,6 +199,7 @@ export type EquityFlow = {
   };
   cadenced: EquityScenario & {
     cycles: EquityCycle[];
+    strategy: EquityCadencedStrategy;
   };
   competitors: EquityCompetitor[];
   consortiumEntries: ExtratoMonthEntry[];
@@ -421,6 +469,140 @@ function scenarioSteps({
   ];
 }
 
+
+function rowTextValue(row: ProposalModelRow, keys: string[]) {
+  for (const key of keys) {
+    const fromRoot = row[key];
+    const fromPromax = row.promax?.[key as keyof NonNullable<ProposalModelRow["promax"]>];
+    const value = fromRoot ?? fromPromax;
+    if (value !== null && value !== undefined && String(value).trim()) return value;
+  }
+  return null;
+}
+
+function getCadencedSourceRows(proposal: ProposalModelRow): ProposalModelRow[] {
+  const rawPromax = (proposal.promax as Record<string, unknown> | undefined)?.cadenced_rows;
+  const rawRoot = (proposal as Record<string, unknown>).cadenced_rows;
+  const raw = Array.isArray(rawPromax) ? rawPromax : Array.isArray(rawRoot) ? rawRoot : null;
+  if (raw?.length) return raw as ProposalModelRow[];
+
+  const requestedCount = Math.max(
+    1,
+    Math.round(
+      onlyNumber(rowTextValue(proposal, ["quantidade_cotas", "qtd_cotas", "numero_cotas", "cotas", "cadencia_qtd_cotas"])) || 1
+    )
+  );
+
+  return Array.from({ length: requestedCount }, () => proposal);
+}
+
+function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams): EquityCadencedStrategy {
+  const quotas: EquityCadencedQuota[] = rows.map((row, index) => {
+    const rowFlow = buildExtratoFlow(row, params);
+    const rowEntries = monthEntries(rowFlow.entries);
+    const rawContemplationMonth = Math.round(onlyNumber(row.parcela_contemplacao));
+    const contemplationMonth = Math.min(rowFlow.totalMonths || 1, Math.max(1, rawContemplationMonth || 1));
+    const contemplationEntry = rowEntries.find((entry) => entry.month === contemplationMonth);
+    const newTerm = Math.max(
+      0,
+      Math.round(onlyNumber(row.novo_prazo)) || rowEntries.filter((entry) => entry.month > contemplationMonth && entry.installment > 0).length
+    );
+    const ownBid = Math.max(0, rowFlow.summary.ownBidAtContemplation);
+    const embeddedBid = Math.max(0, rowFlow.summary.embeddedBidAtContemplation);
+    const totalBid = ownBid + embeddedBid;
+    const creditReleased =
+      rowFlow.summary.availableAtContemplation ||
+      creditoLiquido(row) ||
+      rowFlow.summary.correctedLiquidCredit ||
+      rowFlow.summary.liquidCredit ||
+      rowFlow.summary.creditAtContemplation;
+    const debtBeforeBid = contemplationEntry?.endingBalance || 0;
+    const debtAfterContemplation = Math.max(0, debtBeforeBid - totalBid);
+
+    return {
+      index: index + 1,
+      code: row.code || index + 1,
+      credit: rowFlow.summary.contractedCredit,
+      adminRate: rowFlow.summary.adminTaxPct,
+      reserveRate: rowFlow.summary.reserveTaxPct,
+      term: rowFlow.summary.planTerm,
+      initialInstallment: rowFlow.summary.firstInstallment || rowEntries[0]?.installment || 0,
+      totalBid,
+      embeddedBid,
+      ownBid,
+      creditReleased,
+      postInstallment:
+        rowFlow.summary.postContemplationInstallment ||
+        rowEntries.find((entry) => entry.month > contemplationMonth)?.installment ||
+        rowEntries[rowEntries.length - 1]?.installment ||
+        0,
+      postInstallmentsCount: Math.max(0, newTerm || rowFlow.summary.planTerm - contemplationMonth),
+      leverageAmount: Math.max(0, creditReleased - ownBid),
+      debtAfterContemplation,
+    };
+  });
+
+  const totalCredit = quotas.reduce((sum, item) => sum + item.credit, 0);
+  const totalCreditReleased = quotas.reduce((sum, item) => sum + item.creditReleased, 0);
+  const totalOwnBid = quotas.reduce((sum, item) => sum + item.ownBid, 0);
+  const totalEmbeddedBid = quotas.reduce((sum, item) => sum + item.embeddedBid, 0);
+  const totalBid = quotas.reduce((sum, item) => sum + item.totalBid, 0);
+  const totalLeverage = quotas.reduce((sum, item) => sum + item.leverageAmount, 0);
+  const totalDebtAfterContemplation = quotas.reduce((sum, item) => sum + item.debtAfterContemplation, 0);
+  const totalInitialInstallments = quotas.reduce((sum, item) => sum + item.initialInstallment, 0);
+  const totalPostInstallments = quotas.reduce((sum, item) => sum + item.postInstallment, 0);
+  const reusableBid = Math.max(...quotas.map((item) => item.ownBid), 0);
+  const averageTerm = quotas.length ? Math.round(quotas.reduce((sum, item) => sum + item.postInstallmentsCount, 0) / quotas.length) : 0;
+  const parcelFlow: EquityCadencedParcelFlowEntry[] = [];
+
+  for (let step = 0; step <= quotas.length; step += 1) {
+    const contemplated = quotas.slice(0, step);
+    const pending = quotas.slice(step);
+    const value = contemplated.reduce((sum, item) => sum + item.postInstallment, 0) + pending.reduce((sum, item) => sum + item.initialInstallment, 0);
+    const label = step === 0 ? "Parcela Inicial" : step === quotas.length ? `Parcela ${step + 1} em diante` : `Parcela ${step + 1}`;
+    parcelFlow.push({ label, value });
+  }
+
+  const cashFlow = quotas.map((item) => ({
+    label: `M${item.index}`,
+    outflow: item.ownBid,
+    inflow: item.creditReleased,
+    net: item.leverageAmount,
+  }));
+
+  const totalCost = Math.max(0, quotas.reduce((sum, item) => sum + item.postInstallment * item.postInstallmentsCount, 0) + totalOwnBid - totalCreditReleased);
+  const cetBase = Math.max(1, totalLeverage);
+  const totalCet = totalCost / cetBase;
+  const simpleCetMonthly = averageTerm > 0 ? totalCet / averageTerm : 0;
+  const compoundCetMonthly = totalCet > 0 && averageTerm > 0 ? Math.pow(1 + totalCet, 1 / averageTerm) - 1 : 0;
+
+  return {
+    quotaCount: quotas.length,
+    reusableBid,
+    totalCredit,
+    totalCreditReleased,
+    totalOwnBid,
+    totalEmbeddedBid,
+    totalBid,
+    totalLeverage,
+    totalDebtAfterContemplation,
+    totalInitialInstallments,
+    totalPostInstallments,
+    totalCost,
+    quotas,
+    parcelFlow,
+    cashFlow,
+    indicators: {
+      averageTerm,
+      effectiveBidRate: totalLeverage > 0 ? reusableBid / totalLeverage : 0,
+      simpleCetMonthly,
+      simpleCetAnnual: simpleCetMonthly * 12,
+      compoundCetMonthly,
+      compoundCetAnnual: Math.pow(1 + compoundCetMonthly, 12) - 1,
+    },
+  };
+}
+
 function buildCompetitor(
   key: EquityCompetitor["key"],
   label: string,
@@ -642,13 +824,15 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   }
 
   const lastCycle = cycles[cycles.length - 1];
-  const cadencedMonthlyAssetIncome = monthlyAssetIncome * 3;
+  const cadencedStrategy = buildCadencedStrategy(getCadencedSourceRows(proposal), params);
+  const cadencedMultiplier = Math.max(1, cadencedStrategy.quotaCount);
+  const cadencedMonthlyAssetIncome = monthlyAssetIncome * cadencedMultiplier;
   const cadencedInvestmentIncome = Math.max(0, lastCycle?.investmentIncome || 0);
-  const cadencedCost = postContemplationInstallment * 3;
+  const cadencedCost = cadencedStrategy.totalPostInstallments || postContemplationInstallment * cadencedMultiplier;
   const cadencedMonthlyNet = cadencedMonthlyAssetIncome + cadencedInvestmentIncome - cadencedCost;
-  const cadencedTotalPaid = totalPaid * 3;
+  const cadencedTotalPaid = cadencedStrategy.totalOwnBid + cadencedStrategy.quotas.reduce((sum, item) => sum + item.postInstallment * item.postInstallmentsCount, 0);
   const cadencedCapitalPreserved = Math.max(0, lastCycle?.capitalPreserved || capitalPreserved);
-  const cadencedCreditReleased = creditReleased * 3;
+  const cadencedCreditReleased = cadencedStrategy.totalCreditReleased || creditReleased * cadencedMultiplier;
   const cadencedProjectedGain = Math.max(0, (lastCycle?.accumulatedEquity || cadencedCreditReleased) + cadencedCapitalPreserved - cadencedTotalPaid);
 
   const cadenced: EquityFlow["cadenced"] = {
@@ -657,7 +841,7 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     description: "Replica a tese em ciclos: crédito, renda, excedente e nova fase. A ideia é transformar a primeira estrutura em uma esteira de expansão patrimonial.",
     creditReleased: cadencedCreditReleased,
     capitalPreserved: cadencedCapitalPreserved,
-    strategicBid: strategicBid * 3,
+    strategicBid: cadencedStrategy.reusableBid || strategicBid,
     monthlyInvestmentIncome: cadencedInvestmentIncome,
     monthlyAssetIncome: cadencedMonthlyAssetIncome,
     monthlyConsortiumCost: cadencedCost,
@@ -668,14 +852,14 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     projectedGain: cadencedProjectedGain,
     roi: cadencedTotalPaid > 0 ? cadencedProjectedGain / cadencedTotalPaid : 0,
     leverageMultiple: cadencedTotalPaid > 0 ? (cadencedCreditReleased + cadencedCapitalPreserved) / cadencedTotalPaid : 0,
-    leverageOnBid: strategicBid > 0 ? cadencedCreditReleased / (strategicBid * 3) : 0,
+    leverageOnBid: (cadencedStrategy.reusableBid || strategicBid) > 0 ? cadencedCreditReleased / (cadencedStrategy.reusableBid || strategicBid) : 0,
     totalPaid: cadencedTotalPaid,
-    totalCost: totalCost * 3,
+    totalCost: cadencedStrategy.totalCost || totalCost * cadencedMultiplier,
     projectCostMonthlyRate,
     projectCostAnnualRate,
     steps: scenarioSteps({
-      capitalBase: capitalBase * 3,
-      strategicBid: strategicBid * 3,
+      capitalBase: cadencedStrategy.totalCreditReleased || capitalBase * cadencedMultiplier,
+      strategicBid: cadencedStrategy.reusableBid || strategicBid,
       creditReleased: cadencedCreditReleased,
       capitalPreserved: cadencedCapitalPreserved,
       monthlyInvestmentIncome: cadencedInvestmentIncome,
@@ -685,18 +869,19 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     }),
     cashFlow: cashFlow.map((entry) => ({
       ...entry,
-      investmentIncome: entry.investmentIncome * 3,
-      assetIncome: entry.assetIncome * 3,
-      installment: entry.installment * 3,
-      netCashFlow: entry.netCashFlow * 3,
-      accumulatedCashFlow: entry.accumulatedCashFlow * 3,
+      investmentIncome: entry.investmentIncome * cadencedMultiplier,
+      assetIncome: entry.assetIncome * cadencedMultiplier,
+      installment: entry.installment * cadencedMultiplier,
+      netCashFlow: entry.netCashFlow * cadencedMultiplier,
+      accumulatedCashFlow: entry.accumulatedCashFlow * cadencedMultiplier,
     })),
     installmentFlow: installmentFlow.map((entry) => ({
       ...entry,
-      installment: entry.installment * 3,
-      endingBalance: entry.endingBalance * 3,
+      installment: entry.installment * cadencedMultiplier,
+      endingBalance: entry.endingBalance * cadencedMultiplier,
     })),
     cycles,
+    strategy: cadencedStrategy,
   };
 
   const competitors = [

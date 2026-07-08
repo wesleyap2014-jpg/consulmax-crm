@@ -247,10 +247,11 @@ function demaisParcelas(row: ProposalModelRow) {
 
 function parcelaAposContemplacao(row: ProposalModelRow) {
   return (
-    onlyNumber(row.parcela_escolhida) ||
     onlyNumber(row.nova_parcela_sem_limite) ||
     onlyNumber(row.parcela_limitante) ||
-    demaisParcelas(row)
+    onlyNumber(row.parcela_demais) ||
+    onlyNumber(row.parcela_escolhida) ||
+    parcelaInicial(row)
   );
 }
 
@@ -358,6 +359,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
   let postContemplationInstallmentExtra = 0;
   let postContemplationAmortization = 0;
   let postContemplationInsurance = 0;
+  let postContemplationRegularBase = 0;
   let contemplated = false;
   let guard = 0;
   let creditAtContemplation = contemplationMonth > 0 ? contractedCredit : contractedCredit;
@@ -409,14 +411,21 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
     }
 
     const initialBalance = balance;
-    let installment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
+    const scheduledTableInstallment = baseInstallmentForMonth(proposal, month, contemplated) * installmentCorrectionFactor + (contemplated ? postContemplationInstallmentExtra : 0);
+    let installment = scheduledTableInstallment;
     let amortizationPayment = balance > 0 ? Math.min(installment, balance) : 0;
 
     if (contemplated) {
+      const regularPostBase =
+        postContemplationRegularBase ||
+        parcelaAposContemplacao(proposal) * installmentCorrectionFactor + postContemplationInstallmentExtra;
+      const tableDifferential = Math.max(0, scheduledTableInstallment - regularPostBase);
       amortizationPayment = balance > 0
         ? Math.min(balance, postContemplationAmortization + postContemplationInstallmentExtra)
         : 0;
-      installment = amortizationPayment > 0 ? amortizationPayment + postContemplationInsurance : 0;
+      installment = amortizationPayment > 0
+        ? amortizationPayment + postContemplationInsurance + tableDifferential
+        : 0;
     }
 
     payments += installment;
@@ -445,11 +454,18 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       balance = Math.max(0, balance - paidBid);
 
       const effectiveNewTerm = Math.max(1, newTerm || plannedMonths - month);
-      const fullInstallmentAfterContemplation =
+      const regularInstallmentAfterContemplation =
+        parcelaAposContemplacao(proposal) * installmentCorrectionFactor + postContemplationInstallmentExtra;
+      const tableInstallmentAfterContemplation =
         baseInstallmentForMonth(proposal, month + 1, true) * installmentCorrectionFactor + postContemplationInstallmentExtra;
+      postContemplationRegularBase = regularInstallmentAfterContemplation;
       postContemplationAmortization = balance > 0 ? balance / effectiveNewTerm : 0;
-      postContemplationInsurance = Math.max(0, fullInstallmentAfterContemplation - postContemplationAmortization);
-      const nextInstallmentAfterContemplation = postContemplationAmortization + postContemplationInstallmentExtra + postContemplationInsurance;
+      postContemplationInsurance = Math.max(0, regularInstallmentAfterContemplation - postContemplationAmortization);
+      const nextInstallmentAfterContemplation =
+        postContemplationAmortization +
+        postContemplationInstallmentExtra +
+        postContemplationInsurance +
+        Math.max(0, tableInstallmentAfterContemplation - regularInstallmentAfterContemplation);
 
       payments += paidBid;
       contemplated = true;
@@ -465,6 +481,9 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
           `Saldo após o lance: ${brMoney(balance)}`,
           `Nova parcela: ${brMoney(nextInstallmentAfterContemplation)}`,
           ...(postContemplationInsurance > 0 ? [`Seguro/encargos não amortizáveis: ${brMoney(postContemplationInsurance)}`] : []),
+          ...(Math.max(0, tableInstallmentAfterContemplation - regularInstallmentAfterContemplation) > 0
+            ? [`Diferenciação da tabela: ${brMoney(Math.max(0, tableInstallmentAfterContemplation - regularInstallmentAfterContemplation))}`]
+            : []),
           `Novo prazo: ${newTerm || "-"} meses`,
         ],
       });

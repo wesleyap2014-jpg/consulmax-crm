@@ -1,11 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
+export const config = { api: { bodyParser: { sizeLimit: "25mb" } } };
+
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL!;
 const SERVICE_ROLE = process.env["SUPABASE" + "_SERVICE" + "_ROLE" + "_KEY"]!;
 const META_TOKEN = process.env["META" + "_WHATSAPP" + "_TOKEN"]!;
 const DEFAULT_PHONE_NUMBER_ID = process.env["META" + "_WHATSAPP" + "_PHONE" + "_NUMBER" + "_ID"]!;
 const WABA_ID = process.env["META" + "_WHATSAPP" + "_WABA" + "_ID"] || process.env["META" + "_WABA" + "_ID"] || process.env["WHATSAPP" + "_BUSINESS" + "_ACCOUNT" + "_ID"] || "";
+const MEDIA_BUCKET = process.env.WHATSAPP_MEDIA_BUCKET || "whatsapp-media";
 const GRAPH_BASE = "https://graph.facebook.com/v21.0";
 const BIRTHDAY_TEMPLATE_NAME = "felicitacao_aniversario_cliente";
 const BIRTHDAY_IMAGE_URL = process.env.WHATSAPP_BIRTHDAY_IMAGE_URL || process.env.VITE_WHATSAPP_BIRTHDAY_IMAGE_URL || "";
@@ -18,6 +21,10 @@ function countVars(text?: string | null) { return (String(text || "").match(/{{\
 function variableNames(text?: string | null) { return Array.from(String(text || "").matchAll(/{{\s*([^}]+)\s*}}/g)).map((m) => String(m[1] || "").trim()); }
 function normalizeLanguage(value?: string | null) { const v = String(value || "pt_BR").trim(); return v === "pt-br" ? "pt_BR" : v; }
 function normalizeVarKey(value?: string | null) { return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+function safeFileName(value?: string | null) { return String(value || "arquivo.pdf").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120); }
+function extFromNameOrMime(name: string, mimeType: string) { const ext = name.includes(".") ? name.split(".").pop() : ""; if (ext) return ext; return mimeType === "application/pdf" ? "pdf" : mimeType.startsWith("image/") ? "jpg" : mimeType.startsWith("video/") ? "mp4" : "bin"; }
+function bufferToBlob(buffer: Buffer, mimeType: string) { const arrayBuffer = new ArrayBuffer(buffer.length); new Uint8Array(arrayBuffer).set(buffer); return new Blob([arrayBuffer], { type: mimeType }); }
+function mediaTypeFromMime(mimeType?: string | null, explicit?: string | null) { const requested = String(explicit || "").toLowerCase(); if (["image", "video", "document"].includes(requested)) return requested; const mime = String(mimeType || "").toLowerCase(); if (mime.startsWith("image/")) return "image"; if (mime.startsWith("video/")) return "video"; return "document"; }
 
 async function metaGet(path: string, params?: Record<string, string | number>) {
   const url = new URL(`${GRAPH_BASE}/${path.replace(/^\//, "")}`);
@@ -120,6 +127,43 @@ function renderBodyText(templateDefinition: any, params: any[], fallbackName: st
   }).trim();
 }
 
+async function uploadTemplateHeaderMedia(conversationId: string, reqBody: any) {
+  const fileBase64 = reqBody?.file_base64 || reqBody?.header_file_base64 || null;
+  const mimeType = String(reqBody?.mime_type || reqBody?.header_mime_type || "application/pdf");
+  if (!fileBase64) return null;
+
+  const cleanFileName = safeFileName(reqBody?.file_name || reqBody?.header_file_name || "boleto.pdf");
+  const mediaType = mediaTypeFromMime(mimeType, reqBody?.media_type || "document");
+  const base64 = String(fileBase64).includes(",") ? String(fileBase64).split(",").pop() || "" : String(fileBase64);
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length) throw new Error("Arquivo vazio ou inválido.");
+
+  const ext = extFromNameOrMime(cleanFileName, mimeType);
+  const storagePath = `template/${conversationId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const saved = await supabaseAdmin.storage.from(MEDIA_BUCKET).upload(storagePath, buffer, { contentType: mimeType, upsert: false });
+  if (saved.error) throw new Error(saved.error.message || "Erro ao salvar anexo.");
+
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("file", bufferToBlob(buffer, mimeType), cleanFileName);
+  form.append("type", mimeType);
+
+  const uploadResponse = await fetch(`${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/media`, { method: "POST", headers: { Authorization: `Bearer ${META_TOKEN}` }, body: form });
+  const uploadData = await readJson(uploadResponse);
+  if (!uploadResponse.ok || !uploadData?.id) throw new Error(JSON.stringify(uploadData || {}).slice(0, 800) || "Erro ao subir anexo para a Meta.");
+
+  return {
+    type: mediaType,
+    id: uploadData.id,
+    filename: cleanFileName,
+    bucket: MEDIA_BUCKET,
+    storage_path: storagePath,
+    mime_type: mimeType,
+    file_size: buffer.length,
+    original_file_name: cleanFileName,
+  };
+}
+
 function buildHeaderComponent(templateDefinition: any, reqBody: any, templateName?: string | null) {
   const header = headerComponent(templateDefinition);
   const format = String(header?.format || "").toLowerCase();
@@ -142,7 +186,17 @@ function buildHeaderComponent(templateDefinition: any, reqBody: any, templateNam
   return {
     type: "header",
     parameters: [{ type, [type]: mediaPayload }],
-    _rendered_media: { type, link: link || null, id: id || null, filename: filename || null },
+    _rendered_media: {
+      type,
+      link: link || null,
+      id: id || null,
+      filename: filename || null,
+      bucket: media?.bucket || null,
+      storage_path: media?.storage_path || null,
+      mime_type: media?.mime_type || null,
+      original_file_name: media?.original_file_name || filename || null,
+      file_size: media?.file_size || null,
+    },
   };
 }
 
@@ -161,12 +215,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ ok: false, error: "O modelo de aniversário possui cabeçalho de imagem, mas WHATSAPP_BIRTHDAY_IMAGE_URL não está configurada na Vercel." });
     }
 
+    const uploadedHeaderMedia = await uploadTemplateHeaderMedia(conversation_id, req.body || {});
+    const requestBodyForHeader = uploadedHeaderMedia
+      ? { ...(req.body || {}), header_media: uploadedHeaderMedia, header_media_id: uploadedHeaderMedia.id, header_file_name: uploadedHeaderMedia.filename, media_type: uploadedHeaderMedia.type }
+      : (req.body || {});
+
     const needed = bodyVariableCount(templateDefinition);
     const provided = Array.isArray(template_params) ? template_params : Array.isArray(body_params) ? body_params : [];
     const templatePayload: any = { name, language: { code: language } };
     const components: any[] = [];
 
-    const headerPayload = buildHeaderComponent(templateDefinition, req.body || {}, name);
+    const headerPayload = buildHeaderComponent(templateDefinition, requestBodyForHeader, name);
     if (headerPayload) components.push({ type: "header", parameters: headerPayload.parameters });
 
     const bodyParams = needed > 0 ? await buildBodyParams(conversation_id, templateDefinition, provided) : [];
@@ -185,7 +244,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const mediaInfo = headerPayload?._rendered_media || null;
     const body = mediaInfo?.filename ? `${renderedBody}\n\n📎 ${mediaInfo.filename}` : renderedBody;
     const metaMessageId = data?.messages?.[0]?.id || null;
-    const rawPayload = {
+    const rawPayload: any = {
       ...data,
       template_name: name,
       template_language: language,
@@ -194,6 +253,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       template_rendered_body: renderedBody,
       template_header_media: mediaInfo,
     };
+    if (mediaInfo?.storage_path) {
+      rawPayload._consulmax_media = {
+        bucket: mediaInfo.bucket || MEDIA_BUCKET,
+        storage_path: mediaInfo.storage_path,
+        mime_type: mediaInfo.mime_type || "application/pdf",
+        file_size: mediaInfo.file_size || null,
+        media_id: mediaInfo.id || null,
+        original_file_name: mediaInfo.original_file_name || mediaInfo.filename || "boleto.pdf",
+      };
+    }
 
     await supabaseAdmin.from("whatsapp_messages").insert({ conversation_id, direction: "outbound", sender_type: "usuario", user_id: user_id || null, message_type: mediaInfo?.type || "template", body, meta_message_id: metaMessageId, raw_payload: rawPayload, media_mime_type: mediaInfo?.type === "image" ? "image/*" : mediaInfo?.type === "document" ? "application/pdf" : mediaInfo?.type === "video" ? "video/*" : null });
     await supabaseAdmin.from("whatsapp_conversations").update({ last_message: body, last_message_at: new Date().toISOString(), unread_count: 0, status: "humano", updated_at: new Date().toISOString() }).eq("id", conversation_id);

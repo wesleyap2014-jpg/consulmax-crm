@@ -54,6 +54,8 @@ export type ProposalModelRow = {
     vendedor_telefone?: string | null;
     vendedor_email?: string | null;
     vendedor_foto_url?: string | null;
+    cadenced_rows?: ProposalModelRow[];
+    unified_rows?: ProposalModelRow[];
   };
   [key: string]: unknown;
 };
@@ -358,7 +360,114 @@ function baseInstallmentForMonth(row: ProposalModelRow, month: number, contempla
   return regular || first;
 }
 
+
+function sourceRowsForUnifiedExtrato(proposal: ProposalModelRow): ProposalModelRow[] {
+  const candidates = proposal.promax?.cadenced_rows || proposal.promax?.unified_rows || [];
+  if (!Array.isArray(candidates) || candidates.length <= 1) return [];
+  return candidates.filter((row) => row && typeof row === "object") as ProposalModelRow[];
+}
+
+function withoutUnifiedRows(row: ProposalModelRow): ProposalModelRow {
+  if (!row.promax?.cadenced_rows && !row.promax?.unified_rows) return row;
+  const { cadenced_rows, unified_rows, ...promax } = row.promax;
+  return { ...row, promax };
+}
+
+function buildUnifiedExtratoFlow(proposal: ProposalModelRow, params: ProposalParams, rows: ProposalModelRow[]): ExtratoFlow {
+  const flows = rows.map((row) => buildExtratoFlow(withoutUnifiedRows(row), params));
+  const firstFlow = flows[0];
+  const maxMonths = Math.max(1, ...flows.map((flow) => flow.totalMonths));
+  const entries: ExtratoEntry[] = [];
+
+  for (let month = 1; month <= maxMonths; month += 1) {
+    const monthRows = flows
+      .map((flow, index) => ({
+        index,
+        flow,
+        row: rows[index],
+        entry: flow.entries.find((item): item is ExtratoMonthEntry => item.kind === "month" && item.month === month),
+      }))
+      .filter((item) => item.entry);
+
+    const eventRows = flows.flatMap((flow, index) =>
+      flow.entries
+        .filter((item): item is ExtratoEventEntry => item.kind === "event" && item.month === month)
+        .map((event) => ({ event, row: rows[index], index }))
+    );
+
+    if (monthRows.length) {
+      entries.push({
+        kind: "month",
+        month,
+        credit: monthRows.reduce((sum, item) => sum + item.entry.credit, 0),
+        initialBalance: monthRows.reduce((sum, item) => sum + item.entry.initialBalance, 0),
+        installment: monthRows.reduce((sum, item) => sum + item.entry.installment, 0),
+        payments: monthRows.reduce((sum, item) => sum + item.entry.payments, 0),
+        endingBalance: monthRows.reduce((sum, item) => sum + item.entry.endingBalance, 0),
+      });
+    }
+
+    for (const { event, row, index } of eventRows) {
+      const label = row.code ? `Proposta #${row.code}` : `Cota ${index + 1}`;
+      entries.push({
+        kind: "event",
+        month,
+        title: `${label} - ${event.title}`,
+        details: event.details,
+      });
+    }
+  }
+
+  const sumSummary = <K extends keyof ExtratoFlow["summary"]>(key: K) =>
+    flows.reduce((total, flow) => total + onlyNumber(flow.summary[key]), 0);
+
+  const uniqueIndexLabels = Array.from(new Set(flows.map((flow) => flow.index.label).filter(Boolean)));
+  const weightedBase = sumSummary("contractedCredit") || flows.length;
+  const weightedAnnualRate = flows.reduce((total, flow) => {
+    const weight = flow.summary.contractedCredit || weightedBase / flows.length;
+    return total + flow.index.annualRate * weight;
+  }, 0) / weightedBase;
+  const monthlyRate = Math.pow(1 + weightedAnnualRate, 1 / 12) - 1;
+  const planTerm = Math.max(...flows.map((flow) => flow.summary.planTerm), 1);
+
+  return {
+    index: {
+      label: uniqueIndexLabels.length === 1 ? uniqueIndexLabels[0] : "Múltiplos índices",
+      annualRate: weightedAnnualRate,
+      source: "Propostas unificadas",
+    },
+    monthlyRate,
+    entries,
+    totalMonths: maxMonths,
+    summary: {
+      baseCredit: sumSummary("baseCredit"),
+      contractedCredit: sumSummary("contractedCredit"),
+      liquidCredit: sumSummary("liquidCredit"),
+      firstInstallment: sumSummary("firstInstallment"),
+      nextInstallments: sumSummary("nextInstallments"),
+      postContemplationInstallment: sumSummary("postContemplationInstallment"),
+      debt: sumSummary("debt"),
+      correctedBaseCredit: sumSummary("correctedBaseCredit"),
+      correctedContractedCredit: sumSummary("correctedContractedCredit"),
+      correctedLiquidCredit: sumSummary("correctedLiquidCredit"),
+      correctedDebt: sumSummary("correctedDebt"),
+      correctionValue: sumSummary("correctionValue"),
+      creditAtContemplation: sumSummary("creditAtContemplation"),
+      embeddedBidAtContemplation: sumSummary("embeddedBidAtContemplation"),
+      availableAtContemplation: sumSummary("availableAtContemplation"),
+      ownBidAtContemplation: sumSummary("ownBidAtContemplation"),
+      investmentUntilContemplation: sumSummary("investmentUntilContemplation"),
+      adminTaxPct: weightedBase > 0 ? flows.reduce((total, flow) => total + flow.summary.adminTaxPct * (flow.summary.contractedCredit || 0), 0) / weightedBase : firstFlow.summary.adminTaxPct,
+      reserveTaxPct: weightedBase > 0 ? flows.reduce((total, flow) => total + flow.summary.reserveTaxPct * (flow.summary.contractedCredit || 0), 0) / weightedBase : firstFlow.summary.reserveTaxPct,
+      planTerm,
+      consortiumMonthlyTaxPct: weightedBase > 0 ? flows.reduce((total, flow) => total + flow.summary.consortiumMonthlyTaxPct * (flow.summary.contractedCredit || 0), 0) / weightedBase : firstFlow.summary.consortiumMonthlyTaxPct,
+    },
+  };
+}
+
 export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalParams): ExtratoFlow {
+  const unifiedRows = sourceRowsForUnifiedExtrato(proposal);
+  if (unifiedRows.length > 1) return buildUnifiedExtratoFlow(proposal, params, unifiedRows);
   const index = resolveCorrectionIndex(proposal, params);
   const annualRate = index.annualRate;
   const monthlyRate = Math.pow(1 + annualRate, 1 / 12) - 1;

@@ -77,6 +77,7 @@ export type AlavancagemPatrimonialFlow = {
     embeddedBidAtContemplation: number;
     ownBidAtContemplation: number;
     postContemplationInstallment: number;
+    postContemplationTerm: number;
   };
   traditional: PatrimonialScenario;
   optimized: PatrimonialScenario;
@@ -372,6 +373,7 @@ export function buildAlavancagemPatrimonialFlow(
       embeddedBidAtContemplation: extrato.summary.embeddedBidAtContemplation,
       ownBidAtContemplation: extrato.summary.ownBidAtContemplation,
       postContemplationInstallment,
+      postContemplationTerm: Math.max(0, extrato.summary.planTerm - contemplationMonth),
     },
     traditional,
     optimized,

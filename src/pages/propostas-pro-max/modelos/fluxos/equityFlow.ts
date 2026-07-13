@@ -210,6 +210,13 @@ export type EquityFlow = {
   consortiumEvents: ExtratoEventEntry[];
 };
 
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function normalizeFraction(value: unknown) {
   const parsed = onlyNumber(value);
   if (!parsed) return 0;

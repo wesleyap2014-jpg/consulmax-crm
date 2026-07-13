@@ -41,6 +41,18 @@ const C = {
   gold: "#B5A573",
 };
 
+const PROPOSAL_DISCLAIMER =
+  "Esta proposta possui caráter exclusivamente informativo e não representa promessa ou garantia de contemplação ou rentabilidade. A contemplação poderá ocorrer antes ou após o prazo estimado, e os resultados efetivos poderão ser inferiores ou superiores aos valores projetados. As simulações apresentadas foram elaboradas com base em premissas, estimativas e dados históricos, que não asseguram a repetição do mesmo desempenho no futuro.";
+
+function ProposalDisclaimer() {
+  return (
+    <section className="rounded-xl border bg-white p-4 text-xs leading-relaxed text-slate-600 shadow-sm" style={{ borderColor: "rgba(30,41,63,.14)" }}>
+      <div className="mb-1 font-black uppercase tracking-[.12em]" style={{ color: C.navy }}>Aviso importante</div>
+      {PROPOSAL_DISCLAIMER}
+    </section>
+  );
+}
+
 function ConsulmaxLogoMark() {
   const [failed, setFailed] = useState(false);
 
@@ -61,13 +73,13 @@ function ConsulmaxLogoMark() {
 }
 
 const MODELS: Array<{ key: ModelKey; label: string; description: string }> = [
-  { key: "extrato", label: "Extrato", description: "Correção da carta, crédito líquido e parcelas projetadas." },
-  { key: "aquisicao", label: "Aquisição", description: "Modelo de compra do bem ou objetivo do cliente." },
-  { key: "previdencia", label: "Previdência", description: "Comparativo de longo prazo e reserva futura." },
-  { key: "alav_financeira", label: "Alav. Financeira", description: "Uso de capital próprio, lance e custo de oportunidade." },
-  { key: "alav_patrimonial", label: "Alavancagem Patrimonial", description: "Construção de patrimônio com carta corrigida." },
-  { key: "equity", label: "Equity", description: "Capital com garantia planejada, direto ou cadenciado." },
-  { key: "blindagem_caixa", label: "Blindagem de Caixa", description: "Reestruturação de dívida cara e preservação de caixa." },
+  { key: "extrato", label: "Extrato", description: "Veja mês a mês como a carta evolui, com crédito, parcelas, lance e saldo." },
+  { key: "aquisicao", label: "Aquisição", description: "Compare o consórcio com financiamento e enxergue crédito, parcela, lance e prazo." },
+  { key: "previdencia", label: "Previdência", description: "Transforme a carta em uma estratégia de renda futura e patrimônio acumulado." },
+  { key: "alav_financeira", label: "Alav. Financeira", description: "Entenda como o lance pode acelerar capital, ganho e oportunidade." },
+  { key: "alav_patrimonial", label: "Alavancagem Patrimonial", description: "Projete construção patrimonial com carta corrigida e renda do ativo." },
+  { key: "equity", label: "Equity", description: "Libere capital estratégico com garantia planejada, direto ou em cadência." },
+  { key: "blindagem_caixa", label: "Blindagem de Caixa", description: "Reorganize dívidas caras e preserve caixa para o que realmente importa." },
 ];
 
 const PROJECTION_PAGE_SIZE = 12;
@@ -788,7 +800,7 @@ function PrevidenciaModel({ proposal, params }: ProMaxModelosHubProps) {
         <Metric label="Rentabilidade líquida" value={brMoney(summary.netIncome)} tone="ruby" />
         <Metric label="Investimento realizado" value={brMoney(summary.totalInvested)} />
         <Metric label="ROI" value={brPercent(summary.roi)} tone="gold" />
-        <Metric label="Rentabilidade a.m." value={brPercent(summary.monthlyReturn)} />
+        <Metric label="TIR a.m." value={brPercent(summary.monthlyReturn)} />
         <Metric label="% do CDI mensal" value={brPercent(summary.cdiPercent)} />
         <Metric label="Gross up mensal" value={brPercent(tax.grossUpMonthlyRate)} tone="ruby" />
       </section>
@@ -1097,6 +1109,13 @@ function AquisicaoModel({ proposal, params }: ProMaxModelosHubProps) {
         </div>
       </section>
 
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Crédito" value={brMoney(consortium.creditOrFinancedValue)} tone="gold" />
+        <Metric label="Parcelas" value={`${brMoney(consortium.initialInstallment)} → ${brMoney(consortium.finalInstallment)}`} />
+        <Metric label="Lance próprio" value={brMoney(consortium.ownBidAtContemplation)} tone="ruby" />
+        <Metric label="Prazo" value={`${consortium.term} meses`} />
+      </section>
+
       <section className="grid gap-4 xl:grid-cols-3">
         <ComparisonCard item={consortium} tone="gold" highlight="Base Pró Max" onOpen={() => setDetailOpen("consortium")} />
         <ComparisonCard item={acquisition.comparisons[1]} tone="ruby" highlight="SAC" onOpen={() => setDetailOpen("sac")} />
@@ -1209,8 +1228,24 @@ function AlavancagemSelectorCard({
   );
 }
 
+function TechnicalNoViabilityCard({ title = "Projeto sem viabilidade Técnica", detail }: { title?: string; detail?: string }) {
+  return (
+    <section className="rounded-xl border bg-white p-8 text-center shadow-sm" style={{ borderColor: "rgba(161,28,39,.35)" }}>
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50" style={{ color: C.ruby }}>
+        <Lock className="h-5 w-5" />
+      </div>
+      <h2 className="mt-4 text-2xl font-black" style={{ color: C.ruby }}>{title}</h2>
+      {detail ? <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600">{detail}</p> : null}
+    </section>
+  );
+}
+
 function TraditionalScenarioCard({ scenario, tone }: { scenario: AlavancagemTraditionalScenario; tone: "gold" | "ruby" }) {
   const color = tone === "gold" ? C.gold : C.ruby;
+  const isLanceScenario = scenario.key === "lance_fixo" || String(scenario.key).includes("lance");
+  if (isLanceScenario && scenario.tirMonthly < 0) {
+    return <TechnicalNoViabilityCard detail="A TIR projetada para a contemplação via lance ficou inferior a 0,00% a.m." />;
+  }
 
   return (
     <div className="rounded-xl border bg-white p-5 shadow-sm" style={{ borderColor: `${color}44` }}>
@@ -1333,6 +1368,8 @@ function AlavancagemFinanceiraModel({
   const sorteio = traditional.scenarios[0];
   const lanceFixo = traditional.scenarios[1];
   const visibleModes = allowedModes?.length ? allowedModes : (["tradicional", "acelerada"] as AlavancagemFinanceiraMode[]);
+  const acceleratedReinforcementRatio = accelerated.availableCredit > 0 ? accelerated.resaleValue / accelerated.availableCredit : 0;
+  const acceleratedWithoutTechnicalViability = acceleratedReinforcementRatio > 0.4;
 
   useEffect(() => {
     if (!visibleModes.includes(mode)) setMode(visibleModes[0] || "tradicional");
@@ -1413,6 +1450,8 @@ function AlavancagemFinanceiraModel({
 
           <SaleStrategyPanel traditional={traditional} />
         </>
+      ) : acceleratedWithoutTechnicalViability ? (
+        <TechnicalNoViabilityCard detail={`A relação Revenda com Reforço / Crédito Disponível ficou em ${brPercent(acceleratedReinforcementRatio)}, acima do limite técnico de 40,00%.`} />
       ) : (
         <>
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -3073,6 +3112,8 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
       ) : (
         <PlaceholderModel model={model} />
       )}
+
+      <ProposalDisclaimer />
     </div>
   );
 }

@@ -175,6 +175,27 @@ const C = {
   gold: "#B5A573",
 };
 
+const PROPOSAL_DISCLAIMER =
+  "Esta proposta possui caráter exclusivamente informativo e não representa promessa ou garantia de contemplação ou rentabilidade. A contemplação poderá ocorrer antes ou após o prazo estimado, e os resultados efetivos poderão ser inferiores ou superiores aos valores projetados. As simulações apresentadas foram elaboradas com base em premissas, estimativas e dados históricos, que não asseguram a repetição do mesmo desempenho no futuro.";
+
+function PublicDisclaimerGate({ onAccept }: { onAccept: () => void }) {
+  return (
+    <section className="mx-auto mt-10 max-w-2xl rounded-xl border bg-white p-6 shadow-sm">
+      <div className="text-xs font-black uppercase tracking-[.14em] text-slate-500">Aviso importante</div>
+      <h1 className="mt-3 text-2xl font-black" style={{ color: C.navy }}>Antes de visualizar a proposta</h1>
+      <p className="mt-3 text-sm leading-relaxed text-slate-600">{PROPOSAL_DISCLAIMER}</p>
+      <Button
+        type="button"
+        className="mt-5 h-11 rounded-lg px-6 text-white"
+        style={{ background: C.ruby }}
+        onClick={onAccept}
+      >
+        OK, entendi
+      </Button>
+    </section>
+  );
+}
+
 function ConsulmaxLogoMark({ compact = false, featured = false }: { compact?: boolean; featured?: boolean }) {
   const [failed, setFailed] = useState(false);
   const wrapClass = featured
@@ -686,6 +707,7 @@ export default function PropostasProMax() {
   const [publicAllowedModels, setPublicAllowedModels] = useState<ShareModelKey[]>(DEFAULT_SHARE_MODELS);
   const [publicViewMode, setPublicViewMode] = useState<"grouped" | "individual">("grouped");
   const [publicActiveCode, setPublicActiveCode] = useState<number | null>(null);
+  const [publicDisclaimerAccepted, setPublicDisclaimerAccepted] = useState(false);
   const [publicError, setPublicError] = useState("");
 
   useEffect(() => {
@@ -1250,6 +1272,7 @@ export default function PropostasProMax() {
     setPublicAllowedModels(cleanModels(response.share?.allowed_models));
     setPublicViewMode(response.share?.view_mode === "individual" ? "individual" : "grouped");
     setPublicActiveCode(null);
+    setPublicDisclaimerAccepted(false);
     setProposalParams({ ...DEFAULT_PARAMS, ...(response.params || {}) });
     setPublicLoading(false);
   }
@@ -1410,6 +1433,8 @@ export default function PropostasProMax() {
                 Acessar proposta
               </Button>
             </section>
+          ) : !publicDisclaimerAccepted ? (
+            <PublicDisclaimerGate onAccept={() => setPublicDisclaimerAccepted(true)} />
           ) : publicViewMode === "individual" && !publicActiveProposal ? (
             <>
               <section

@@ -147,7 +147,6 @@ type ProposalParams = {
   equity_pronaf_anual: number;
   equity_pronamp_anual: number;
   equity_demais_anual: number;
-  patrimonial_capital_reinvestido_otimizada: number;
 };
 
 const DEFAULT_PARAMS: ProposalParams = {
@@ -168,7 +167,6 @@ const DEFAULT_PARAMS: ProposalParams = {
   equity_pronaf_anual: 0.08,
   equity_pronamp_anual: 0.12,
   equity_demais_anual: 0.18,
-  patrimonial_capital_reinvestido_otimizada: 0,
 };
 
 const C = {
@@ -1690,7 +1688,6 @@ export default function PropostasProMax() {
               <ParamInput label="Pronaf ano" value={proposalParams.equity_pronaf_anual} onChange={(value) => updateProposalParam("equity_pronaf_anual", value)} />
               <ParamInput label="Pronamp ano" value={proposalParams.equity_pronamp_anual} onChange={(value) => updateProposalParam("equity_pronamp_anual", value)} />
               <ParamInput label="Demais linhas ano" value={proposalParams.equity_demais_anual} onChange={(value) => updateProposalParam("equity_demais_anual", value)} />
-              <MoneyParamInput label="Capital reinvestido otimizada" value={proposalParams.patrimonial_capital_reinvestido_otimizada} onChange={(value) => updateProposalParam("patrimonial_capital_reinvestido_otimizada", value)} />
             </div>
           </section>
         )}

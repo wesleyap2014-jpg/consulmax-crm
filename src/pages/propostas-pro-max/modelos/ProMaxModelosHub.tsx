@@ -1525,20 +1525,29 @@ function patrimonialIncomePoints(points: PatrimonialChartPoint[], maxY: number) 
     .join(" ");
 }
 
-function PatrimonialChart({ flow }: { flow: AlavancagemPatrimonialFlow }) {
+function PatrimonialChart({ flow, mode }: { flow: AlavancagemPatrimonialFlow; mode: AlavancagemPatrimonialMode }) {
   const [hovered, setHovered] = useState<PatrimonialChartPoint | null>(null);
   const points = flow.chart;
   const active = hovered || points[Math.max(0, points.length - 1)];
+  const isOptimized = mode === "otimizada";
+  const equityKey: "traditionalEquity" | "optimizedEquity" = isOptimized ? "optimizedEquity" : "traditionalEquity";
+  const incomeKey: "traditionalNetIncome" | "optimizedNetIncome" = isOptimized ? "optimizedNetIncome" : "traditionalNetIncome";
   const rawCapitalMax = Math.max(
     1,
-    ...points.flatMap((point) => [point.optimizedEquity, point.traditionalEquity, point.debtBalance, point.assetValue])
+    ...points.flatMap((point) => [point.assetValue, point.debtBalance, point[equityKey], isOptimized ? point.optimizedReserve : 0])
   );
-  const rawIncomeMax = Math.max(1, ...points.map((point) => point.optimizedNetIncome));
   const capitalMaxY = niceChartMax(rawCapitalMax);
-  const incomeMaxY = niceChartMax(rawIncomeMax);
   const hoverIndex = active ? Math.max(0, points.findIndex((point) => point.month === active.month)) : -1;
   const hoverX = active ? chartX(hoverIndex, points.length) : 0;
-  const hoverCapitalY = active ? chartY(active.optimizedEquity, capitalMaxY) : 0;
+
+  const linePoints = (getter: (point: PatrimonialChartPoint) => number) =>
+    points
+      .map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(getter(point), capitalMaxY).toFixed(2)}`)
+      .join(" ");
+
+  const last = points[Math.max(0, points.length - 1)];
+  const endX = chartX(points.length - 1, points.length) + 12;
+  const labelY = (value: number) => Math.max(24, Math.min(248, chartY(value, capitalMaxY)));
 
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
@@ -1548,14 +1557,14 @@ function PatrimonialChart({ flow }: { flow: AlavancagemPatrimonialFlow }) {
             <BarChart3 className="h-4 w-4" /> Evolução patrimonial
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Passe o cursor para ver patrimônio líquido, renda mensal e saldo devedor em cada mês.
+            Passe o cursor para ver valor do imóvel, patrimônio líquido, saldo devedor e renda mensal do cenário selecionado.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-black">
-          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.gold }}>Patrimônio tradicional</span>
-          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.navy }}>Patrimônio otimizado</span>
+          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.gold }}>Valor do imóvel</span>
+          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.navy }}>Patrimônio líquido</span>
           <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.ruby }}>Saldo devedor</span>
-          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.ruby }}>Renda otimizada</span>
+          {isOptimized ? <span className="rounded-full border bg-white px-3 py-1.5 text-slate-600">Reserva reinvestida</span> : null}
         </div>
       </div>
 
@@ -1565,31 +1574,34 @@ function PatrimonialChart({ flow }: { flow: AlavancagemPatrimonialFlow }) {
             const y = chartY(capitalMaxY * ratio, capitalMaxY);
             return (
               <g key={ratio}>
-                <line x1="92" x2="1532" y1={y} y2={y} stroke="#E2E8F0" strokeDasharray="5 8" />
+                <line x1="92" x2="1488" y1={y} y2={y} stroke="#E2E8F0" strokeDasharray="5 8" />
                 <text x="44" y={y + 4} textAnchor="end" className="fill-slate-500 text-[12px] font-bold">
                   {axisMoney(capitalMaxY * ratio)}
                 </text>
               </g>
             );
           })}
-          {[0, 0.5, 1].map((ratio) => {
-            const y = chartY(incomeMaxY * ratio, incomeMaxY);
-            return (
-              <text key={ratio} x="1584" y={y + 4} textAnchor="end" className="fill-slate-500 text-[12px] font-bold">
-                {axisMoney(incomeMaxY * ratio)}
-              </text>
-            );
-          })}
-          <line x1="92" x2="1532" y1="254" y2="254" stroke="#CBD5E1" />
-          <polyline points={patrimonialLinePoints(points, "traditionalEquity", capitalMaxY)} fill="none" stroke={C.gold} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={patrimonialLinePoints(points, "optimizedEquity", capitalMaxY)} fill="none" stroke={C.navy} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={patrimonialLinePoints(points, "debtBalance", capitalMaxY)} fill="none" stroke={C.ruby} strokeWidth="4" strokeDasharray="10 10" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={patrimonialIncomePoints(points, incomeMaxY)} fill="none" stroke={C.ruby} strokeWidth="3" strokeDasharray="2 10" strokeLinecap="round" strokeLinejoin="round" opacity=".85" />
+          <line x1="92" x2="1488" y1="254" y2="254" stroke="#CBD5E1" />
+          <polyline points={linePoints((point) => point.assetValue)} fill="none" stroke={C.gold} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={linePoints((point) => point[equityKey])} fill="none" stroke={C.navy} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={linePoints((point) => point.debtBalance)} fill="none" stroke={C.ruby} strokeWidth="4" strokeDasharray="10 10" strokeLinecap="round" strokeLinejoin="round" />
+          {isOptimized ? (
+            <polyline points={linePoints((point) => point.optimizedReserve)} fill="none" stroke="#64748B" strokeWidth="4" strokeDasharray="2 9" strokeLinecap="round" strokeLinejoin="round" />
+          ) : null}
+
+          {last ? (
+            <g className="text-[12px] font-black">
+              <text x={endX} y={labelY(last.assetValue) - 6} className="fill-[#B5A573]">Valor do imóvel</text>
+              <text x={endX} y={labelY(last[equityKey]) + 4} className="fill-[#1E293F]">Patrimônio líquido</text>
+              <text x={endX} y={labelY(last.debtBalance) + 14} className="fill-[#A11C27]">Saldo devedor</text>
+              {isOptimized ? <text x={endX} y={labelY(last.optimizedReserve) + 24} className="fill-slate-500">Reserva reinvestida</text> : null}
+            </g>
+          ) : null}
 
           {active ? (
             <g>
               <line x1={hoverX} x2={hoverX} y1="34" y2="254" stroke="#94A3B8" strokeDasharray="5 5" />
-              <circle cx={hoverX} cy={hoverCapitalY} r="5" fill={C.navy} />
+              <circle cx={hoverX} cy={chartY(active[equityKey], capitalMaxY)} r="5" fill={C.navy} />
             </g>
           ) : null}
 
@@ -1619,19 +1631,19 @@ function PatrimonialChart({ flow }: { flow: AlavancagemPatrimonialFlow }) {
 
         {active ? (
           <div
-            className="pointer-events-none absolute top-16 w-[300px] rounded-xl border bg-white/95 p-4 text-xs shadow-2xl"
-            style={{ left: hoverX > 1180 ? "auto" : `${Math.max(110, (hoverX / 1620) * 100)}%`, right: hoverX > 1180 ? 72 : "auto" }}
+            className="pointer-events-none absolute top-16 w-[310px] rounded-xl border bg-white/95 p-4 text-xs shadow-2xl"
+            style={{ left: hoverX > 1120 ? "auto" : `${Math.max(110, (hoverX / 1620) * 100)}%`, right: hoverX > 1120 ? 72 : "auto" }}
           >
             <div className="mb-3 flex items-center justify-between gap-3">
               <strong style={{ color: C.navy }}>Mês {active.month}</strong>
-              <span className="rounded-full bg-slate-100 px-2 py-1 font-black text-slate-500">detalhes</span>
+              <span className="rounded-full bg-slate-100 px-2 py-1 font-black text-slate-500">{isOptimized ? "Otimizada" : "Tradicional"}</span>
             </div>
             <div className="space-y-2">
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Patrimônio tradicional</span><strong style={{ color: C.gold }}>{brMoney(active.traditionalEquity)}</strong></div>
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Patrimônio otimizado</span><strong style={{ color: C.navy }}>{brMoney(active.optimizedEquity)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Valor do imóvel</span><strong style={{ color: C.gold }}>{brMoney(active.assetValue)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Patrimônio líquido</span><strong style={{ color: C.navy }}>{brMoney(active[equityKey])}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">Saldo devedor</span><strong style={{ color: C.ruby }}>{brMoney(active.debtBalance)}</strong></div>
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Renda otimizada</span><strong>{brMoney(active.optimizedNetIncome)}</strong></div>
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Reserva reinvestida</span><strong>{brMoney(active.optimizedReserve)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Renda mensal líquida</span><strong>{brMoney(active[incomeKey])}</strong></div>
+              {isOptimized ? <div className="flex justify-between gap-3"><span className="text-slate-500">Reserva reinvestida</span><strong>{brMoney(active.optimizedReserve)}</strong></div> : null}
             </div>
           </div>
         ) : null}
@@ -1754,11 +1766,15 @@ function AlavancagemPatrimonialModel({
   allowedModes,
 }: ProMaxModelosHubProps & { allowedModes?: AlavancagemPatrimonialMode[] }) {
   const [mode, setMode] = useState<AlavancagemPatrimonialMode>("tradicional");
-  const flow = useMemo(() => buildAlavancagemPatrimonialFlow(proposal, params), [proposal, params]);
-  const { correction, rentCorrection, cdi, income, summary, traditional, optimized } = flow;
+  const [optimizedCapitalInput, setOptimizedCapitalInput] = useState("");
+  const manualOptimizedCapital = onlyNumber(optimizedCapitalInput);
+  const flow = useMemo(
+    () => buildAlavancagemPatrimonialFlow(proposal, params, { manualOptimizedCapital }),
+    [proposal, params, manualOptimizedCapital]
+  );
+  const { correction, rentCorrection, income, summary, traditional, optimized } = flow;
   const visibleModes = allowedModes?.length ? allowedModes : (["tradicional", "otimizada"] as AlavancagemPatrimonialMode[]);
   const activeScenario = mode === "tradicional" ? traditional : optimized;
-  const difference = optimized.finalEquity - traditional.finalEquity;
 
   useEffect(() => {
     if (!visibleModes.includes(mode)) setMode(visibleModes[0] || "tradicional");
@@ -1776,7 +1792,7 @@ function AlavancagemPatrimonialModel({
               Construção de patrimônio com carta corrigida
             </h2>
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Visualize como o crédito contemplado pode ser usado na compra de um ativo para locação, projetando aluguel, desembolso, custo final e patrimônio corrigido. Na versão otimizada, o capital reinvestido é informado manualmente.
+              Visualize uma proposta patrimonial por vez: na tradicional, a carta financia a aquisição de um ativo para locação; na otimizada, você informa o capital reinvestido na própria tela para projetar a reserva patrimonial.
             </p>
           </div>
 
@@ -1822,6 +1838,31 @@ function AlavancagemPatrimonialModel({
         </section>
       ) : null}
 
+      {mode === "otimizada" ? (
+        <section className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[.14em] text-slate-500">Capital reinvestido</div>
+              <h3 className="mt-1 text-lg font-black" style={{ color: C.navy }}>Informe o capital adicional da estratégia otimizada</h3>
+              <p className="mt-1 max-w-3xl text-sm text-slate-600">
+                Esse valor não vem dos parâmetros globais. Ele representa o capital que o cliente pretende reinvestir manualmente nesta proposta para ampliar a reserva patrimonial projetada.
+              </p>
+            </div>
+            <label className="min-w-[280px] text-xs font-bold uppercase tracking-[.08em] text-slate-500">
+              Valor reinvestido
+              <input
+                value={optimizedCapitalInput}
+                onChange={(event) => setOptimizedCapitalInput(event.target.value)}
+                placeholder="Ex.: 100.000,00"
+                className="mt-1 h-11 w-full rounded-lg border px-3 text-base font-black outline-none transition focus:border-[#A11C27]"
+                style={{ color: C.navy }}
+              />
+              <span className="mt-1 block text-[11px] normal-case tracking-normal text-slate-500">Valor considerado: {brMoney(manualOptimizedCapital)}</span>
+            </label>
+          </div>
+        </section>
+      ) : null}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Crédito contemplado" value={brMoney(summary.availableAtContemplation)} tone="gold" />
         <Metric label="Prazo" value={`${summary.planTerm} meses`} />
@@ -1835,27 +1876,9 @@ function AlavancagemPatrimonialModel({
 
       <PatrimonialFlowCards scenario={activeScenario} summary={summary} />
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        <PatrimonialScenarioPanel scenario={traditional} tone="gold" />
-        <PatrimonialScenarioPanel scenario={optimized} tone="ruby" />
-      </section>
+      <PatrimonialScenarioPanel scenario={activeScenario} tone={mode === "tradicional" ? "gold" : "ruby"} />
 
-      <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
-        <div
-          className="m-5 flex w-[calc(100%-2.5rem)] items-center justify-center rounded-full px-4 py-3 text-center text-xs font-black uppercase tracking-[.18em] text-white shadow-sm"
-          style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}
-        >
-          Comparativo patrimonial
-        </div>
-        <div className="grid gap-3 border-t p-5 sm:grid-cols-2 xl:grid-cols-4">
-          <Metric label="Diferença otimizada x tradicional" value={brMoney(difference)} tone={difference >= 0 ? "gold" : "ruby"} />
-          <Metric label="Capital reinvestido manual" value={brMoney(optimized.manualReinvestedCapital)} tone="ruby" />
-          <Metric label="Renda passiva tradicional" value={brMoney(traditional.finalMonthlyIncome)} />
-          <Metric label="Renda passiva otimizada" value={brMoney(optimized.finalMonthlyIncome)} tone="gold" />
-        </div>
-      </section>
-
-      <PatrimonialChart flow={flow} />
+      <PatrimonialChart flow={flow} mode={mode} />
     </div>
   );
 }

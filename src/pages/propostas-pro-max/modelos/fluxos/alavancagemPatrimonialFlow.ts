@@ -178,7 +178,8 @@ function buildScenario({
 
 export function buildAlavancagemPatrimonialFlow(
   proposal: ProposalModelRow,
-  params: ProposalParams
+  params: ProposalParams,
+  options?: { manualOptimizedCapital?: number }
 ): AlavancagemPatrimonialFlow {
   const extrato = buildExtratoFlow(proposal, params);
   const entries = monthEntries(extrato.entries);
@@ -192,7 +193,7 @@ export function buildAlavancagemPatrimonialFlow(
   const traditionalIncomeRate = normalizeFraction(params.aluguel_pct);
   const optimizedIncomeRate = normalizeFraction(params.airbnb_pct) || traditionalIncomeRate;
   const expenseRate = normalizeFraction(params.condominio_pct);
-  const manualOptimizedCapital = getManualOptimizedCapital(params);
+  const manualOptimizedCapital = Math.max(0, onlyNumber(options?.manualOptimizedCapital));
   const creditAtContemplation =
     extrato.summary.creditAtContemplation ||
     extrato.summary.correctedContractedCredit ||
@@ -322,7 +323,7 @@ export function buildAlavancagemPatrimonialFlow(
   const optimized = buildScenario({
     key: "otimizada",
     label: "Alavancagem Otimizada",
-    description: "Combina renda otimizada do ativo com capital reinvestido informado manualmente, projetando reserva financeira e patrimonio liquido ampliado.",
+    description: "Combina renda otimizada do ativo com capital reinvestido informado na tela, projetando reserva financeira e patrimonio liquido ampliado.",
     monthlyIncomeRate: optimizedIncomeRate,
     monthlyIncomeLabel: "Renda otimizada",
     finalAssetValue,

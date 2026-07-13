@@ -248,8 +248,11 @@ export function buildAlavancagemPatrimonialFlow(
       manualReserveStarted = true;
     } else if (month > contemplationMonth && assetValue > 0) {
       assetValue += assetValue * extrato.monthlyRate;
-      traditionalRent += traditionalRent * rentMonthlyRate;
-      optimizedRent += optimizedRent * rentMonthlyRate;
+      const monthsAfterContemplation = month - contemplationMonth;
+      if (rentAnnualRate > 0 && monthsAfterContemplation > 0 && monthsAfterContemplation % 12 === 0) {
+        traditionalRent *= 1 + rentAnnualRate;
+        optimizedRent *= 1 + rentAnnualRate;
+      }
     }
 
     if (manualReserveStarted && manualOptimizedCapital > 0) {

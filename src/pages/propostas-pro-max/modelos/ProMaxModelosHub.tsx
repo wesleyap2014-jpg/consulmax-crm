@@ -1530,65 +1530,97 @@ function PatrimonialMonthlyChart({ flow, mode }: { flow: AlavancagemPatrimonialF
   const points = flow.chart;
   const active = hovered || points[Math.max(0, points.length - 1)];
   const isOptimized = mode === "otimizada";
+  const equityKey: "traditionalEquity" | "optimizedEquity" = isOptimized ? "optimizedEquity" : "traditionalEquity";
   const incomeKey: "traditionalNetIncome" | "optimizedNetIncome" = isOptimized ? "optimizedNetIncome" : "traditionalNetIncome";
-  const rawMax = Math.max(1, ...points.flatMap((point) => [point.installment, point[incomeKey]]));
-  const maxY = niceChartMax(rawMax);
+  const capitalMaxY = niceChartMax(Math.max(
+    1,
+    ...points.flatMap((point) => [point.assetValue, point.debtBalance, point[equityKey], isOptimized ? point.optimizedReserve : 0])
+  ));
+  const monthlyMaxY = niceChartMax(Math.max(1, ...points.flatMap((point) => [point.installment, point[incomeKey]])));
   const hoverIndex = active ? Math.max(0, points.findIndex((point) => point.month === active.month)) : -1;
   const hoverX = active ? chartX(hoverIndex, points.length) : 0;
-  const linePoints = (getter: (point: PatrimonialChartPoint) => number) =>
-    points
-      .map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(getter(point), maxY).toFixed(2)}`)
-      .join(" ");
+  const capitalLine = (getter: (point: PatrimonialChartPoint) => number) =>
+    points.map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(getter(point), capitalMaxY).toFixed(2)}`).join(" ");
+  const monthlyLine = (getter: (point: PatrimonialChartPoint) => number) =>
+    points.map((point, index) => `${chartX(index, points.length).toFixed(2)},${chartY(getter(point), monthlyMaxY).toFixed(2)}`).join(" ");
   const last = points[Math.max(0, points.length - 1)];
   const endX = chartX(points.length - 1, points.length) + 12;
-  const labelY = (value: number) => Math.max(24, Math.min(248, chartY(value, maxY)));
+  const labelCapitalY = (value: number) => Math.max(24, Math.min(248, chartY(value, capitalMaxY)));
+  const labelMonthlyY = (value: number) => Math.max(24, Math.min(248, chartY(value, monthlyMaxY)));
 
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
       <div className="flex flex-col gap-3 border-b px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
-            <BarChart3 className="h-4 w-4" /> Parcela do Consórcio x Aluguel Recebido
+            <BarChart3 className="h-4 w-4" /> Evolução patrimonial e fluxo mensal
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Evolução mensal da parcela projetada pelo Extrato frente ao aluguel líquido recebido pelo imóvel.
+            Valor do imóvel, patrimônio líquido, saldo devedor, parcela do consórcio e aluguel recebido no mesmo fluxo projetado.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-black">
+          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.gold }}>Valor do imóvel</span>
+          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.navy }}>Patrimônio líquido</span>
+          <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.ruby }}>Saldo devedor</span>
+          {isOptimized ? <span className="rounded-full border bg-white px-3 py-1.5 text-slate-600">Reserva reinvestida</span> : null}
           <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.ruby }}>Parcela do Consórcio</span>
           <span className="rounded-full border bg-white px-3 py-1.5" style={{ color: C.gold }}>Aluguel Recebido</span>
         </div>
       </div>
 
-      <div className="relative h-[360px] overflow-hidden px-5 py-5">
-        <svg viewBox="0 0 1620 310" className="h-full w-full overflow-visible" preserveAspectRatio="none">
+      <div className="relative h-[410px] overflow-hidden px-5 py-5">
+        <svg viewBox="0 0 1620 340" className="h-full w-full overflow-visible" preserveAspectRatio="none" onMouseLeave={() => setHovered(null)}>
           {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-            const y = chartY(maxY * ratio, maxY);
+            const y = chartY(capitalMaxY * ratio, capitalMaxY);
             return (
-              <g key={ratio}>
+              <g key={`capital-${ratio}`}>
                 <line x1="92" x2="1488" y1={y} y2={y} stroke="#E2E8F0" strokeDasharray="5 8" />
                 <text x="44" y={y + 4} textAnchor="end" className="fill-slate-500 text-[12px] font-bold">
-                  {axisMoney(maxY * ratio)}
+                  {axisMoney(capitalMaxY * ratio)}
                 </text>
               </g>
             );
           })}
+          {[0, 0.5, 1].map((ratio) => {
+            const y = chartY(monthlyMaxY * ratio, monthlyMaxY);
+            return (
+              <text key={`monthly-${ratio}`} x="1578" y={y + 4} textAnchor="start" className="fill-slate-400 text-[11px] font-bold">
+                {axisMoney(monthlyMaxY * ratio)}
+              </text>
+            );
+          })}
+          <text x="44" y="18" textAnchor="end" className="fill-slate-500 text-[11px] font-black uppercase tracking-[.08em]">Patrimônio</text>
+          <text x="1578" y="18" textAnchor="start" className="fill-slate-400 text-[11px] font-black uppercase tracking-[.08em]">Mensal</text>
           <line x1="92" x2="1488" y1="254" y2="254" stroke="#CBD5E1" />
-          <polyline points={linePoints((point) => point.installment)} fill="none" stroke={C.ruby} strokeWidth="5" strokeDasharray="10 8" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={linePoints((point) => point[incomeKey])} fill="none" stroke={C.gold} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={capitalLine((point) => point.assetValue)} fill="none" stroke={C.gold} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={capitalLine((point) => point[equityKey])} fill="none" stroke={C.navy} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={capitalLine((point) => point.debtBalance)} fill="none" stroke={C.ruby} strokeWidth="4" strokeDasharray="10 10" strokeLinecap="round" strokeLinejoin="round" />
+          {isOptimized ? (
+            <polyline points={capitalLine((point) => point.optimizedReserve)} fill="none" stroke="#64748B" strokeWidth="4" strokeDasharray="2 9" strokeLinecap="round" strokeLinejoin="round" />
+          ) : null}
+          <polyline points={monthlyLine((point) => point.installment)} fill="none" stroke={C.ruby} strokeWidth="4" strokeDasharray="6 8" strokeLinecap="round" strokeLinejoin="round" opacity="0.78" />
+          <polyline points={monthlyLine((point) => point[incomeKey])} fill="none" stroke={C.gold} strokeWidth="4" strokeDasharray="2 7" strokeLinecap="round" strokeLinejoin="round" opacity="0.86" />
 
           {last ? (
             <g className="text-[12px] font-black">
-              <text x={endX} y={labelY(last.installment) - 6} className="fill-[#A11C27]">Parcela do Consórcio</text>
-              <text x={endX} y={labelY(last[incomeKey]) + 14} className="fill-[#B5A573]">Aluguel Recebido</text>
+              <text x={endX} y={labelCapitalY(last.assetValue) - 6} className="fill-[#B5A573]">Valor do imóvel</text>
+              <text x={endX} y={labelCapitalY(last[equityKey]) + 4} className="fill-[#1E293F]">Patrimônio líquido</text>
+              <text x={endX} y={labelCapitalY(last.debtBalance) + 14} className="fill-[#A11C27]">Saldo devedor</text>
+              {isOptimized ? <text x={endX} y={labelCapitalY(last.optimizedReserve) + 24} className="fill-slate-500">Reserva reinvestida</text> : null}
+              <text x={endX} y={labelMonthlyY(last.installment) - 8} className="fill-[#A11C27]">Parcela</text>
+              <text x={endX} y={labelMonthlyY(last[incomeKey]) + 14} className="fill-[#B5A573]">Aluguel</text>
             </g>
           ) : null}
 
           {active ? (
             <g>
               <line x1={hoverX} x2={hoverX} y1="34" y2="254" stroke="#94A3B8" strokeDasharray="5 5" />
-              <circle cx={hoverX} cy={chartY(active.installment, maxY)} r="5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2" />
-              <circle cx={hoverX} cy={chartY(active[incomeKey], maxY)} r="5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2" />
+              <circle cx={hoverX} cy={chartY(active.assetValue, capitalMaxY)} r="5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2" />
+              <circle cx={hoverX} cy={chartY(active[equityKey], capitalMaxY)} r="5" fill={C.navy} stroke="#FFFFFF" strokeWidth="2" />
+              <circle cx={hoverX} cy={chartY(active.debtBalance, capitalMaxY)} r="5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2" />
+              <circle cx={hoverX} cy={chartY(active.installment, monthlyMaxY)} r="5" fill={C.ruby} stroke="#FFFFFF" strokeWidth="2" />
+              <circle cx={hoverX} cy={chartY(active[incomeKey], monthlyMaxY)} r="5" fill={C.gold} stroke="#FFFFFF" strokeWidth="2" />
             </g>
           ) : null}
 
@@ -1618,7 +1650,7 @@ function PatrimonialMonthlyChart({ flow, mode }: { flow: AlavancagemPatrimonialF
 
         {active ? (
           <div
-            className="pointer-events-none absolute top-16 w-[310px] rounded-xl border bg-white/95 p-4 text-xs shadow-2xl"
+            className="pointer-events-none absolute top-16 w-[340px] rounded-xl border bg-white/95 p-4 text-xs shadow-2xl"
             style={{ left: hoverX > 1120 ? "auto" : `${Math.max(110, (hoverX / 1620) * 100)}%`, right: hoverX > 1120 ? 72 : "auto" }}
           >
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -1626,7 +1658,11 @@ function PatrimonialMonthlyChart({ flow, mode }: { flow: AlavancagemPatrimonialF
               <span className="rounded-full bg-slate-100 px-2 py-1 font-black text-slate-500">{isOptimized ? "Otimizada" : "Tradicional"}</span>
             </div>
             <div className="space-y-2">
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Parcela do Consórcio</span><strong style={{ color: C.ruby }}>{brMoney(active.installment)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Valor do imóvel</span><strong style={{ color: C.gold }}>{brMoney(active.assetValue)}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Patrimônio líquido</span><strong style={{ color: C.navy }}>{brMoney(active[equityKey])}</strong></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-500">Saldo devedor</span><strong style={{ color: C.ruby }}>{brMoney(active.debtBalance)}</strong></div>
+              {isOptimized ? <div className="flex justify-between gap-3"><span className="text-slate-500">Reserva reinvestida</span><strong>{brMoney(active.optimizedReserve)}</strong></div> : null}
+              <div className="border-t pt-2 flex justify-between gap-3"><span className="text-slate-500">Parcela do Consórcio</span><strong style={{ color: C.ruby }}>{brMoney(active.installment)}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">Aluguel Recebido</span><strong style={{ color: C.gold }}>{brMoney(active[incomeKey])}</strong></div>
               <div className="flex justify-between gap-3"><span className="text-slate-500">Desembolso/Sobra</span><strong style={{ color: active.installment - active[incomeKey] > 0 ? C.ruby : C.gold }}>{brMoney(Math.abs(active.installment - active[incomeKey]))}</strong></div>
             </div>
@@ -1712,6 +1748,109 @@ function PropertyCompositionDonut({ scenario }: { scenario: AlavancagemPatrimoni
             </div>
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function buildParcelFlowRanges(entries: AlavancagemPatrimonialFlow["entries"]) {
+  const sorted = [...entries].sort((a, b) => a.month - b.month);
+  const ranges: Array<{
+    start: number;
+    end: number;
+    installment: number;
+    insuranceMonthly: number;
+    totalPaid: number;
+    months: number;
+  }> = [];
+
+  for (const entry of sorted) {
+    const installment = onlyNumber(entry.installment);
+    const insuranceMonthly = onlyNumber(entry.insuranceMonthly);
+    const last = ranges[ranges.length - 1];
+    const sameInstallment = last && Math.abs(last.installment - installment) < 0.01;
+    const sameInsurance = last && Math.abs(last.insuranceMonthly - insuranceMonthly) < 0.01;
+    const contiguous = last && entry.month === last.end + 1;
+
+    if (last && sameInstallment && sameInsurance && contiguous) {
+      last.end = entry.month;
+      last.months += 1;
+      last.totalPaid += installment;
+    } else {
+      ranges.push({
+        start: entry.month,
+        end: entry.month,
+        installment,
+        insuranceMonthly,
+        totalPaid: installment,
+        months: 1,
+      });
+    }
+  }
+
+  return ranges;
+}
+
+function parcelRangeLabel(range: ReturnType<typeof buildParcelFlowRanges>[number], lastMonth: number) {
+  if (range.start === range.end) return `Parcela ${range.start}`;
+  if (range.end === lastMonth) return `Parcelas ${range.start} em diante`;
+  return `Parcelas ${range.start} a ${range.end}`;
+}
+
+function PatrimonialParcelFlowSummary({ flow }: { flow: AlavancagemPatrimonialFlow }) {
+  const ranges = buildParcelFlowRanges(flow.entries);
+  const lastMonth = flow.entries[flow.entries.length - 1]?.month || ranges[ranges.length - 1]?.end || 1;
+  const hasInsurance = ranges.some((range) => range.insuranceMonthly > 0);
+
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b px-5 py-4 lg:flex-row lg:items-center lg:justify-between" style={{ background: C.navy }}>
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black text-white">
+            <FileSpreadsheet className="h-4 w-4" /> Fluxo de parcelas pelo Extrato
+          </div>
+          <p className="mt-1 text-xs text-white/75">
+            Agrupamento das parcelas exatamente conforme o fluxo mês a mês do Extrato, respeitando parcela 1, faixas diferenciadas, antecipações, reajustes e seguro explícito quando existir.
+          </p>
+        </div>
+        <div className="grid gap-2 text-xs sm:grid-cols-3 lg:min-w-[520px]">
+          <div className="rounded-lg bg-white/10 px-3 py-2 text-white">
+            <div className="font-semibold opacity-75">Crédito líquido</div>
+            <div className="font-black">{brMoney(flow.summary.availableAtContemplation)}</div>
+          </div>
+          <div className="rounded-lg bg-white/10 px-3 py-2 text-white">
+            <div className="font-semibold opacity-75">Lance próprio</div>
+            <div className="font-black">{brMoney(flow.summary.ownBidAtContemplation)}</div>
+          </div>
+          <div className="rounded-lg bg-white/10 px-3 py-2 text-white">
+            <div className="font-semibold opacity-75">Lance embutido</div>
+            <div className="font-black">{brMoney(flow.summary.embeddedBidAtContemplation)}</div>
+          </div>
+        </div>
+      </div>
+      <div className="overflow-auto p-4">
+        <table className="w-full min-w-[760px] border-collapse text-sm">
+          <thead className="text-xs uppercase tracking-[.08em] text-slate-500">
+            <tr>
+              <th className="border-b p-3 text-left">Faixa</th>
+              <th className="border-b p-3 text-right">Valor da parcela</th>
+              {hasInsurance ? <th className="border-b p-3 text-right">Seguro mensal</th> : null}
+              <th className="border-b p-3 text-right">Meses</th>
+              <th className="border-b p-3 text-right">Total pago na faixa</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ranges.map((range) => (
+              <tr key={`${range.start}-${range.end}`} className="border-b last:border-b-0 odd:bg-slate-50/70">
+                <td className="p-3 font-black" style={{ color: C.navy }}>{parcelRangeLabel(range, lastMonth)}</td>
+                <td className="p-3 text-right font-black">{brMoney(range.installment)}</td>
+                {hasInsurance ? <td className="p-3 text-right text-slate-600">{brMoney(range.insuranceMonthly)}</td> : null}
+                <td className="p-3 text-right text-slate-600">{range.months}x</td>
+                <td className="p-3 text-right font-semibold">{brMoney(range.totalPaid)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </section>
   );
@@ -1935,13 +2074,13 @@ function AlavancagemPatrimonialModel({
         <Metric label="Parcela projetada" value={brMoney(summary.postContemplationInstallment)} />
         <Metric label="Aluguel inicial" value={brMoney(activeScenario.firstMonthlyIncome)} tone="gold" />
         <Metric label="Renda passiva após quitação" value={brMoney(activeScenario.finalMonthlyIncome)} tone="gold" />
-        <Metric label="Desembolso final" value={brMoney(Math.max(0, activeScenario.finalCashGap))} tone={activeScenario.finalCashGap > 0 ? "ruby" : "gold"} />
         <Metric label="Valor imóvel corrigido" value={brMoney(activeScenario.finalAssetValue)} tone="gold" />
-        <Metric label="Custo final" value={brMoney(activeScenario.finalCost)} tone="ruby" />
         <Metric label="% pago no imóvel" value={brPercent(activeScenario.paidOnAssetPct)} />
       </section>
 
       <PatrimonialFlowCards scenario={activeScenario} summary={summary} />
+
+      <PatrimonialParcelFlowSummary flow={flow} />
 
       <PatrimonialScenarioPanel scenario={activeScenario} tone={mode === "tradicional" ? "gold" : "ruby"} />
 

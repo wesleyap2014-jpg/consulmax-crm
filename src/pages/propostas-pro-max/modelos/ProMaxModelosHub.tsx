@@ -2468,7 +2468,9 @@ function EquityCadencedIndicators({ strategy }: { strategy: EquityFlow["cadenced
         <Metric label="CET comp. a.m." value={brPercent(indicators.compoundCetMonthly)} />
         <Metric label="CET comp. a.a." value={brPercent(indicators.compoundCetAnnual)} />
       </div>
-      <div className="px-5 pb-5 text-xs text-slate-500">CET calculado sobre a alavancagem total gerada pela cadência.</div>
+      <div className="px-5 pb-5 text-xs text-slate-500">
+        CET calculado sobre a alavancagem total gerada, considerando taxa de administração, fundo reserva, seguro explícito e reajustes após a contemplação. Lance e fundo comum não entram como custo.
+      </div>
     </section>
   );
 }

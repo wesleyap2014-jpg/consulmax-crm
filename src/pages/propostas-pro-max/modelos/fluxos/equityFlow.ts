@@ -248,6 +248,99 @@ function sumInstallmentsUntil(entries: ExtratoMonthEntry[], month: number) {
     .reduce((sum, entry) => sum + entry.installment, 0);
 }
 
+function calculateCetFromTotalCost(totalCost: number, leverageBase: number, term: number) {
+  const safeBase = Math.max(1, leverageBase);
+  const safeTerm = Math.max(1, Math.round(term));
+  const totalCet = Math.max(0, totalCost) / safeBase;
+  const simpleMonthly = totalCet / safeTerm;
+  const compoundMonthly = totalCet > 0 ? Math.pow(1 + totalCet, 1 / safeTerm) - 1 : 0;
+
+  return {
+    simpleMonthly,
+    simpleAnnual: simpleMonthly * 12,
+    compoundMonthly,
+    compoundAnnual: Math.pow(1 + compoundMonthly, 12) - 1,
+  };
+}
+
+function monthEventText(entry: EquityInstallmentDetailEntry) {
+  return normalizeText(entry.eventText || "");
+}
+
+function inferContemplationMonthFromDetails(details: EquityInstallmentDetailEntry[], fallback = 1) {
+  const found = details.find((entry) => monthEventText(entry).includes("contemplacao"));
+  return found?.month || Math.max(1, fallback);
+}
+
+function firstMoneyAfterPattern(text: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return onlyNumber(match[1]);
+  }
+  return 0;
+}
+
+function postContemplationCorrectionCost(details: EquityInstallmentDetailEntry[], contemplationMonth?: number) {
+  const effectiveContemplationMonth = contemplationMonth || inferContemplationMonthFromDetails(details, 1);
+
+  return details.reduce((sum, entry) => {
+    if (entry.month <= effectiveContemplationMonth) return sum;
+    const text = entry.eventText || "";
+    const normalized = normalizeText(text);
+    if (!normalized.includes("correcao")) return sum;
+
+    const correctionValue = firstMoneyAfterPattern(text, [
+      /Corre[cç][aã]o:\s*(R\$\s*[\d.,]+)/i,
+      /corrigido\s+em\s*(R\$\s*[\d.,]+)/i,
+    ]);
+
+    return sum + Math.max(0, correctionValue);
+  }, 0);
+}
+
+function adminReserveCostFromDetails(
+  details: EquityInstallmentDetailEntry[],
+  adminRate: number,
+  reserveRate: number,
+  planTerm: number
+) {
+  const totalFeeRate = Math.max(0, adminRate) + Math.max(0, reserveRate);
+  const safeTerm = Math.max(1, Math.round(planTerm));
+  if (totalFeeRate <= 0) return 0;
+
+  return details.reduce((sum, entry) => {
+    const creditBase = Math.max(0, entry.credit);
+    return sum + (creditBase * totalFeeRate) / safeTerm;
+  }, 0);
+}
+
+function insuranceCostFromDetails(details: EquityInstallmentDetailEntry[]) {
+  return details.reduce((sum, entry) => sum + Math.max(0, onlyNumber(entry.insuranceMonthly)), 0);
+}
+
+function operationalCostFromDetails({
+  details,
+  adminRate,
+  reserveRate,
+  planTerm,
+  contemplationMonth,
+}: {
+  details: EquityInstallmentDetailEntry[];
+  adminRate: number;
+  reserveRate: number;
+  planTerm: number;
+  contemplationMonth?: number;
+}) {
+  // Custo econômico do consórcio para CET:
+  // taxa de administração + fundo reserva + seguro explícito + reajustes após contemplação.
+  // Fundo comum, lance próprio e lance embutido não são custo; são capital/antecipação/uso do crédito.
+  return (
+    adminReserveCostFromDetails(details, adminRate, reserveRate, planTerm) +
+    insuranceCostFromDetails(details) +
+    postContemplationCorrectionCost(details, contemplationMonth)
+  );
+}
+
 function buildDirectScenario({
   key,
   label,
@@ -282,10 +375,7 @@ function buildDirectScenario({
   const totalInvested = installmentsPaidUntilContemplation + bidPaid;
   const leverageAmount = Math.max(0, creditReleased - totalInvested);
   const safeTerm = Math.max(1, term);
-  const costBase = Math.max(1, leverageAmount);
-  const totalCet = Math.max(0, totalCost) / costBase;
-  const simpleCetMonthly = totalCet / safeTerm;
-  const compoundCetMonthly = totalCet > 0 ? Math.pow(1 + totalCet, 1 / safeTerm) - 1 : 0;
+  const cet = calculateCetFromTotalCost(totalCost, leverageAmount, safeTerm);
 
   return {
     key,
@@ -300,10 +390,10 @@ function buildDirectScenario({
     debtAfterContemplation,
     averageTerm: Math.round(safeTerm),
     effectiveBidRate: creditReleased > 0 ? bidPaid / creditReleased : 0,
-    simpleCetMonthly,
-    simpleCetAnnual: simpleCetMonthly * 12,
-    compoundCetMonthly,
-    compoundCetAnnual: Math.pow(1 + compoundCetMonthly, 12) - 1,
+    simpleCetMonthly: cet.simpleMonthly,
+    simpleCetAnnual: cet.simpleAnnual,
+    compoundCetMonthly: cet.compoundMonthly,
+    compoundCetAnnual: cet.compoundAnnual,
     totalCost,
     firstInstallment,
     postContemplationInstallment,
@@ -604,14 +694,21 @@ function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams)
     net: item.leverageAmount,
   }));
 
-  const totalCost = Math.max(
-    0,
-    quotas.reduce((sum, item) => sum + item.installmentDetails.reduce((subtotal, entry) => subtotal + entry.installment, 0), 0) + reusableBid
-  );
-  const cetBase = Math.max(1, totalLeverage);
-  const totalCet = totalCost / cetBase;
-  const simpleCetMonthly = averageTerm > 0 ? totalCet / averageTerm : 0;
-  const compoundCetMonthly = totalCet > 0 && averageTerm > 0 ? Math.pow(1 + totalCet, 1 / averageTerm) - 1 : 0;
+  const totalCost = quotas.reduce((sum, item) => {
+    const quotaContemplationMonth = inferContemplationMonthFromDetails(item.installmentDetails, item.index);
+    return sum + operationalCostFromDetails({
+      details: item.installmentDetails,
+      adminRate: item.adminRate,
+      reserveRate: item.reserveRate,
+      planTerm: item.term,
+      contemplationMonth: quotaContemplationMonth,
+    });
+  }, 0);
+  const weightedAverageTerm = totalLeverage > 0
+    ? Math.round(quotas.reduce((sum, item) => sum + item.postInstallmentsCount * item.leverageAmount, 0) / totalLeverage)
+    : averageTerm;
+  const cetTerm = Math.max(1, weightedAverageTerm || averageTerm || 1);
+  const cet = calculateCetFromTotalCost(totalCost, totalLeverage, cetTerm);
 
   return {
     quotaCount: quotas.length,
@@ -631,12 +728,12 @@ function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams)
     parcelFlow,
     cashFlow,
     indicators: {
-      averageTerm,
+      averageTerm: cetTerm,
       effectiveBidRate: totalLeverage > 0 ? reusableBid / totalLeverage : 0,
-      simpleCetMonthly,
-      simpleCetAnnual: simpleCetMonthly * 12,
-      compoundCetMonthly,
-      compoundCetAnnual: Math.pow(1 + compoundCetMonthly, 12) - 1,
+      simpleCetMonthly: cet.simpleMonthly,
+      simpleCetAnnual: cet.simpleAnnual,
+      compoundCetMonthly: cet.compoundMonthly,
+      compoundCetAnnual: cet.compoundAnnual,
     },
   };
 }
@@ -728,10 +825,20 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const bidPostContemplationInstallment =
     entries.find((entry) => entry.month > contemplationMonth)?.installment ||
     postContemplationInstallment;
-  // CET do Equity deve considerar todos os custos/desembolsos da operação
-  // e não apenas o custo líquido depois do crédito liberado.
-  const lotteryTotalCost = Math.max(0, lotteryTotalPaid);
-  const bidTotalCost = Math.max(0, totalInstallments + ownBid);
+  const lotteryTotalCost = operationalCostFromDetails({
+    details: lotteryInstallmentDetails,
+    adminRate: extrato.summary.adminTaxPct,
+    reserveRate: extrato.summary.reserveTaxPct,
+    planTerm: lotteryTerm,
+    contemplationMonth,
+  });
+  const bidTotalCost = operationalCostFromDetails({
+    details: bidInstallmentDetails,
+    adminRate: extrato.summary.adminTaxPct,
+    reserveRate: extrato.summary.reserveTaxPct,
+    planTerm: extrato.summary.planTerm || totalMonths,
+    contemplationMonth,
+  });
   const lotteryScenario = buildDirectScenario({
     key: "sorteio",
     label: "Via Sorteio",
@@ -870,7 +977,9 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const cadencedInvestmentIncome = Math.max(0, lastCycle?.investmentIncome || 0);
   const cadencedCost = cadencedStrategy.totalPostInstallments || postContemplationInstallment * cadencedMultiplier;
   const cadencedMonthlyNet = cadencedMonthlyAssetIncome + cadencedInvestmentIncome - cadencedCost;
-  const cadencedTotalPaid = cadencedStrategy.totalOwnBid + cadencedStrategy.quotas.reduce((sum, item) => sum + item.postInstallment * item.postInstallmentsCount, 0);
+  // Para análise econômica da cadência, o CET usa apenas o custo econômico:
+  // taxas, fundo reserva, seguro explícito e reajustes pós-contemplação.
+  const cadencedTotalPaid = cadencedStrategy.totalCost;
   const cadencedCapitalPreserved = Math.max(0, lastCycle?.capitalPreserved || capitalPreserved);
   const cadencedCreditReleased = cadencedStrategy.totalCreditReleased || creditReleased * cadencedMultiplier;
   const cadencedProjectedGain = Math.max(0, (lastCycle?.accumulatedEquity || cadencedCreditReleased) + cadencedCapitalPreserved - cadencedTotalPaid);
@@ -887,8 +996,8 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
     monthlyConsortiumCost: cadencedCost,
     monthlyNetPosition: cadencedMonthlyNet,
     annualNetPosition: cadencedMonthlyNet * 12,
-    effectiveMonthlyCostRate: cadencedCreditReleased > 0 ? cadencedCost / cadencedCreditReleased : 0,
-    effectiveAnnualCostRate: cadencedCreditReleased > 0 ? Math.pow(1 + cadencedCost / cadencedCreditReleased, 12) - 1 : 0,
+    effectiveMonthlyCostRate: cadencedStrategy.indicators.compoundCetMonthly,
+    effectiveAnnualCostRate: cadencedStrategy.indicators.compoundCetAnnual,
     projectedGain: cadencedProjectedGain,
     roi: cadencedTotalPaid > 0 ? cadencedProjectedGain / cadencedTotalPaid : 0,
     leverageMultiple: cadencedTotalPaid > 0 ? (cadencedCreditReleased + cadencedCapitalPreserved) / cadencedTotalPaid : 0,

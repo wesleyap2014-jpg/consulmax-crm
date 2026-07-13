@@ -78,6 +78,7 @@ export type ProposalParams = {
   equity_pronaf_anual: number;
   equity_pronamp_anual: number;
   equity_demais_anual: number;
+  patrimonial_capital_reinvestido_otimizada: number;
 };
 
 export type ExtratoMonthEntry = {

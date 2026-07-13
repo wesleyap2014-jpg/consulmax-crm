@@ -1642,13 +1642,14 @@ function PatrimonialChart({ flow }: { flow: AlavancagemPatrimonialFlow }) {
 
 function PatrimonialScenarioPanel({ scenario, tone }: { scenario: AlavancagemPatrimonialFlow["traditional"]; tone: "gold" | "ruby" }) {
   const color = tone === "gold" ? C.gold : C.ruby;
+  const cashGapLabel = scenario.finalCashGap <= 0 ? "Sobra mensal projetada" : "Desembolso mensal final";
 
   return (
     <div className="rounded-xl border bg-white p-5 shadow-sm" style={{ borderColor: `${color}44` }}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">{scenario.label}</div>
-          <div className="mt-2 text-2xl font-black" style={{ color }}>{brMoney(scenario.finalEquity)}</div>
+          <div className="mt-2 text-2xl font-black" style={{ color }}>{brMoney(scenario.finalCost)}</div>
           <p className="mt-2 text-sm leading-relaxed text-slate-600">{scenario.description}</p>
         </div>
         <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color }}>
@@ -1658,30 +1659,92 @@ function PatrimonialScenarioPanel({ scenario, tone }: { scenario: AlavancagemPat
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">Renda mensal final</div>
-          <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.finalMonthlyIncome)}</div>
+          <div className="text-xs font-semibold text-slate-500">Valor imóvel corrigido</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.finalAssetValue)}</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">Renda acumulada</div>
+          <div className="text-xs font-semibold text-slate-500">Aluguéis recebidos</div>
           <div className="font-black" style={{ color }}>{brMoney(scenario.accumulatedIncome)}</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">ROI patrimonial</div>
-          <div className="font-black" style={{ color: C.navy }}>{brPercent(scenario.roi)}</div>
+          <div className="text-xs font-semibold text-slate-500">Total pago consórcio</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.totalPaidConsortium)}</div>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-semibold text-slate-500">Multiplicador</div>
-          <div className="font-black" style={{ color: C.navy }}>{scenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x</div>
+          <div className="text-xs font-semibold text-slate-500">% pago no imóvel</div>
+          <div className="font-black" style={{ color }}>{brPercent(scenario.paidOnAssetPct)}</div>
         </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">Renda passiva final</div>
+          <div className="font-black" style={{ color: C.navy }}>{brMoney(scenario.finalMonthlyIncome)}</div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500">{cashGapLabel}</div>
+          <div className="font-black" style={{ color: scenario.finalCashGap <= 0 ? C.gold : C.ruby }}>{brMoney(Math.abs(scenario.finalCashGap))}</div>
+        </div>
+        {scenario.key === "otimizada" ? (
+          <>
+            <div className="rounded-lg bg-slate-50 p-3">
+              <div className="text-xs font-semibold text-slate-500">Capital reinvestido manual</div>
+              <div className="font-black" style={{ color: C.ruby }}>{brMoney(scenario.manualReinvestedCapital)}</div>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-3">
+              <div className="text-xs font-semibold text-slate-500">Reserva projetada</div>
+              <div className="font-black" style={{ color }}>{brMoney(scenario.accumulatedReserve)}</div>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="mt-4 rounded-lg p-3 text-sm" style={{ background: "linear-gradient(135deg, rgba(181,165,115,.16), rgba(30,41,63,.05))" }}>
         <div className="flex justify-between gap-3">
-          <span className="font-semibold text-slate-600">Alívio de caixa projetado</span>
-          <strong style={{ color }}>{brMoney(scenario.cashRelief)}</strong>
+          <span className="font-semibold text-slate-600">Custo final estimado</span>
+          <strong style={{ color }}>{brMoney(scenario.finalCost)}</strong>
+        </div>
+        <div className="mt-2 flex justify-between gap-3">
+          <span className="font-semibold text-slate-600">Patrimônio líquido final</span>
+          <strong style={{ color: C.navy }}>{brMoney(scenario.finalEquity)}</strong>
         </div>
       </div>
     </div>
+  );
+}
+
+function PatrimonialFlowCards({ scenario, summary }: { scenario: AlavancagemPatrimonialFlow["traditional"]; summary: AlavancagemPatrimonialFlow["summary"] }) {
+  const color = scenario.key === "tradicional" ? C.gold : C.ruby;
+  const gap = scenario.finalCashGap;
+  const cashText = gap <= 0 ? `Sobra mensal de ${brMoney(Math.abs(gap))}` : `Desembolso estimado de ${brMoney(gap)}`;
+  const nodes = [
+    { title: "Crédito contemplado", value: brMoney(summary.availableAtContemplation), helper: "A carta libera poder de compra para acessar o ativo patrimonial." },
+    { title: "Compra para locação", value: "Imóvel gerador de renda", helper: "O crédito é direcionado para um ativo com potencial de renda recorrente." },
+    { title: "Aluguel mensal", value: brMoney(scenario.finalMonthlyIncome), helper: `Renda projetada com ${brPercent(scenario.monthlyIncomeRate)} a.m. e correção do aluguel.` },
+    { title: "Parcela consórcio", value: brMoney(scenario.postContemplationInstallment), helper: "Fluxo mensal calculado pelo Extrato, com correções, prazo e eventos." },
+    { title: "Desembolso", value: cashText, helper: "Diferença entre a renda do ativo e a parcela projetada." },
+    { title: "Patrimônio final", value: brMoney(scenario.finalAssetValue), helper: `Custo final estimado: ${brMoney(scenario.finalCost)}.` },
+  ];
+
+  return (
+    <section className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}>
+            <LineChart className="h-4 w-4" /> Fluxo financeiro patrimonial
+          </div>
+          <p className="mt-1 text-xs text-slate-500">Leitura comercial do crédito, aquisição do ativo, renda, parcela e patrimônio final projetado.</p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black" style={{ color }}>{scenario.label}</span>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        {nodes.map((node, index) => (
+          <div key={node.title} className="relative rounded-xl border bg-slate-50 p-4">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black text-white" style={{ background: color }}>{index + 1}</div>
+            <div className="mt-3 text-[11px] font-black uppercase tracking-[.1em] text-slate-500">{node.title}</div>
+            <div className="mt-1 text-base font-black" style={{ color: index === 4 && gap > 0 ? C.ruby : index === 4 ? C.gold : C.navy }}>{node.value}</div>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">{node.helper}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1692,7 +1755,7 @@ function AlavancagemPatrimonialModel({
 }: ProMaxModelosHubProps & { allowedModes?: AlavancagemPatrimonialMode[] }) {
   const [mode, setMode] = useState<AlavancagemPatrimonialMode>("tradicional");
   const flow = useMemo(() => buildAlavancagemPatrimonialFlow(proposal, params), [proposal, params]);
-  const { correction, cdi, income, summary, traditional, optimized } = flow;
+  const { correction, rentCorrection, cdi, income, summary, traditional, optimized } = flow;
   const visibleModes = allowedModes?.length ? allowedModes : (["tradicional", "otimizada"] as AlavancagemPatrimonialMode[]);
   const activeScenario = mode === "tradicional" ? traditional : optimized;
   const difference = optimized.finalEquity - traditional.finalEquity;
@@ -1713,8 +1776,7 @@ function AlavancagemPatrimonialModel({
               Construção de patrimônio com carta corrigida
             </h2>
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Compare a formação patrimonial tradicional com uma estratégia otimizada, usando renda projetada do bem,
-              correção da carta, saldo devedor e reinvestimento do excedente ao CDI.
+              Visualize como o crédito contemplado pode ser usado na compra de um ativo para locação, projetando aluguel, desembolso, custo final e patrimônio corrigido. Na versão otimizada, o capital reinvestido é informado manualmente.
             </p>
           </div>
 
@@ -1732,7 +1794,7 @@ function AlavancagemPatrimonialModel({
                 {brPercent(activeScenario.monthlyIncomeRate)} a.m.
               </div>
               <div className="text-xs text-slate-500">
-                Despesa operacional: {brPercent(income.expenseRate)} | CDI reinvestimento: {brPercent(cdi.monthlyRate)} a.m.
+                Despesa operacional: {brPercent(income.expenseRate)} | Correção aluguel: {brPercent(rentCorrection.annualRate)} a.a.
               </div>
             </div>
           </div>
@@ -1745,7 +1807,7 @@ function AlavancagemPatrimonialModel({
             <AlavancagemSelectorCard
               active={mode === "tradicional"}
               label="Alavancagem Tradicional"
-              description="Carta contemplada formando patrimônio, com renda conservadora de aluguel no fluxo."
+              description="Compra planejada de imóvel para locação, medindo aluguel, desembolso e custo final."
               onClick={() => setMode("tradicional")}
             />
           ) : null}
@@ -1753,7 +1815,7 @@ function AlavancagemPatrimonialModel({
             <AlavancagemSelectorCard
               active={mode === "otimizada"}
               label="Alavancagem Otimizada"
-              description="Renda otimizada do bem e reinvestimento do excedente para ampliar patrimônio."
+              description="Renda otimizada e capital reinvestido manualmente para ampliar patrimônio."
               onClick={() => setMode("otimizada")}
             />
           ) : null}
@@ -1761,15 +1823,17 @@ function AlavancagemPatrimonialModel({
       ) : null}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Crédito contratado" value={brMoney(summary.contractedCredit)} />
-        <Metric label="Disponível na contemplação" value={brMoney(summary.availableAtContemplation)} tone="gold" />
-        <Metric label="Patrimônio líquido final" value={brMoney(activeScenario.finalEquity)} tone={mode === "tradicional" ? "gold" : "ruby"} />
-        <Metric label="Investimento realizado" value={brMoney(activeScenario.totalInvested)} />
-        <Metric label="Renda mensal final" value={brMoney(activeScenario.finalMonthlyIncome)} tone="gold" />
-        <Metric label="Renda acumulada" value={brMoney(activeScenario.accumulatedIncome)} />
-        <Metric label="ROI patrimonial" value={brPercent(activeScenario.roi)} tone="ruby" />
-        <Metric label="Multiplicador patrimonial" value={`${activeScenario.leverageMultiple.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`} />
+        <Metric label="Crédito contemplado" value={brMoney(summary.availableAtContemplation)} tone="gold" />
+        <Metric label="Prazo" value={`${summary.planTerm} meses`} />
+        <Metric label="Parcela projetada" value={brMoney(summary.postContemplationInstallment)} />
+        <Metric label="Aluguel inicial" value={brMoney(activeScenario.firstMonthlyIncome)} tone="gold" />
+        <Metric label="Desembolso final" value={brMoney(Math.max(0, activeScenario.finalCashGap))} tone={activeScenario.finalCashGap > 0 ? "ruby" : "gold"} />
+        <Metric label="Valor imóvel corrigido" value={brMoney(activeScenario.finalAssetValue)} tone="gold" />
+        <Metric label="Custo final" value={brMoney(activeScenario.finalCost)} tone="ruby" />
+        <Metric label="% pago no imóvel" value={brPercent(activeScenario.paidOnAssetPct)} />
       </section>
+
+      <PatrimonialFlowCards scenario={activeScenario} summary={summary} />
 
       <section className="grid gap-4 lg:grid-cols-2">
         <PatrimonialScenarioPanel scenario={traditional} tone="gold" />
@@ -1785,9 +1849,9 @@ function AlavancagemPatrimonialModel({
         </div>
         <div className="grid gap-3 border-t p-5 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="Diferença otimizada x tradicional" value={brMoney(difference)} tone={difference >= 0 ? "gold" : "ruby"} />
-          <Metric label="Reserva reinvestida" value={brMoney(optimized.accumulatedReserve)} tone="ruby" />
-          <Metric label="Alívio de caixa tradicional" value={brMoney(traditional.cashRelief)} />
-          <Metric label="Alívio de caixa otimizado" value={brMoney(optimized.cashRelief)} tone="gold" />
+          <Metric label="Capital reinvestido manual" value={brMoney(optimized.manualReinvestedCapital)} tone="ruby" />
+          <Metric label="Renda passiva tradicional" value={brMoney(traditional.finalMonthlyIncome)} />
+          <Metric label="Renda passiva otimizada" value={brMoney(optimized.finalMonthlyIncome)} tone="gold" />
         </div>
       </section>
 

@@ -147,6 +147,7 @@ type ProposalParams = {
   equity_pronaf_anual: number;
   equity_pronamp_anual: number;
   equity_demais_anual: number;
+  patrimonial_capital_reinvestido_otimizada: number;
 };
 
 const DEFAULT_PARAMS: ProposalParams = {
@@ -167,6 +168,7 @@ const DEFAULT_PARAMS: ProposalParams = {
   equity_pronaf_anual: 0.08,
   equity_pronamp_anual: 0.12,
   equity_demais_anual: 0.18,
+  patrimonial_capital_reinvestido_otimizada: 0,
 };
 
 const C = {
@@ -278,6 +280,14 @@ function normalizeText(value: unknown) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function parseMoneyInput(raw: string): number {
+  return Math.max(0, onlyNumber(raw));
+}
+
+function formatMoneyDraft(value: number) {
+  return brMoney(value);
 }
 
 function parsePercentInput(raw: string): number {
@@ -581,6 +591,45 @@ function ParamInput({
     const parsed = parsePercentInput(draft);
     const formatted = formatPercentFraction(parsed);
     setDraft(formatted);
+    if (parsed !== value) onChange(parsed);
+  }
+
+  return (
+    <label className="space-y-1 text-xs font-semibold text-slate-600">
+      <span>{label}</span>
+      <Input
+        className="h-10 rounded-lg"
+        value={draft}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </label>
+  );
+}
+
+function MoneyParamInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(formatMoneyDraft(value));
+
+  useEffect(() => {
+    setDraft(formatMoneyDraft(value));
+  }, [value]);
+
+  function commit() {
+    const parsed = parseMoneyInput(draft);
+    setDraft(formatMoneyDraft(parsed));
     if (parsed !== value) onChange(parsed);
   }
 
@@ -1641,6 +1690,7 @@ export default function PropostasProMax() {
               <ParamInput label="Pronaf ano" value={proposalParams.equity_pronaf_anual} onChange={(value) => updateProposalParam("equity_pronaf_anual", value)} />
               <ParamInput label="Pronamp ano" value={proposalParams.equity_pronamp_anual} onChange={(value) => updateProposalParam("equity_pronamp_anual", value)} />
               <ParamInput label="Demais linhas ano" value={proposalParams.equity_demais_anual} onChange={(value) => updateProposalParam("equity_demais_anual", value)} />
+              <MoneyParamInput label="Capital reinvestido otimizada" value={proposalParams.patrimonial_capital_reinvestido_otimizada} onChange={(value) => updateProposalParam("patrimonial_capital_reinvestido_otimizada", value)} />
             </div>
           </section>
         )}

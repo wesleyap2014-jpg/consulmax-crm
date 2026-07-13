@@ -32,11 +32,18 @@ export type PatrimonialScenario = {
   finalEquity: number;
   accumulatedIncome: number;
   accumulatedReserve: number;
+  manualReinvestedCapital: number;
   totalInvested: number;
+  totalPaidConsortium: number;
+  finalCost: number;
+  paidOnAssetPct: number;
   roi: number;
   leverageMultiple: number;
   averageMonthlyIncome: number;
+  firstMonthlyIncome: number;
   finalMonthlyIncome: number;
+  postContemplationInstallment: number;
+  finalCashGap: number;
   cashRelief: number;
 };
 
@@ -46,6 +53,10 @@ export type AlavancagemPatrimonialFlow = {
     annualRate: number;
     monthlyRate: number;
     source: string;
+  };
+  rentCorrection: {
+    annualRate: number;
+    monthlyRate: number;
   };
   cdi: {
     annualRate: number;
@@ -65,6 +76,7 @@ export type AlavancagemPatrimonialFlow = {
     investmentUntilContemplation: number;
     embeddedBidAtContemplation: number;
     ownBidAtContemplation: number;
+    postContemplationInstallment: number;
   };
   traditional: PatrimonialScenario;
   optimized: PatrimonialScenario;
@@ -88,6 +100,15 @@ function sumInstallmentsUntil(entries: ExtratoMonthEntry[], month: number) {
     .reduce((sum, entry) => sum + entry.installment, 0);
 }
 
+function getManualOptimizedCapital(params: ProposalParams) {
+  const raw =
+    (params as any).patrimonial_capital_reinvestido_otimizada ??
+    (params as any).capital_reinvestido_otimizada ??
+    (params as any).patrimonial_capital_reinvestido ??
+    0;
+  return Math.max(0, onlyNumber(raw));
+}
+
 function buildScenario({
   key,
   label,
@@ -98,9 +119,12 @@ function buildScenario({
   finalDebtBalance,
   accumulatedIncome,
   accumulatedReserve,
-  totalInvested,
+  manualReinvestedCapital,
+  totalPaidConsortium,
+  firstMonthlyIncome,
   averageMonthlyIncome,
   finalMonthlyIncome,
+  postContemplationInstallment,
   cashRelief,
 }: {
   key: AlavancagemPatrimonialMode;
@@ -112,13 +136,18 @@ function buildScenario({
   finalDebtBalance: number;
   accumulatedIncome: number;
   accumulatedReserve: number;
-  totalInvested: number;
+  manualReinvestedCapital: number;
+  totalPaidConsortium: number;
+  firstMonthlyIncome: number;
   averageMonthlyIncome: number;
   finalMonthlyIncome: number;
+  postContemplationInstallment: number;
   cashRelief: number;
 }): PatrimonialScenario {
+  const totalInvested = totalPaidConsortium + manualReinvestedCapital;
   const finalEquity = Math.max(0, finalAssetValue - finalDebtBalance + accumulatedReserve);
-  const wealthGain = Math.max(0, finalEquity - totalInvested);
+  const wealthGain = finalEquity - totalInvested;
+  const finalCost = Math.max(0, totalPaidConsortium - accumulatedIncome);
 
   return {
     key,
@@ -131,11 +160,18 @@ function buildScenario({
     finalEquity,
     accumulatedIncome,
     accumulatedReserve,
+    manualReinvestedCapital,
     totalInvested,
+    totalPaidConsortium,
+    finalCost,
+    paidOnAssetPct: finalAssetValue > 0 ? finalCost / finalAssetValue : 0,
     roi: totalInvested > 0 ? wealthGain / totalInvested : 0,
     leverageMultiple: totalInvested > 0 ? finalEquity / totalInvested : 0,
     averageMonthlyIncome,
+    firstMonthlyIncome,
     finalMonthlyIncome,
+    postContemplationInstallment,
+    finalCashGap: postContemplationInstallment - finalMonthlyIncome,
     cashRelief,
   };
 }
@@ -151,9 +187,12 @@ export function buildAlavancagemPatrimonialFlow(
   const contemplationMonth = Math.min(totalMonths, Math.max(1, rawContemplationMonth || 1));
   const cdiAnnualRate = normalizeFraction(params.cdi_anual);
   const cdiMonthlyRate = cdiAnnualRate > 0 ? Math.pow(1 + cdiAnnualRate, 1 / 12) - 1 : 0;
+  const rentAnnualRate = normalizeFraction(params.igpm12m);
+  const rentMonthlyRate = rentAnnualRate > 0 ? Math.pow(1 + rentAnnualRate, 1 / 12) - 1 : 0;
   const traditionalIncomeRate = normalizeFraction(params.aluguel_pct);
   const optimizedIncomeRate = normalizeFraction(params.airbnb_pct) || traditionalIncomeRate;
   const expenseRate = normalizeFraction(params.condominio_pct);
+  const manualOptimizedCapital = getManualOptimizedCapital(params);
   const creditAtContemplation =
     extrato.summary.creditAtContemplation ||
     extrato.summary.correctedContractedCredit ||
@@ -167,20 +206,31 @@ export function buildAlavancagemPatrimonialFlow(
     extrato.summary.investmentUntilContemplation ||
     sumInstallmentsUntil(entries, contemplationMonth) + extrato.summary.ownBidAtContemplation;
   const totalInstallments = entries.reduce((sum, entry) => sum + entry.installment, 0);
-  const totalInvested = totalInstallments + extrato.summary.ownBidAtContemplation;
+  const totalPaidConsortium = totalInstallments + extrato.summary.ownBidAtContemplation;
+  const postContemplationInstallment =
+    entries.find((entry) => entry.month >= contemplationMonth)?.installment ||
+    extrato.summary.postContemplationInstallment ||
+    extrato.summary.nextInstallments ||
+    extrato.summary.firstInstallment ||
+    0;
   const entriesByMonth = new Map(entries.map((entry) => [entry.month, entry]));
   const chart: PatrimonialChartPoint[] = [];
 
   let assetValue = 0;
+  let traditionalRent = 0;
+  let optimizedRent = 0;
   let traditionalAccumulatedIncome = 0;
   let optimizedAccumulatedIncome = 0;
   let optimizedReserve = 0;
+  let manualReserveStarted = false;
   let traditionalIncomeSum = 0;
   let optimizedIncomeSum = 0;
   let incomeMonths = 0;
   let traditionalCashRelief = 0;
   let optimizedCashRelief = 0;
   let finalDebtBalance = 0;
+  let firstTraditionalIncome = 0;
+  let firstOptimizedIncome = 0;
   let finalTraditionalIncome = 0;
   let finalOptimizedIncome = 0;
 
@@ -189,9 +239,20 @@ export function buildAlavancagemPatrimonialFlow(
     const installment = detail?.installment || 0;
     const debtBalance = detail?.endingBalance || 0;
 
-    if (month === contemplationMonth) assetValue = availableAtContemplation;
-    if (month > contemplationMonth && assetValue > 0) {
+    if (month === contemplationMonth) {
+      assetValue = availableAtContemplation;
+      traditionalRent = assetValue * traditionalIncomeRate;
+      optimizedRent = assetValue * optimizedIncomeRate;
+      optimizedReserve = manualOptimizedCapital;
+      manualReserveStarted = true;
+    } else if (month > contemplationMonth && assetValue > 0) {
       assetValue += assetValue * extrato.monthlyRate;
+      traditionalRent += traditionalRent * rentMonthlyRate;
+      optimizedRent += optimizedRent * rentMonthlyRate;
+    }
+
+    if (manualReserveStarted && manualOptimizedCapital > 0) {
+      optimizedReserve *= 1 + cdiMonthlyRate;
     }
 
     let traditionalNetIncome = 0;
@@ -199,11 +260,11 @@ export function buildAlavancagemPatrimonialFlow(
 
     if (month >= contemplationMonth && assetValue > 0) {
       incomeMonths += 1;
-      const traditionalGrossIncome = assetValue * traditionalIncomeRate;
-      const optimizedGrossIncome = assetValue * optimizedIncomeRate;
+      traditionalNetIncome = Math.max(0, traditionalRent * (1 - expenseRate));
+      optimizedNetIncome = Math.max(0, optimizedRent * (1 - expenseRate));
 
-      traditionalNetIncome = Math.max(0, traditionalGrossIncome * (1 - expenseRate));
-      optimizedNetIncome = Math.max(0, optimizedGrossIncome * (1 - expenseRate));
+      if (!firstTraditionalIncome) firstTraditionalIncome = traditionalNetIncome;
+      if (!firstOptimizedIncome) firstOptimizedIncome = optimizedNetIncome;
 
       traditionalAccumulatedIncome += traditionalNetIncome;
       optimizedAccumulatedIncome += optimizedNetIncome;
@@ -211,7 +272,6 @@ export function buildAlavancagemPatrimonialFlow(
       optimizedIncomeSum += optimizedNetIncome;
       traditionalCashRelief += Math.min(installment, traditionalNetIncome);
       optimizedCashRelief += Math.min(installment, optimizedNetIncome);
-      optimizedReserve = optimizedReserve * (1 + cdiMonthlyRate) + optimizedNetIncome;
       finalTraditionalIncome = traditionalNetIncome;
       finalOptimizedIncome = optimizedNetIncome;
     }
@@ -243,32 +303,38 @@ export function buildAlavancagemPatrimonialFlow(
   const traditional = buildScenario({
     key: "tradicional",
     label: "Alavancagem Tradicional",
-    description: "Forma patrimônio com a carta contemplada e considera renda conservadora do bem para aliviar o fluxo mensal.",
+    description: "Compra planejada de um ativo para locacao, com aluguel corrigido ajudando a reduzir o desembolso mensal e formando patrimonio.",
     monthlyIncomeRate: traditionalIncomeRate,
     monthlyIncomeLabel: "Aluguel projetado",
     finalAssetValue,
     finalDebtBalance,
     accumulatedIncome: traditionalAccumulatedIncome,
     accumulatedReserve: 0,
-    totalInvested,
+    manualReinvestedCapital: 0,
+    totalPaidConsortium,
+    firstMonthlyIncome: firstTraditionalIncome,
     averageMonthlyIncome: averageTraditionalIncome,
     finalMonthlyIncome: finalTraditionalIncome,
+    postContemplationInstallment,
     cashRelief: traditionalCashRelief,
   });
 
   const optimized = buildScenario({
     key: "otimizada",
     label: "Alavancagem Otimizada",
-    description: "Projeta renda otimizada do bem e reinveste o excedente a CDI para ampliar o patrimônio líquido.",
+    description: "Combina renda otimizada do ativo com capital reinvestido informado manualmente, projetando reserva financeira e patrimonio liquido ampliado.",
     monthlyIncomeRate: optimizedIncomeRate,
     monthlyIncomeLabel: "Renda otimizada",
     finalAssetValue,
     finalDebtBalance,
     accumulatedIncome: optimizedAccumulatedIncome,
     accumulatedReserve: optimizedReserve,
-    totalInvested,
+    manualReinvestedCapital: manualOptimizedCapital,
+    totalPaidConsortium,
+    firstMonthlyIncome: firstOptimizedIncome,
     averageMonthlyIncome: averageOptimizedIncome,
     finalMonthlyIncome: finalOptimizedIncome,
+    postContemplationInstallment,
     cashRelief: optimizedCashRelief,
   });
 
@@ -278,6 +344,10 @@ export function buildAlavancagemPatrimonialFlow(
       annualRate: extrato.index.annualRate,
       monthlyRate: extrato.monthlyRate,
       source: extrato.index.source,
+    },
+    rentCorrection: {
+      annualRate: rentAnnualRate,
+      monthlyRate: rentMonthlyRate,
     },
     cdi: {
       annualRate: cdiAnnualRate,
@@ -297,6 +367,7 @@ export function buildAlavancagemPatrimonialFlow(
       investmentUntilContemplation,
       embeddedBidAtContemplation: extrato.summary.embeddedBidAtContemplation,
       ownBidAtContemplation: extrato.summary.ownBidAtContemplation,
+      postContemplationInstallment,
     },
     traditional,
     optimized,

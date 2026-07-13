@@ -33,6 +33,7 @@ export type EquityInstallmentDetailEntry = {
   credit: number;
   initialBalance: number;
   installment: number;
+  insuranceMonthly: number;
   payments: number;
   endingBalance: number;
   eventText: string;
@@ -132,8 +133,10 @@ export type EquityCadencedQuota = {
   creditReleased: number;
   postInstallment: number;
   postInstallmentsCount: number;
+  totalInstallmentsProjected: number;
   leverageAmount: number;
   debtAfterContemplation: number;
+  installmentDetails: EquityInstallmentDetailEntry[];
 };
 
 export type EquityCadencedParcelFlowEntry = { label: string; value: number };
@@ -158,6 +161,7 @@ export type EquityCadencedStrategy = {
   totalDebtAfterContemplation: number;
   totalInitialInstallments: number;
   totalPostInstallments: number;
+  totalProjectedInstallments: number;
   totalCost: number;
   quotas: EquityCadencedQuota[];
   parcelFlow: EquityCadencedParcelFlowEntry[];
@@ -322,6 +326,7 @@ function buildBidInstallmentDetails(entries: ExtratoMonthEntry[], events: Extrat
     credit: entry.credit,
     initialBalance: entry.initialBalance,
     installment: entry.installment,
+    insuranceMonthly: onlyNumber(entry.insuranceMonthly),
     payments: entry.payments,
     endingBalance: entry.endingBalance,
     eventText: eventsByMonth(events, entry.month),
@@ -352,6 +357,7 @@ function buildLotteryInstallmentDetails(
       credit: entry.credit,
       initialBalance: entry.initialBalance,
       installment: entry.installment,
+      insuranceMonthly: onlyNumber(entry.insuranceMonthly),
       payments: entry.payments,
       endingBalance: entry.endingBalance,
       eventText: eventsByMonth(events, entry.month),
@@ -376,9 +382,11 @@ function buildLotteryInstallmentDetails(
       eventText = `Correção via sorteio: saldo devedor corrigido em ${moneyForEvent(correctionValue)} e parcela ajustada conforme regra do Extrato.`;
     }
 
-    const installment = balance > 0 ? Math.min(balance, basePostInstallment + postInstallmentExtra) : 0;
+    const insuranceMonthly = onlyNumber(originalEntry?.insuranceMonthly);
+    const installment = balance > 0 ? Math.min(balance, basePostInstallment + postInstallmentExtra + insuranceMonthly) : 0;
+    const amortization = Math.max(0, installment - insuranceMonthly);
     const initialBalance = balance;
-    balance = Math.max(0, balance - installment);
+    balance = Math.max(0, balance - amortization);
     accumulatedPayments += installment;
     lastCredit = originalEntry?.credit || lastCredit;
 
@@ -387,6 +395,7 @@ function buildLotteryInstallmentDetails(
       credit: lastCredit,
       initialBalance,
       installment,
+      insuranceMonthly,
       payments: accumulatedPayments,
       endingBalance: balance,
       eventText: eventText || (month === safeContemplationMonth + 1
@@ -497,9 +506,19 @@ function getCadencedSourceRows(proposal: ProposalModelRow): ProposalModelRow[] {
 }
 
 function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams): EquityCadencedStrategy {
-  const quotas: EquityCadencedQuota[] = rows.map((row, index) => {
+  const sortedRows = [...rows].sort((a, b) => {
+    const codeA = onlyNumber(a.code);
+    const codeB = onlyNumber(b.code);
+    if (codeA && codeB && codeA !== codeB) return codeA - codeB;
+    return String(a.code || "").localeCompare(String(b.code || ""), "pt-BR", { numeric: true });
+  });
+
+  const quotas: EquityCadencedQuota[] = sortedRows.map((row, index) => {
     const rowFlow = buildExtratoFlow(row, params);
     const rowEntries = monthEntries(rowFlow.entries);
+    const rowEvents = eventEntries(rowFlow.entries);
+    const installmentDetails = buildBidInstallmentDetails(rowEntries, rowEvents);
+    const totalInstallmentsProjected = rowEntries.reduce((sum, entry) => sum + entry.installment, 0);
     const rawContemplationMonth = Math.round(onlyNumber(row.parcela_contemplacao));
     const contemplationMonth = Math.min(rowFlow.totalMonths || 1, Math.max(1, rawContemplationMonth || 1));
     const contemplationEntry = rowEntries.find((entry) => entry.month === contemplationMonth);
@@ -537,8 +556,10 @@ function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams)
         rowEntries[rowEntries.length - 1]?.installment ||
         0,
       postInstallmentsCount: Math.max(0, newTerm || rowFlow.summary.planTerm - contemplationMonth),
+      totalInstallmentsProjected,
       leverageAmount: Math.max(0, creditReleased - ownBid),
       debtAfterContemplation,
+      installmentDetails,
     };
   });
 
@@ -551,6 +572,7 @@ function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams)
   const totalDebtAfterContemplation = quotas.reduce((sum, item) => sum + item.debtAfterContemplation, 0);
   const totalInitialInstallments = quotas.reduce((sum, item) => sum + item.initialInstallment, 0);
   const totalPostInstallments = quotas.reduce((sum, item) => sum + item.postInstallment, 0);
+  const totalProjectedInstallments = quotas.reduce((sum, item) => sum + item.totalInstallmentsProjected, 0);
   const reusableBid = Math.max(...quotas.map((item) => item.ownBid), 0);
   const averageTerm = quotas.length ? Math.round(quotas.reduce((sum, item) => sum + item.postInstallmentsCount, 0) / quotas.length) : 0;
   const parcelFlow: EquityCadencedParcelFlowEntry[] = [];
@@ -570,7 +592,7 @@ function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams)
     net: item.leverageAmount,
   }));
 
-  const totalCost = Math.max(0, quotas.reduce((sum, item) => sum + item.postInstallment * item.postInstallmentsCount, 0) + totalOwnBid - totalCreditReleased);
+  const totalCost = Math.max(0, totalProjectedInstallments + reusableBid);
   const cetBase = Math.max(1, totalLeverage);
   const totalCet = totalCost / cetBase;
   const simpleCetMonthly = averageTerm > 0 ? totalCet / averageTerm : 0;
@@ -588,6 +610,7 @@ function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams)
     totalDebtAfterContemplation,
     totalInitialInstallments,
     totalPostInstallments,
+    totalProjectedInstallments,
     totalCost,
     quotas,
     parcelFlow,

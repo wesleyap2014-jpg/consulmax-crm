@@ -86,6 +86,7 @@ export type ExtratoMonthEntry = {
   credit: number;
   initialBalance: number;
   installment: number;
+  insuranceMonthly: number;
   payments: number;
   endingBalance: number;
 };
@@ -402,6 +403,7 @@ function buildUnifiedExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
         credit: monthRows.reduce((sum, item) => sum + item.entry.credit, 0),
         initialBalance: monthRows.reduce((sum, item) => sum + item.entry.initialBalance, 0),
         installment: monthRows.reduce((sum, item) => sum + item.entry.installment, 0),
+        insuranceMonthly: monthRows.reduce((sum, item) => sum + onlyNumber(item.entry.insuranceMonthly), 0),
         payments: monthRows.reduce((sum, item) => sum + item.entry.payments, 0),
         endingBalance: monthRows.reduce((sum, item) => sum + item.entry.endingBalance, 0),
       });
@@ -565,6 +567,8 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       installment = amortizationPayment > 0 ? amortizationPayment + explicitInsurance : 0;
     }
 
+    const insuranceForMonth = contemplated ? Math.min(Math.max(0, postContemplationInsurance), Math.max(0, installment)) : 0;
+
     payments += installment;
     balance = Math.max(0, balance - amortizationPayment);
 
@@ -574,6 +578,7 @@ export function buildExtratoFlow(proposal: ProposalModelRow, params: ProposalPar
       credit,
       initialBalance,
       installment,
+      insuranceMonthly: insuranceForMonth,
       payments,
       endingBalance: balance,
     });

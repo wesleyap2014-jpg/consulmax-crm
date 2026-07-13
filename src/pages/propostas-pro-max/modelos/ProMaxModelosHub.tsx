@@ -899,6 +899,7 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
   const visibleProjection = flow.entries.filter(
     (entry) => entry.month >= projectionStartMonth && entry.month <= projectionEndMonth
   );
+  const hasInsuranceColumn = flow.entries.some((entry) => entry.kind === "month" && onlyNumber(entry.insuranceMonthly) > 0);
 
   return (
     <div className="space-y-4">
@@ -1009,13 +1010,14 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-[980px] w-full border-collapse text-sm">
+          <table className="min-w-[1080px] w-full border-collapse text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
               <tr>
                 <th className="p-3 text-left">Mês</th>
                 <th className="p-3 text-right">Crédito</th>
                 <th className="p-3 text-right">Saldo In</th>
                 <th className="p-3 text-right">Parcela</th>
+                {hasInsuranceColumn ? <th className="p-3 text-right">Seguro mensal</th> : null}
                 <th className="p-3 text-right">Pgtos</th>
                 <th className="p-3 text-right">Saldo devedor</th>
               </tr>
@@ -1026,7 +1028,7 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
                   return (
                     <tr key={`${item.kind}-${item.month}-${index}`} className="border-t bg-amber-50/70">
                       <td className="p-3 font-black" style={{ color: C.ruby }}>Evento: {item.title}</td>
-                      <td className="p-3 text-sm font-semibold text-amber-900" colSpan={5}>
+                      <td className="p-3 text-sm font-semibold text-amber-900" colSpan={hasInsuranceColumn ? 6 : 5}>
                         {item.details.join(" | ")}
                       </td>
                     </tr>
@@ -1039,6 +1041,7 @@ function ExtratoModel({ proposal, params }: ProMaxModelosHubProps) {
                     <td className="p-3 text-right font-semibold">{brMoney(item.credit)}</td>
                     <td className="p-3 text-right">{brMoney(item.initialBalance)}</td>
                     <td className="p-3 text-right">{brMoney(item.installment)}</td>
+                    {hasInsuranceColumn ? <td className="p-3 text-right">{brMoney(item.insuranceMonthly)}</td> : null}
                     <td className="p-3 text-right">{brMoney(item.payments)}</td>
                     <td className="p-3 text-right font-black" style={{ color: item.endingBalance <= 0 ? C.gold : C.ruby }}>
                       {brMoney(item.endingBalance)}
@@ -2149,7 +2152,6 @@ function EquityCadencedCycles({ cycles }: { cycles: EquityFlow["cadenced"]["cycl
 function EquityCadencedStrategyTable({ strategy }: { strategy: EquityFlow["cadenced"]["strategy"] }) {
   const totals = {
     credit: strategy.totalCredit,
-    term: strategy.quotas.reduce((sum, item) => sum + item.term, 0),
     initialInstallment: strategy.totalInitialInstallments,
     totalBid: strategy.totalBid,
     embeddedBid: strategy.totalEmbeddedBid,
@@ -2214,7 +2216,7 @@ function EquityCadencedStrategyTable({ strategy }: { strategy: EquityFlow["caden
               <td className="p-3 text-right">{brMoney(totals.credit)}</td>
               <td className="p-3 text-right">-</td>
               <td className="p-3 text-right">-</td>
-              <td className="p-3 text-right">{totals.term}</td>
+              <td className="p-3 text-right">-</td>
               <td className="p-3 text-right">{brMoney(totals.initialInstallment)}</td>
               <td className="p-3 text-right">{brMoney(totals.totalBid)}</td>
               <td className="p-3 text-right">{brMoney(totals.embeddedBid)}</td>
@@ -2232,10 +2234,20 @@ function EquityCadencedStrategyTable({ strategy }: { strategy: EquityFlow["caden
   );
 }
 
-function EquityCadencedParcelFlow({ strategy }: { strategy: EquityFlow["cadenced"]["strategy"] }) {
+function EquityCadencedParcelFlow({ strategy, onOpenDetails }: { strategy: EquityFlow["cadenced"]["strategy"]; onOpenDetails: () => void }) {
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
-      <div className="px-5 py-4 text-sm font-black text-white" style={{ background: C.navy }}>Fluxo de Parcelas</div>
+      <div className="flex items-center justify-between gap-3 px-5 py-4 text-sm font-black text-white" style={{ background: C.navy }}>
+        <span>Fluxo de Parcelas</span>
+        <button
+          type="button"
+          onClick={onOpenDetails}
+          className="rounded-full bg-white/95 px-3 py-1 text-xs font-black uppercase tracking-[.08em] shadow-sm transition hover:bg-white"
+          style={{ color: C.navy }}
+        >
+          Ver detalhamento das parcelas
+        </button>
+      </div>
       <div className="p-5">
         <table className="w-full border-collapse text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
@@ -2249,6 +2261,85 @@ function EquityCadencedParcelFlow({ strategy }: { strategy: EquityFlow["cadenced
         </table>
       </div>
     </section>
+  );
+}
+
+
+function EquityCadencedParcelDetailOverlay({
+  open,
+  strategy,
+  onClose,
+}: {
+  open: boolean;
+  strategy: EquityFlow["cadenced"]["strategy"];
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  const hasInsurance = strategy.quotas.some((quota) =>
+    quota.installmentDetails.some((entry) => onlyNumber(entry.insuranceMonthly) > 0)
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
+      <section className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl border bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+          <div>
+            <h3 className="text-xl font-black" style={{ color: C.navy }}>
+              Equity Cadenciado - Detalhamento das Parcelas
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Detalhamento vindo do mesmo Extrato de cada cota, preservando correções, seguro explícito, eventos, contemplação e saldo devedor.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+            aria-label="Fechar detalhamento"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="overflow-auto">
+          <table className="min-w-[1180px] w-full border-collapse text-sm">
+            <thead className="sticky top-0 bg-white text-xs uppercase tracking-[.08em] text-slate-500 shadow-sm">
+              <tr>
+                <th className="p-3 text-left">Cota</th>
+                <th className="p-3 text-left">Mês</th>
+                <th className="p-3 text-right">Crédito</th>
+                <th className="p-3 text-right">Saldo inicial</th>
+                <th className="p-3 text-right">Parcela</th>
+                {hasInsurance ? <th className="p-3 text-right">Seguro mensal</th> : null}
+                <th className="p-3 text-right">Pago acumulado</th>
+                <th className="p-3 text-right">Saldo final</th>
+                <th className="p-3 text-left">Evento do Extrato</th>
+              </tr>
+            </thead>
+            <tbody>
+              {strategy.quotas.flatMap((quota) =>
+                quota.installmentDetails.map((entry) => (
+                  <tr key={`${quota.code}-${quota.index}-${entry.month}`} className="border-t odd:bg-slate-50/60">
+                    <td className="p-3 font-black" style={{ color: C.navy }}>#{quota.code || quota.index}</td>
+                    <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
+                    <td className="p-3 text-right">{brMoney(entry.credit)}</td>
+                    <td className="p-3 text-right">{brMoney(entry.initialBalance)}</td>
+                    <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
+                    {hasInsurance ? <td className="p-3 text-right">{brMoney(entry.insuranceMonthly)}</td> : null}
+                    <td className="p-3 text-right">{brMoney(entry.payments)}</td>
+                    <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
+                      {brMoney(entry.endingBalance)}
+                    </td>
+                    <td className="max-w-[360px] p-3 text-xs text-slate-600">{entry.eventText || "-"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2321,6 +2412,7 @@ function EquityCadencedCycleBoard({ strategy }: { strategy: EquityFlow["cadenced
 
 function EquityCadencedModel({ flow }: { flow: EquityFlow }) {
   const strategy = flow.cadenced.strategy;
+  const [parcelDetailOpen, setParcelDetailOpen] = useState(false);
   return (
     <>
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -2332,10 +2424,15 @@ function EquityCadencedModel({ flow }: { flow: EquityFlow }) {
       <EquityCadencedCycleBoard strategy={strategy} />
       <EquityCadencedStrategyTable strategy={strategy} />
       <section className="grid gap-4 xl:grid-cols-[1fr_1fr_.75fr]">
-        <EquityCadencedParcelFlow strategy={strategy} />
+        <EquityCadencedParcelFlow strategy={strategy} onOpenDetails={() => setParcelDetailOpen(true)} />
         <EquityCadencedCashFlow strategy={strategy} />
         <EquityCadencedIndicators strategy={strategy} />
       </section>
+      <EquityCadencedParcelDetailOverlay
+        open={parcelDetailOpen}
+        strategy={strategy}
+        onClose={() => setParcelDetailOpen(false)}
+      />
     </>
   );
 }

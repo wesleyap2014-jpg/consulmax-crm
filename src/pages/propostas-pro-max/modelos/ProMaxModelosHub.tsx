@@ -2234,7 +2234,18 @@ function EquityCadencedStrategyTable({ strategy }: { strategy: EquityFlow["caden
   );
 }
 
-function EquityCadencedParcelFlow({ strategy, onOpenDetails }: { strategy: EquityFlow["cadenced"]["strategy"]; onOpenDetails: () => void }) {
+function EquityCadencedParcelFlow({
+  strategy,
+  flow,
+  onOpenDetails,
+}: {
+  strategy: EquityFlow["cadenced"]["strategy"];
+  flow: EquityFlow;
+  onOpenDetails: () => void;
+}) {
+  const detailRows = aggregateCadencedInstallmentDetails(strategy, flow);
+  const hasInsurance = detailRows.some((entry) => onlyNumber(entry.insuranceMonthly) > 0);
+
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
       <div className="flex items-center justify-between gap-3 px-5 py-4 text-sm font-black text-white" style={{ background: C.navy }}>
@@ -2248,14 +2259,24 @@ function EquityCadencedParcelFlow({ strategy, onOpenDetails }: { strategy: Equit
           Ver detalhamento das parcelas
         </button>
       </div>
-      <div className="p-5">
-        <table className="w-full border-collapse text-sm">
-          <thead className="bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500">
-            <tr><th className="p-3 text-left">Parcela</th><th className="p-3 text-right">Valor</th></tr>
+      <div className="max-h-[440px] overflow-auto p-5">
+        <table className="min-w-[560px] w-full border-collapse text-sm">
+          <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-[.08em] text-slate-500 shadow-sm">
+            <tr>
+              <th className="p-3 text-left">Mês</th>
+              <th className="p-3 text-right">Parcela</th>
+              {hasInsurance ? <th className="p-3 text-right">Seguro mensal</th> : null}
+              <th className="p-3 text-right">Pago acumulado</th>
+            </tr>
           </thead>
           <tbody>
-            {strategy.parcelFlow.map((row) => (
-              <tr key={row.label} className="border-t odd:bg-slate-50/60"><td className="p-3 text-slate-600">{row.label}</td><td className="p-3 text-right font-semibold">{brMoney(row.value)}</td></tr>
+            {detailRows.map((row) => (
+              <tr key={row.month} className="border-t odd:bg-slate-50/60">
+                <td className="p-3 font-black" style={{ color: C.navy }}>Mês {row.month}</td>
+                <td className="p-3 text-right font-semibold">{brMoney(row.installment)}</td>
+                {hasInsurance ? <td className="p-3 text-right">{brMoney(row.insuranceMonthly)}</td> : null}
+                <td className="p-3 text-right text-slate-600">{brMoney(row.payments)}</td>
+              </tr>
             ))}
           </tbody>
         </table>
@@ -2491,7 +2512,7 @@ function EquityCadencedModel({ flow }: { flow: EquityFlow }) {
       <EquityCadencedCycleBoard strategy={strategy} />
       <EquityCadencedStrategyTable strategy={strategy} />
       <section className="grid gap-4 xl:grid-cols-[1fr_1fr_.75fr]">
-        <EquityCadencedParcelFlow strategy={strategy} onOpenDetails={() => setParcelDetailOpen(true)} />
+        <EquityCadencedParcelFlow strategy={strategy} flow={flow} onOpenDetails={() => setParcelDetailOpen(true)} />
         <EquityCadencedCashFlow strategy={strategy} />
         <EquityCadencedIndicators strategy={strategy} />
       </section>

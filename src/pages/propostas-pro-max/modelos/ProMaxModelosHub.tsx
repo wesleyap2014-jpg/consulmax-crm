@@ -2265,20 +2265,91 @@ function EquityCadencedParcelFlow({ strategy, onOpenDetails }: { strategy: Equit
 }
 
 
+function aggregateCadencedInstallmentDetails(strategy: EquityFlow["cadenced"]["strategy"], flow?: EquityFlow) {
+  const flowEntries = flow?.consortiumEntries || [];
+  if (flowEntries.length && strategy.quotaCount > 1) {
+    const events = flow?.consortiumEvents || [];
+    return flowEntries.map((entry) => ({
+      month: entry.month,
+      credit: entry.credit,
+      initialBalance: entry.initialBalance,
+      installment: entry.installment,
+      insuranceMonthly: onlyNumber(entry.insuranceMonthly),
+      payments: entry.payments,
+      endingBalance: entry.endingBalance,
+      eventText: events
+        .filter((event) => event.month === entry.month)
+        .map((event) => `${event.title}: ${event.details.join(" | ")}`)
+        .join(" / "),
+    }));
+  }
+
+  const grouped = new Map<number, {
+    month: number;
+    credit: number;
+    initialBalance: number;
+    installment: number;
+    insuranceMonthly: number;
+    payments: number;
+    endingBalance: number;
+    eventText: string[];
+  }>();
+
+  for (const quota of strategy.quotas) {
+    for (const entry of quota.installmentDetails) {
+      const current = grouped.get(entry.month) || {
+        month: entry.month,
+        credit: 0,
+        initialBalance: 0,
+        installment: 0,
+        insuranceMonthly: 0,
+        payments: 0,
+        endingBalance: 0,
+        eventText: [],
+      };
+      current.credit += entry.credit;
+      current.initialBalance += entry.initialBalance;
+      current.installment += entry.installment;
+      current.insuranceMonthly += onlyNumber(entry.insuranceMonthly);
+      current.endingBalance += entry.endingBalance;
+      if (entry.eventText) current.eventText.push(`#${quota.code || quota.index}: ${entry.eventText}`);
+      grouped.set(entry.month, current);
+    }
+  }
+
+  let payments = 0;
+  return Array.from(grouped.values())
+    .sort((a, b) => a.month - b.month)
+    .map((entry) => {
+      payments += entry.installment;
+      return {
+        month: entry.month,
+        credit: entry.credit,
+        initialBalance: entry.initialBalance,
+        installment: entry.installment,
+        insuranceMonthly: entry.insuranceMonthly,
+        payments,
+        endingBalance: entry.endingBalance,
+        eventText: entry.eventText.join(" / "),
+      };
+    });
+}
+
 function EquityCadencedParcelDetailOverlay({
   open,
   strategy,
+  flow,
   onClose,
 }: {
   open: boolean;
   strategy: EquityFlow["cadenced"]["strategy"];
+  flow: EquityFlow;
   onClose: () => void;
 }) {
   if (!open) return null;
 
-  const hasInsurance = strategy.quotas.some((quota) =>
-    quota.installmentDetails.some((entry) => onlyNumber(entry.insuranceMonthly) > 0)
-  );
+  const detailRows = aggregateCadencedInstallmentDetails(strategy, flow);
+  const hasInsurance = detailRows.some((entry) => onlyNumber(entry.insuranceMonthly) > 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
@@ -2289,7 +2360,7 @@ function EquityCadencedParcelDetailOverlay({
               Equity Cadenciado - Detalhamento das Parcelas
             </h3>
             <p className="mt-1 text-sm text-slate-600">
-              Detalhamento vindo do mesmo Extrato de cada cota, preservando correções, seguro explícito, eventos, contemplação e saldo devedor.
+              Detalhamento somado mês a mês pelo mesmo Extrato unificado, preservando correções, seguro explícito, eventos, contemplação e saldo devedor.
             </p>
           </div>
           <button
@@ -2306,7 +2377,6 @@ function EquityCadencedParcelDetailOverlay({
           <table className="min-w-[1180px] w-full border-collapse text-sm">
             <thead className="sticky top-0 bg-white text-xs uppercase tracking-[.08em] text-slate-500 shadow-sm">
               <tr>
-                <th className="p-3 text-left">Cota</th>
                 <th className="p-3 text-left">Mês</th>
                 <th className="p-3 text-right">Crédito</th>
                 <th className="p-3 text-right">Saldo inicial</th>
@@ -2318,23 +2388,20 @@ function EquityCadencedParcelDetailOverlay({
               </tr>
             </thead>
             <tbody>
-              {strategy.quotas.flatMap((quota) =>
-                quota.installmentDetails.map((entry) => (
-                  <tr key={`${quota.code}-${quota.index}-${entry.month}`} className="border-t odd:bg-slate-50/60">
-                    <td className="p-3 font-black" style={{ color: C.navy }}>#{quota.code || quota.index}</td>
-                    <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
-                    <td className="p-3 text-right">{brMoney(entry.credit)}</td>
-                    <td className="p-3 text-right">{brMoney(entry.initialBalance)}</td>
-                    <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
-                    {hasInsurance ? <td className="p-3 text-right">{brMoney(entry.insuranceMonthly)}</td> : null}
-                    <td className="p-3 text-right">{brMoney(entry.payments)}</td>
-                    <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
-                      {brMoney(entry.endingBalance)}
-                    </td>
-                    <td className="max-w-[360px] p-3 text-xs text-slate-600">{entry.eventText || "-"}</td>
-                  </tr>
-                ))
-              )}
+              {detailRows.map((entry) => (
+                <tr key={entry.month} className="border-t odd:bg-slate-50/60">
+                  <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
+                  <td className="p-3 text-right">{brMoney(entry.credit)}</td>
+                  <td className="p-3 text-right">{brMoney(entry.initialBalance)}</td>
+                  <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
+                  {hasInsurance ? <td className="p-3 text-right">{brMoney(entry.insuranceMonthly)}</td> : null}
+                  <td className="p-3 text-right">{brMoney(entry.payments)}</td>
+                  <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
+                    {brMoney(entry.endingBalance)}
+                  </td>
+                  <td className="max-w-[420px] p-3 text-xs text-slate-600">{entry.eventText || "-"}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -2431,6 +2498,7 @@ function EquityCadencedModel({ flow }: { flow: EquityFlow }) {
       <EquityCadencedParcelDetailOverlay
         open={parcelDetailOpen}
         strategy={strategy}
+        flow={flow}
         onClose={() => setParcelDetailOpen(false)}
       />
     </>
@@ -2563,6 +2631,7 @@ function EquityParcelDetailOverlay({
   if (!open) return null;
 
   const scenario = open === "sorteio" ? flow.directComparisons.lottery : flow.directComparisons.bid;
+  const hasInsurance = scenario.installmentDetails.some((entry) => onlyNumber(entry.insuranceMonthly) > 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
@@ -2601,6 +2670,7 @@ function EquityParcelDetailOverlay({
                 <th className="p-3 text-right">Credito</th>
                 <th className="p-3 text-right">Saldo inicial</th>
                 <th className="p-3 text-right">Parcela</th>
+                {hasInsurance ? <th className="p-3 text-right">Seguro mensal</th> : null}
                 <th className="p-3 text-right">Pago acumulado</th>
                 <th className="p-3 text-right">Saldo final</th>
                 <th className="p-3 text-left">Evento do Extrato</th>
@@ -2613,6 +2683,7 @@ function EquityParcelDetailOverlay({
                   <td className="p-3 text-right">{brMoney(entry.credit)}</td>
                   <td className="p-3 text-right">{brMoney(entry.initialBalance)}</td>
                   <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
+                  {hasInsurance ? <td className="p-3 text-right">{brMoney(entry.insuranceMonthly)}</td> : null}
                   <td className="p-3 text-right">{brMoney(entry.payments)}</td>
                   <td className="p-3 text-right font-black" style={{ color: entry.endingBalance <= 0 ? C.gold : C.ruby }}>
                     {brMoney(entry.endingBalance)}

@@ -490,9 +490,21 @@ function rowTextValue(row: ProposalModelRow, keys: string[]) {
 }
 
 function getCadencedSourceRows(proposal: ProposalModelRow): ProposalModelRow[] {
-  const rawPromax = (proposal.promax as Record<string, unknown> | undefined)?.cadenced_rows;
-  const rawRoot = (proposal as Record<string, unknown>).cadenced_rows;
-  const raw = Array.isArray(rawPromax) ? rawPromax : Array.isArray(rawRoot) ? rawRoot : null;
+  const promax = proposal.promax as Record<string, unknown> | undefined;
+  const root = proposal as Record<string, unknown>;
+  const rawPromaxCadenced = promax?.cadenced_rows;
+  const rawPromaxUnified = promax?.unified_rows;
+  const rawRootCadenced = root.cadenced_rows;
+  const rawRootUnified = root.unified_rows;
+  const raw = Array.isArray(rawPromaxCadenced)
+    ? rawPromaxCadenced
+    : Array.isArray(rawPromaxUnified)
+    ? rawPromaxUnified
+    : Array.isArray(rawRootCadenced)
+    ? rawRootCadenced
+    : Array.isArray(rawRootUnified)
+    ? rawRootUnified
+    : null;
   if (raw?.length) return raw as ProposalModelRow[];
 
   const requestedCount = Math.max(
@@ -592,7 +604,10 @@ function buildCadencedStrategy(rows: ProposalModelRow[], params: ProposalParams)
     net: item.leverageAmount,
   }));
 
-  const totalCost = Math.max(0, totalProjectedInstallments + reusableBid);
+  const totalCost = Math.max(
+    0,
+    quotas.reduce((sum, item) => sum + item.installmentDetails.reduce((subtotal, entry) => subtotal + entry.installment, 0), 0) + reusableBid
+  );
   const cetBase = Math.max(1, totalLeverage);
   const totalCet = totalCost / cetBase;
   const simpleCetMonthly = averageTerm > 0 ? totalCet / averageTerm : 0;
@@ -713,8 +728,10 @@ export function buildEquityFlow(proposal: ProposalModelRow, params: ProposalPara
   const bidPostContemplationInstallment =
     entries.find((entry) => entry.month > contemplationMonth)?.installment ||
     postContemplationInstallment;
-  const lotteryTotalCost = Math.max(0, lotteryTotalPaid - creditAtContemplation);
-  const bidTotalCost = Math.max(0, totalPaid - creditReleased);
+  // CET do Equity deve considerar todos os custos/desembolsos da operação
+  // e não apenas o custo líquido depois do crédito liberado.
+  const lotteryTotalCost = Math.max(0, lotteryTotalPaid);
+  const bidTotalCost = Math.max(0, totalInstallments + ownBid);
   const lotteryScenario = buildDirectScenario({
     key: "sorteio",
     label: "Via Sorteio",

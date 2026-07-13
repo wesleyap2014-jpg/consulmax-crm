@@ -1243,8 +1243,11 @@ function TechnicalNoViabilityCard({ title = "Projeto sem viabilidade Técnica", 
 function TraditionalScenarioCard({ scenario, tone }: { scenario: AlavancagemTraditionalScenario; tone: "gold" | "ruby" }) {
   const color = tone === "gold" ? C.gold : C.ruby;
   const isLanceScenario = scenario.key === "lance_fixo" || String(scenario.key).includes("lance");
-  if (isLanceScenario && scenario.tirMonthly < 0) {
-    return <TechnicalNoViabilityCard detail="A TIR projetada para a contemplação via lance ficou inferior a 0,00% a.m." />;
+  const tirMonthlyRounded = Number.isFinite(scenario.tirMonthly)
+    ? Math.round(scenario.tirMonthly * 10000) / 10000
+    : Number.NEGATIVE_INFINITY;
+  if (isLanceScenario && tirMonthlyRounded <= 0) {
+    return <TechnicalNoViabilityCard detail="A TIR projetada para a contemplação via lance ficou igual ou inferior a 0,00% a.m." />;
   }
 
   return (

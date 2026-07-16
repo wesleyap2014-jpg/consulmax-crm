@@ -22,7 +22,12 @@ type UserRow = {
   nome?: string | null;
   role?: string | null;
   user_role?: string | null;
+  unit_id?: string | null;
+  hierarchy_level?: string | null;
 };
+
+type UnitRow = { id: string; tipo?: string | null };
+type GiroScope = { authIds: string[] | null; label: string };
 
 type PersonRow = {
   id: string;
@@ -92,9 +97,7 @@ function onlyDigits(v?: string | null) {
   return String(v || "").replace(/\D+/g, "");
 }
 
-function isAdminUser(u?: UserRow | null) {
-  return String(u?.role || u?.user_role || "").toLowerCase() === "admin";
-}
+function normalizeText(value?: string | null) { return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase(); }
 
 function first(...values: Array<string | null | undefined>) {
   return values.find((v) => String(v || "").trim())?.trim() || null;
@@ -186,7 +189,7 @@ export default function GiroDeCarteiraV2() {
   const [refreshing, setRefreshing] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [me, setMe] = useState<UserRow | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [scopeLabel, setScopeLabel] = useState("Vendedor — suas tarefas");
   const [items, setItems] = useState<GiroRaw[]>([]);
   const [clientes, setClientes] = useState<Map<string, PersonRow>>(new Map());
   const [leads, setLeads] = useState<Map<string, PersonRow>>(new Map());
@@ -206,7 +209,7 @@ export default function GiroDeCarteiraV2() {
 
     const { data, error } = await supabase
       .from("users")
-      .select("id,auth_user_id,nome,role,user_role")
+      .select("id,auth_user_id,nome,role,user_role,unit_id,hierarchy_level")
       .eq("auth_user_id", authId)
       .maybeSingle();
 
@@ -215,42 +218,48 @@ export default function GiroDeCarteiraV2() {
     return data as UserRow;
   }
 
-  async function loadCount(user: UserRow, admin: boolean) {
-    const readRpc = async () => {
-      const { data, error } = await supabase.rpc("giro_due_count");
-      if (error) throw error;
-      return Number(data || 0);
-    };
+  async function resolveScope(user: UserRow): Promise<GiroScope> {
+    let unit: UnitRow | null = null;
+    if (user.unit_id) {
+      const { data } = await supabase.from("units").select("id,tipo").eq("id", user.unit_id).maybeSingle();
+      unit = (data || null) as UnitRow | null;
+    }
+    const matrix = normalizeText(user.hierarchy_level) === "matriz" || (normalizeText(user.role || user.user_role) === "admin" && normalizeText(unit?.tipo) === "matriz");
+    if (matrix) return { authIds: null, label: "Matriz — visão global" };
 
-    try {
-      if (admin) {
-        const { data, error } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
-        if (error) throw error;
-        return (data || []).reduce((acc: number, row: any) => acc + Number(row?.due_count || 0), 0);
+    if (normalizeText(user.hierarchy_level) === "gestor_filial" && user.unit_id) {
+      const { data, error } = await supabase.from("users").select("auth_user_id").eq("unit_id", user.unit_id).eq("is_active", true);
+      if (!error) {
+        const authIds = Array.from(new Set((data || []).map((row: any) => String(row.auth_user_id || "")).filter(Boolean)));
+        return { authIds: authIds.length ? authIds : [user.auth_user_id], label: "Gestor da filial — sua unidade" };
       }
+    }
 
-      const { data, error } = await supabase
-        .from("v_giro_due_count")
-        .select("owner_auth_id,due_count")
-        .eq("owner_auth_id", user.auth_user_id)
-        .maybeSingle();
+    return { authIds: [user.auth_user_id], label: "Vendedor — suas tarefas" };
+  }
 
+  async function loadCount(scope: GiroScope) {
+    try {
+      let query = supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
+      if (scope.authIds) query = query.in("owner_auth_id", scope.authIds);
+      const { data, error } = await query;
       if (error) throw error;
-      return Number((data as any)?.due_count || 0);
+      return (data || []).reduce((acc: number, row: any) => acc + Number(row?.due_count || 0), 0);
     } catch {
-      return await readRpc();
+      return null;
     }
   }
 
-  async function loadItems(user: UserRow, admin: boolean) {
+  async function loadItems(user: UserRow, scope: GiroScope) {
     try {
       let q = supabase.from("v_giro_due_items").select("*").limit(5000);
-      if (!admin) q = q.eq("owner_auth_id", user.auth_user_id);
+      if (scope.authIds) q = q.in("owner_auth_id", scope.authIds);
       const { data, error } = await q;
       if (error) throw error;
       setSource("view");
       return (data || []) as GiroRaw[];
-    } catch {
+    } catch (viewError) {
+      if (!scope.authIds || scope.authIds.length !== 1 || scope.authIds[0] !== user.auth_user_id) throw viewError;
       const { data, error } = await supabase.rpc("next_giro_batch");
       if (error) throw error;
       setSource("rpc");
@@ -292,11 +301,11 @@ export default function GiroDeCarteiraV2() {
 
     try {
       const user = me || (await loadCurrentUser());
-      const admin = isAdminUser(user);
-      const [count, rows] = await Promise.all([loadCount(user, admin), loadItems(user, admin)]);
+      const scope = await resolveScope(user);
+      const [count, rows] = await Promise.all([loadCount(scope), loadItems(user, scope)]);
       setMe(user);
-      setIsAdmin(admin);
-      setDueCount(count);
+      setScopeLabel(scope.label);
+      setDueCount(count == null ? rows.length : Math.max(count, rows.length));
       setItems(rows);
       await loadPeople(rows);
     } catch (e: any) {
@@ -420,7 +429,7 @@ export default function GiroDeCarteiraV2() {
               <h1 className="mt-4 text-3xl md:text-4xl font-semibold tracking-tight text-white">Giro de Carteira</h1>
               <p className="mt-2 text-sm md:text-base text-white/80">Acompanhamento ativo da carteira, relacionamento com clientes e pedido de indicação.</p>
               <div className="mt-4 flex flex-wrap gap-2">
-                <Pill tone="gold">{isAdmin ? "Admin — visão geral" : "Vendedor — suas tarefas"}</Pill>
+                <Pill tone="gold">{scopeLabel}</Pill>
                 <Pill tone="navy">{me?.nome || "Usuário"}</Pill>
               </div>
             </div>

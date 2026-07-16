@@ -1066,6 +1066,21 @@ export default function ComissoesPage() {
     return currentUser?.id ? [currentUser.id] : [];
   }, [isMatrixAdmin, isBranchManager, users, currentUser]);
 
+  const scopedActiveUsers = useMemo(() => {
+    const allowed = new Set(scopedUserIds);
+    return activeUsers.filter((u) => allowed.has(u.id));
+  }, [activeUsers, scopedUserIds]);
+
+  const scopedUnits = useMemo(() => {
+    const allowed = new Set(scopedUnitIds);
+    return units.filter((u) => allowed.has(u.id));
+  }, [units, scopedUnitIds]);
+
+  useEffect(() => {
+    if (!currentUser || isMatrixAdmin || !currentUser.unit_id) return;
+    setUnitFilter(currentUser.unit_id);
+  }, [currentUser?.id, currentUser?.unit_id, isMatrixAdmin]);
+
   const userLabel = (id?: string | null) => {
     if (!id) return "—";
     const u = usersById[id] || usersByAuth[id];
@@ -1173,7 +1188,10 @@ export default function ComissoesPage() {
       const admin = current?.role === "admin";
       setIsAdmin(!!admin);
 
-      if (!admin && current?.id) {
+      if (current?.hierarchy_level === "gestor_filial") {
+        setVendedorId("all");
+        setReciboVendor("all");
+      } else if (!admin && current?.id) {
         setVendedorId(current.id);
         setReciboVendor(current.id);
       }
@@ -1515,9 +1533,15 @@ export default function ComissoesPage() {
       let qb = supabase.from("commissions").select("*");
       if (status !== "all") qb = qb.eq("status", status);
 
-      if (!isAdmin) qb = qb.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
-      else if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
-      else if (unitFilter !== "all") {
+      if (vendedorId !== "all") {
+        qb = isMatrixAdmin || scopedUserIds.includes(vendedorId)
+          ? qb.eq("vendedor_id", vendedorId)
+          : qb.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+      } else if (!isMatrixAdmin) {
+        qb = scopedUserIds.length
+          ? qb.in("vendedor_id", scopedUserIds)
+          : qb.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+      } else if (unitFilter !== "all") {
         const ids = users.filter((u) => u.unit_id === unitFilter).map((u) => u.id);
         qb = ids.length ? qb.in("vendedor_id", ids) : qb.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       }
@@ -1614,9 +1638,15 @@ export default function ComissoesPage() {
         .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id, encarteirada_em, codigo, cancelada_em, grupo, cota")
         .order("data_venda", { ascending: false });
 
-      if (!isAdmin) qbV = qbV.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
-      else if (vendedorId !== "all") qbV = qbV.eq("vendedor_id", vendedorId);
-      else if (unitFilter !== "all") {
+      if (vendedorId !== "all") {
+        qbV = isMatrixAdmin || scopedUserIds.includes(vendedorId)
+          ? qbV.eq("vendedor_id", vendedorId)
+          : qbV.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+      } else if (!isMatrixAdmin) {
+        qbV = scopedUserIds.length
+          ? qbV.in("vendedor_id", scopedUserIds)
+          : qbV.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+      } else if (unitFilter !== "all") {
         const ids = users.filter((u) => u.unit_id === unitFilter).map((u) => u.id);
         qbV = ids.length ? qbV.in("vendedor_id", ids) : qbV.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       }
@@ -1674,9 +1704,20 @@ export default function ComissoesPage() {
         supabase.from("commission_adjustments").select("*").order("created_at", { ascending: false }).limit(3000),
       ]);
 
+      const scopedFreshBatches = ((freshBatches || []) as CommissionBatch[]).filter(
+        (batch) => isMatrixAdmin || scopedUserIds.includes(batch.vendedor_id)
+      );
+      const scopedBatchIds = new Set(scopedFreshBatches.map((batch) => batch.id));
+      const scopedFreshEntries = ((freshEntries || []) as CommissionEntry[]).filter((entry) => scopedBatchIds.has(entry.batch_id));
+      const scopedFreshEntryFlows = ((freshEntryFlows || []) as CommissionEntryFlow[]).filter((flow) => scopedBatchIds.has(flow.batch_id));
+      const scopedFreshAdjustments = ((freshAdjustments || []) as CommissionAdjustment[]).filter((adjustment) => scopedBatchIds.has(adjustment.batch_id));
+      const scopedFreshSplitRules = ((freshSplitRules || []) as CommissionSplitRule[]).filter(
+        (rule) => isMatrixAdmin || rule.business_unit_id === currentUser?.unit_id
+      );
+
       const combinedVendasMap: Record<string, Venda> = {};
       (vendasPeriodo || []).forEach((v: any) => { combinedVendasMap[v.id] = v as Venda; });
-      const missingPartitionVendaIds = Array.from(new Set(((freshBatches || []) as any[]).map((b) => b.venda_id).filter(Boolean))).filter((id) => !combinedVendasMap[id]);
+      const missingPartitionVendaIds = Array.from(new Set(scopedFreshBatches.map((b) => b.venda_id).filter(Boolean))).filter((id) => !combinedVendasMap[id]);
       if (missingPartitionVendaIds.length) {
         const { data: partVendasInfo } = await supabase
           .from("vendas")
@@ -1696,11 +1737,11 @@ export default function ComissoesPage() {
       }
 
       setTableRules((freshTableRules || []) as CommissionTableRule[]);
-      setSplitRules((freshSplitRules || []) as CommissionSplitRule[]);
-      setPartitionBatches((freshBatches || []) as CommissionBatch[]);
-      setPartitionEntries((freshEntries || []) as CommissionEntry[]);
-      setPartitionFlows((freshEntryFlows || []) as CommissionEntryFlow[]);
-      setPartitionAdjustments((freshAdjustments || []) as CommissionAdjustment[]);
+      setSplitRules(scopedFreshSplitRules);
+      setPartitionBatches(scopedFreshBatches);
+      setPartitionEntries(scopedFreshEntries);
+      setPartitionFlows(scopedFreshEntryFlows);
+      setPartitionAdjustments(scopedFreshAdjustments);
 
 
       try {
@@ -1738,7 +1779,7 @@ export default function ComissoesPage() {
 
   useEffect(() => {
     fetchData();
-  }, [vendedorId, status, segmento, tabela, unitFilter, adminFilter, periodStart, periodEnd, isAdmin, authUserId]);
+  }, [vendedorId, status, segmento, tabela, unitFilter, adminFilter, periodStart, periodEnd, isAdmin, isMatrixAdmin, authUserId, scopedUserIds]);
 
   const now = new Date();
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -4015,31 +4056,31 @@ export default function ComissoesPage() {
           <CardContent className="grid grid-cols-1 md:grid-cols-8 gap-4">
             <div className="flex flex-col gap-2">
               <Label>Vendedor</Label>
-              <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isAdmin}>
+              <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isMatrixAdmin && !isBranchManager}>
                 <SelectTrigger>
                   <SelectValue placeholder="Todos" />
                 </SelectTrigger>
                 <SelectContent>
-                  {isAdmin && <SelectItem value="all">Todos</SelectItem>}
-                  {activeUsers.map((u) => (
+                  {(isMatrixAdmin || isBranchManager) && <SelectItem value="all">Todos</SelectItem>}
+                  {scopedActiveUsers.map((u) => (
                     <SelectItem key={u.id} value={u.id}>
                       {u.nome?.trim() || u.email?.trim() || u.id}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {!isAdmin && <div className="text-xs text-gray-500">Modo vendedor: filtros travados.</div>}
+              {!isMatrixAdmin && !isBranchManager && <div className="text-xs text-gray-500">Modo vendedor: filtros travados.</div>}
             </div>
 
             <div className="flex flex-col gap-2">
               <Label>Unidade</Label>
-              <Select value={unitFilter} onValueChange={setUnitFilter} disabled={!isAdmin}>
+              <Select value={unitFilter} onValueChange={setUnitFilter} disabled={!isMatrixAdmin}>
                 <SelectTrigger>
                   <SelectValue placeholder="Todas" />
                 </SelectTrigger>
                 <SelectContent>
-                  {isAdmin && <SelectItem value="all">Todas</SelectItem>}
-                  {(isAdmin ? units : units.filter((u) => u.id === currentUser?.unit_id)).map((u) => (
+                  {isMatrixAdmin && <SelectItem value="all">Todas</SelectItem>}
+                  {scopedUnits.map((u) => (
                     <SelectItem key={u.id} value={u.id}>
                       {u.nome}
                     </SelectItem>
@@ -4909,7 +4950,7 @@ export default function ComissoesPage() {
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todas</SelectItem>
-                    {units.filter((u) => u.tipo !== "matriz" && u.is_active !== false).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
+                    {scopedUnits.filter((u) => u.tipo !== "matriz" && u.is_active !== false).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -4920,7 +4961,7 @@ export default function ComissoesPage() {
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos</SelectItem>
-                    {activeUsers.filter((u) => !partRuleUnitId || partRuleUnitId === "all" || u.unit_id === partRuleUnitId).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome || u.email || u.id}</SelectItem>)}
+                    {scopedActiveUsers.filter((u) => !partRuleUnitId || partRuleUnitId === "all" || u.unit_id === partRuleUnitId).map((u) => <SelectItem key={u.id} value={u.id}>{u.nome || u.email || u.id}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

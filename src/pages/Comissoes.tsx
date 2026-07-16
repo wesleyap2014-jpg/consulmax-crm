@@ -2967,29 +2967,13 @@ export default function ComissoesPage() {
     setReturnBusy(row.batch.id);
 
     try {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const accessToken = sessionData.session?.access_token;
-
-      if (sessionError || !accessToken) {
-        throw new Error("Sua sessão expirou. Entre novamente no CRM e tente retornar a comissão.");
-      }
-
-      const response = await fetch("/api/commissions/return", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          batch_id: row.batch.id,
-          venda_id: row.batch.venda_id,
-        }),
+      const { data, error } = await supabase.rpc("return_commission_to_sale", {
+        p_batch_id: row.batch.id,
+        p_venda_id: row.batch.venda_id,
       });
 
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error || "Não foi possível retornar a comissão.");
-      }
+      if (error) throw error;
+      if (data?.ok === false) throw new Error(data?.error || "Não foi possível retornar a comissão.");
 
       setExpandedPartitionBatchIds((prev) => {
         const next = { ...prev };

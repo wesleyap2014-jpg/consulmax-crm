@@ -22,7 +22,7 @@ begin
     into v_profile_id
   from public.users u
   where u.auth_user_id = v_auth_user_id
-    and lower(coalesce(u.role, '')) = 'admin'
+    and lower(coalesce(u.role::text, '')) = 'admin'
     and coalesce(u.is_active, true) = true
   limit 1;
 

@@ -27,7 +27,7 @@ type UserRow = {
 };
 
 type UnitRow = { id: string; tipo?: string | null };
-type GiroScope = { authIds: string[] | null; label: string };
+type GiroScope = { ownerIds: string[] | null; label: string };
 
 type PersonRow = {
   id: string;
@@ -225,23 +225,23 @@ export default function GiroDeCarteiraV2() {
       unit = (data || null) as UnitRow | null;
     }
     const matrix = normalizeText(user.hierarchy_level) === "matriz" || (normalizeText(user.role || user.user_role) === "admin" && normalizeText(unit?.tipo) === "matriz");
-    if (matrix) return { authIds: null, label: "Matriz — visão global" };
+    if (matrix) return { ownerIds: null, label: "Matriz — visão global" };
 
     if (normalizeText(user.hierarchy_level) === "gestor_filial" && user.unit_id) {
-      const { data, error } = await supabase.from("users").select("auth_user_id").eq("unit_id", user.unit_id).eq("is_active", true);
+      const { data, error } = await supabase.from("users").select("id,auth_user_id").eq("unit_id", user.unit_id).eq("is_active", true);
       if (!error) {
-        const authIds = Array.from(new Set((data || []).map((row: any) => String(row.auth_user_id || "")).filter(Boolean)));
-        return { authIds: authIds.length ? authIds : [user.auth_user_id], label: "Gestor da filial — sua unidade" };
+        const ownerIds = Array.from(new Set((data || []).flatMap((row: any) => [row.id, row.auth_user_id]).map(String).filter(Boolean)));
+        return { ownerIds: ownerIds.length ? ownerIds : [user.id, user.auth_user_id], label: "Gestor da filial — sua unidade" };
       }
     }
 
-    return { authIds: [user.auth_user_id], label: "Vendedor — suas tarefas" };
+    return { ownerIds: [user.id, user.auth_user_id], label: "Vendedor — suas tarefas" };
   }
 
   async function loadCount(scope: GiroScope) {
     try {
       let query = supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
-      if (scope.authIds) query = query.in("owner_auth_id", scope.authIds);
+      if (scope.ownerIds) query = query.in("owner_auth_id", scope.ownerIds);
       const { data, error } = await query;
       if (error) throw error;
       return (data || []).reduce((acc: number, row: any) => acc + Number(row?.due_count || 0), 0);
@@ -250,20 +250,39 @@ export default function GiroDeCarteiraV2() {
     }
   }
 
-  async function loadItems(user: UserRow, scope: GiroScope) {
+  async function loadItems(scope: GiroScope) {
+    let rows: GiroRaw[] = [];
     try {
       let q = supabase.from("v_giro_due_items").select("*").limit(5000);
-      if (scope.authIds) q = q.in("owner_auth_id", scope.authIds);
+      if (scope.ownerIds) q = q.in("owner_auth_id", scope.ownerIds);
       const { data, error } = await q;
       if (error) throw error;
-      setSource("view");
-      return (data || []) as GiroRaw[];
+      rows = (data || []) as GiroRaw[];
     } catch (viewError) {
-      if (!scope.authIds || scope.authIds.length !== 1 || scope.authIds[0] !== user.auth_user_id) throw viewError;
+      console.warn("[GiroDeCarteiraV2] consulta principal de itens falhou:", viewError);
+    }
+
+    if (!rows.length && scope.ownerIds?.length) {
+      const direct = await Promise.all(scope.ownerIds.map((ownerId) => supabase.from("v_giro_due_items").select("*").eq("owner_auth_id", ownerId).limit(5000)));
+      const byId = new Map<string, GiroRaw>();
+      direct.forEach(({ data }) => ((data || []) as GiroRaw[]).forEach((row, idx) => byId.set(String(row.id || row.task_id || row.giro_task_id || row.cliente_id || row.lead_id || `${row.owner_auth_id || "owner"}_${idx}`), row)));
+      rows = Array.from(byId.values());
+    }
+
+    if (rows.length) {
+      setSource("view");
+      return rows;
+    }
+
+    try {
       const { data, error } = await supabase.rpc("next_giro_batch");
       if (error) throw error;
       setSource("rpc");
       return (Array.isArray(data) ? data : []) as GiroRaw[];
+    } catch (rpcError) {
+      console.warn("[GiroDeCarteiraV2] fonte alternativa de itens falhou:", rpcError);
+      setSource("none");
+      return [];
     }
   }
 
@@ -302,10 +321,10 @@ export default function GiroDeCarteiraV2() {
     try {
       const user = me || (await loadCurrentUser());
       const scope = await resolveScope(user);
-      const [count, rows] = await Promise.all([loadCount(scope), loadItems(user, scope)]);
+      const [count, rows] = await Promise.all([loadCount(scope), loadItems(scope)]);
       setMe(user);
       setScopeLabel(scope.label);
-      setDueCount(count == null ? rows.length : Math.max(count, rows.length));
+      setDueCount(rows.length ? (count == null ? rows.length : Math.max(count, rows.length)) : 0);
       setItems(rows);
       await loadPeople(rows);
     } catch (e: any) {

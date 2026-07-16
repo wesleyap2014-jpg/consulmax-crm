@@ -18,6 +18,15 @@ export type LancePrimeInstallment = {
   endingBalance: number;
 };
 
+export type LancePrimeProjectionRow = {
+  month: number;
+  lanceInstallment: number;
+  consortiumInstallment: number;
+  totalInstallment: number;
+  priceInstallment: number;
+  sacInstallment: number;
+};
+
 export type LancePrimeFlow = {
   eligible: boolean;
   reasons: string[];
@@ -42,17 +51,28 @@ export type LancePrimeFlow = {
   mixedMonthlyCommitment: number;
   mixedTotalPayments: number;
   traditionalMonthlyRate: number;
+  traditionalTermMonths: number;
   traditionalInstallment: number;
   traditionalTotalPayments: number;
+  traditionalSacFirstInstallment: number;
+  traditionalSacLastInstallment: number;
+  traditionalSacTotalPayments: number;
   projectedDifference: number;
   availableCredit: number;
   schedule: LancePrimeInstallment[];
+  projection: LancePrimeProjectionRow[];
+  projectionTotals: {
+    totalInstallment: number;
+    priceInstallment: number;
+    sacInstallment: number;
+  };
 };
 
 const IOF_ADDITIONAL_RATE = 0.0038;
 const IOF_DAILY_RATE = 0.000082;
 const IOF_DAYS_LIMIT = 365;
 const MINIMUM_CREDIT = 2_000_000;
+const TRADITIONAL_FINANCING_TERM = 420;
 
 function normalizeText(value: unknown) {
   return String(value ?? "")
@@ -83,6 +103,28 @@ function buildPriceSchedule(principal: number, monthlyRate: number, months: numb
     const interest = balance * monthlyRate;
     const scheduledAmortization = Math.max(0, payment - interest);
     const amortization = month === months ? balance : Math.min(balance, scheduledAmortization);
+    balance = Math.max(0, balance - amortization);
+    rows.push({
+      month,
+      payment: interest + amortization,
+      interest,
+      amortization,
+      endingBalance: balance,
+    });
+  }
+
+  return rows;
+}
+
+function buildSacSchedule(principal: number, monthlyRate: number, months: number): LancePrimeInstallment[] {
+  if (principal <= 0 || months <= 0) return [];
+  const amortizationBase = principal / months;
+  const rows: LancePrimeInstallment[] = [];
+  let balance = principal;
+
+  for (let month = 1; month <= months; month += 1) {
+    const interest = balance * monthlyRate;
+    const amortization = month === months ? balance : Math.min(balance, amortizationBase);
     balance = Math.max(0, balance - amortization);
     rows.push({
       month,
@@ -195,8 +237,38 @@ export function buildLancePrimeFlow(proposal: ProposalModelRow, params: LancePri
   const mixedTotalPayments = consortiumTotalPayments + totalFinancingPayments;
   const traditionalAnnualRate = Math.max(0, normalizeFraction(params.fin_imob_anual));
   const traditionalMonthlyRate = Math.pow(1 + traditionalAnnualRate, 1 / 12) - 1;
-  const traditionalInstallment = pricePayment(credit, traditionalMonthlyRate, extrato.summary.planTerm);
-  const traditionalTotalPayments = traditionalInstallment * extrato.summary.planTerm;
+  const traditionalPriceSchedule = buildPriceSchedule(credit, traditionalMonthlyRate, TRADITIONAL_FINANCING_TERM);
+  const traditionalSacSchedule = buildSacSchedule(credit, traditionalMonthlyRate, TRADITIONAL_FINANCING_TERM);
+  const traditionalInstallment = traditionalPriceSchedule[0]?.payment || 0;
+  const traditionalTotalPayments = traditionalPriceSchedule.reduce((sum, item) => sum + item.payment, 0);
+  const traditionalSacTotalPayments = traditionalSacSchedule.reduce((sum, item) => sum + item.payment, 0);
+  const consortiumByMonth = new Map(consortiumRows.map((entry) => [entry.month, entry.installment]));
+  const projectionMonths = Math.max(
+    TRADITIONAL_FINANCING_TERM,
+    financed.schedule.length,
+    ...consortiumRows.map((entry) => entry.month)
+  );
+  const projection: LancePrimeProjectionRow[] = Array.from({ length: projectionMonths }, (_, index) => {
+    const month = index + 1;
+    const lanceInstallment = financed.schedule[index]?.payment || 0;
+    const consortiumInstallment = consortiumByMonth.get(month) || 0;
+    return {
+      month,
+      lanceInstallment,
+      consortiumInstallment,
+      totalInstallment: lanceInstallment + consortiumInstallment,
+      priceInstallment: traditionalPriceSchedule[index]?.payment || 0,
+      sacInstallment: traditionalSacSchedule[index]?.payment || 0,
+    };
+  });
+  const projectionTotals = projection.reduce(
+    (totals, item) => ({
+      totalInstallment: totals.totalInstallment + item.totalInstallment,
+      priceInstallment: totals.priceInstallment + item.priceInstallment,
+      sacInstallment: totals.sacInstallment + item.sacInstallment,
+    }),
+    { totalInstallment: 0, priceInstallment: 0, sacInstallment: 0 }
+  );
 
   return {
     eligible: reasons.length === 0,
@@ -222,10 +294,16 @@ export function buildLancePrimeFlow(proposal: ProposalModelRow, params: LancePri
     mixedMonthlyCommitment,
     mixedTotalPayments,
     traditionalMonthlyRate,
+    traditionalTermMonths: TRADITIONAL_FINANCING_TERM,
     traditionalInstallment,
     traditionalTotalPayments,
+    traditionalSacFirstInstallment: traditionalSacSchedule[0]?.payment || 0,
+    traditionalSacLastInstallment: traditionalSacSchedule[traditionalSacSchedule.length - 1]?.payment || 0,
+    traditionalSacTotalPayments,
     projectedDifference: traditionalTotalPayments - mixedTotalPayments,
     availableCredit: extrato.summary.availableAtContemplation || credit,
     schedule: financed.schedule,
+    projection,
+    projectionTotals,
   };
 }

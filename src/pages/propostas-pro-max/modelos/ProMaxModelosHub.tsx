@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { BarChart3, CalendarDays, FileSpreadsheet, House, LineChart, Lock, Phone, TrendingUp, UserRound, X } from "lucide-react";
+import { ArrowRight, BarChart3, Calculator, CalendarDays, CheckCircle2, FileSpreadsheet, House, Landmark, LineChart, Lock, Phone, ShieldCheck, Sparkles, TrendingUp, UserRound, X, XCircle, Zap } from "lucide-react";
 import { buildAlavancagemFinanceiraFlow } from "./fluxos/alavancagemFinanceiraFlow.ts";
 import { buildAlavancagemPatrimonialFlow } from "./fluxos/alavancagemPatrimonialFlow.ts";
 import { buildAquisicaoFlow } from "./fluxos/aquisicaoFlow";
 import { buildEquityFlow } from "./fluxos/equityFlow";
 import { buildExtratoFlow, onlyNumber } from "./fluxos/extratoFlow";
+import { buildLancePrimeFlow } from "./fluxos/lancePrimeFlow";
 import { buildPrevidenciaFlow } from "./fluxos/previdenciaFlow";
 
 type ProposalModelRow = Parameters<typeof buildExtratoFlow>[0];
@@ -20,10 +21,11 @@ type AlavancagemTraditionalScenario = AlavancagemFinanceiraFlow["traditional"]["
 type AlavancagemPatrimonialFlow = ReturnType<typeof buildAlavancagemPatrimonialFlow>;
 type PatrimonialChartPoint = AlavancagemPatrimonialFlow["chart"][number];
 type EquityFlow = ReturnType<typeof buildEquityFlow>;
+type LancePrimeFlow = ReturnType<typeof buildLancePrimeFlow>;
 type EquityMode = "direto" | "cadenciado";
 type EquityDirectDetailKey = "sorteio" | "lance";
 
-type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "equity" | "blindagem_caixa";
+type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "equity" | "lance_prime" | "blindagem_caixa";
 
 type ProMaxModelosHubProps = {
   proposal: ProposalModelRow;
@@ -79,6 +81,7 @@ const MODELS: Array<{ key: ModelKey; label: string; description: string }> = [
   { key: "alav_financeira", label: "Alav. Financeira", description: "Entenda como o lance pode acelerar capital, ganho e oportunidade." },
   { key: "alav_patrimonial", label: "Alavancagem Patrimonial", description: "Projete construção patrimonial com carta corrigida e renda do ativo." },
   { key: "equity", label: "Equity", description: "Libere capital estratégico com garantia planejada, direto ou em cadência." },
+  { key: "lance_prime", label: "Lance Prime", description: "Combine consórcio e financiamento do lance em grandes aquisições." },
   { key: "blindagem_caixa", label: "Blindagem de Caixa", description: "Reorganize dívidas caras e preserve caixa para o que realmente importa." },
 ];
 
@@ -3275,6 +3278,268 @@ function EquityModel({
   );
 }
 
+function LancePrimeMetric({
+  label,
+  value,
+  helper,
+  tone = "navy",
+}: {
+  label: string;
+  value: string;
+  helper: string;
+  tone?: "navy" | "ruby" | "gold";
+}) {
+  const color = tone === "ruby" ? C.ruby : tone === "gold" ? C.gold : C.navy;
+  return (
+    <div className="rounded-2xl border border-white/70 bg-white/90 p-5 shadow-[0_18px_50px_rgba(15,23,42,.08)] backdrop-blur">
+      <div className="text-[11px] font-black uppercase tracking-[.14em] text-slate-500">{label}</div>
+      <div className="mt-2 text-2xl font-black" style={{ color }}>{value}</div>
+      <div className="mt-2 text-xs leading-relaxed text-slate-500">{helper}</div>
+    </div>
+  );
+}
+
+function LancePrimeStep({
+  number,
+  title,
+  description,
+  icon: Icon,
+}: {
+  number: string;
+  title: string;
+  description: string;
+  icon: React.ElementType;
+}) {
+  return (
+    <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-amber-100/70 blur-2xl transition group-hover:scale-125" />
+      <div className="relative flex items-start gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-[.18em]" style={{ color: C.gold }}>Passo {number}</div>
+          <div className="mt-1 text-base font-black" style={{ color: C.navy }}>{title}</div>
+          <p className="mt-2 text-sm leading-relaxed text-slate-600">{description}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LancePrimeIneligible({ flow }: { flow: LancePrimeFlow }) {
+  return (
+    <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,.10)]">
+      <div className="absolute inset-x-0 top-0 h-2" style={{ background: `linear-gradient(90deg, ${C.navy}, ${C.ruby}, ${C.gold})` }} />
+      <div className="grid gap-8 p-6 md:p-9 lg:grid-cols-[1.1fr_.9fr] lg:items-center">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-black uppercase tracking-[.12em] text-red-700">
+            <XCircle className="h-4 w-4" /> Operação inviável
+          </div>
+          <h2 className="mt-5 max-w-2xl text-3xl font-black leading-tight md:text-4xl" style={{ color: C.navy }}>
+            Esta simulação ainda não atende aos critérios do Lance Prime.
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-600">
+            O Lance Prime foi desenhado para grandes aquisições elegíveis, com uma estrutura específica de administradora e valor de crédito.
+          </p>
+          <div className="mt-6 space-y-3">
+            {flow.reasons.map((reason) => (
+              <div key={reason} className="flex items-start gap-3 rounded-2xl border border-red-100 bg-red-50/70 p-4 text-sm font-semibold text-red-800">
+                <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> {reason}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-3xl p-6 text-white shadow-2xl" style={{ background: `linear-gradient(145deg, ${C.navy}, #111827)` }}>
+          <div className="text-xs font-black uppercase tracking-[.16em] text-white/55">Critérios de elegibilidade</div>
+          <div className="mt-5 space-y-4">
+            <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+              <CheckCircle2 className="h-5 w-5 shrink-0" style={{ color: C.gold }} />
+              <div><div className="font-black">A partir de R$ 2 milhões</div><div className="text-xs text-white/60">Crédito contratado na simulação</div></div>
+            </div>
+            <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+              <CheckCircle2 className="h-5 w-5 shrink-0" style={{ color: C.gold }} />
+              <div><div className="font-black">Administradora Embracon</div><div className="text-xs text-white/60">Condição obrigatória da modalidade</div></div>
+            </div>
+          </div>
+          <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs leading-relaxed text-white/65">
+            Simulação atual: {brMoney(flow.credit)} · {flow.adminName}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LancePrimeModel({ proposal, params }: ProMaxModelosHubProps) {
+  const flow = useMemo(() => buildLancePrimeFlow(proposal, params), [proposal, params]);
+  const schedulePreview = flow.schedule.slice(0, 12);
+  const comparisonMax = Math.max(flow.traditionalTotalPayments, flow.mixedTotalPayments, 1);
+  const mixedWidth = Math.max(4, (flow.mixedTotalPayments / comparisonMax) * 100);
+  const traditionalWidth = Math.max(4, (flow.traditionalTotalPayments / comparisonMax) * 100);
+  const favorable = flow.projectedDifference >= 0;
+
+  if (!flow.eligible) return <LancePrimeIneligible flow={flow} />;
+
+  return (
+    <div className="space-y-5">
+      <section className="relative overflow-hidden rounded-[2rem] border border-white/20 text-white shadow-[0_30px_90px_rgba(15,23,42,.28)]" style={{ background: `linear-gradient(135deg, #111827 0%, ${C.navy} 48%, ${C.ruby} 100%)` }}>
+        <div className="absolute -left-20 -top-28 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-28 right-0 h-80 w-80 rounded-full blur-3xl" style={{ background: `${C.gold}33` }} />
+        <div className="relative grid gap-8 p-6 md:p-9 xl:grid-cols-[1.1fr_.9fr] xl:items-center">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-black uppercase tracking-[.14em] backdrop-blur">
+              <Sparkles className="h-4 w-4" style={{ color: C.gold }} /> Exclusivo para grandes aquisições
+            </div>
+            <h2 className="mt-5 text-4xl font-black leading-[1.02] md:text-6xl">
+              Lance <span style={{ color: C.gold }}>Prime</span>
+            </h2>
+            <p className="mt-4 max-w-2xl text-lg font-medium leading-relaxed text-white/80">
+              Consórcio e crédito trabalhando juntos para transformar um grande patrimônio em uma aquisição financeiramente mais inteligente.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3 text-xs font-black">
+              <span className="rounded-full border border-white/15 bg-white/10 px-3 py-2">Crédito {brMoney(flow.credit)}</span>
+              <span className="rounded-full border border-white/15 bg-white/10 px-3 py-2">Lance {brPercent(flow.bidPercent)}</span>
+              <span className="rounded-full border border-white/15 bg-white/10 px-3 py-2">Embracon</span>
+            </div>
+          </div>
+          <div className="relative rounded-3xl border border-white/15 bg-white/10 p-6 backdrop-blur-xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-black uppercase tracking-[.15em] text-white/60">Estrutura do investimento</div>
+              <ShieldCheck className="h-5 w-5" style={{ color: C.gold }} />
+            </div>
+            <div className="mt-5 text-sm text-white/65">Crédito disponível para aquisição</div>
+            <div className="mt-1 text-4xl font-black" style={{ color: C.gold }}>{brMoney(flow.availableCredit)}</div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[.12em] text-white/50">Lance financiado</div>
+                <div className="mt-1 text-lg font-black">{brMoney(flow.financedBid)}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[.12em] text-white/50">Prazo do lance</div>
+                <div className="mt-1 text-lg font-black">{flow.termMonths} meses</div>
+              </div>
+            </div>
+            {flow.bidWasEstimated ? (
+              <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-200/10 p-3 text-xs leading-relaxed text-amber-50">
+                Como a simulação não possui lance próprio informado, esta apresentação usa um lance ilustrativo de 50% do crédito.
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center gap-2 text-sm font-black uppercase tracking-[.12em]" style={{ color: C.navy }}>
+          <Zap className="h-4 w-4" style={{ color: C.ruby }} /> Como o Lance Prime funciona
+        </div>
+        <div className="grid gap-3 lg:grid-cols-3">
+          <LancePrimeStep number="01" icon={Landmark} title="Estruture o consórcio" description={`Uma carta Embracon de ${brMoney(flow.credit)} forma a base da aquisição.`} />
+          <LancePrimeStep number="02" icon={Zap} title="Potencialize o lance" description={`O Lance Prime financia ${brMoney(flow.financedBid)} e preserva o capital do cliente.`} />
+          <LancePrimeStep number="03" icon={House} title="Conquiste o imóvel" description={`Com a contemplação, o crédito de ${brMoney(flow.availableCredit)} é direcionado à aquisição.`} />
+        </div>
+      </section>
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <LancePrimeMetric label="Lance líquido" value={brMoney(flow.financedBid)} helper="Valor destinado à estratégia de contemplação." tone="ruby" />
+        <LancePrimeMetric label="IOF financiado" value={brMoney(flow.iof)} helper="Incorporado ao contrato, sem desembolso inicial de IOF." tone="gold" />
+        <LancePrimeMetric label="Parcela do lance" value={brMoney(flow.installment)} helper={`${flow.termMonths} meses à taxa configurada de ${brPercent(flow.monthlyRate)} a.m.`} />
+        <LancePrimeMetric label="CET estimado" value={`${brPercent(flow.cetMonthly)} a.m.`} helper={`${brPercent(flow.cetAnnual)} a.a. efetivos, incluindo o IOF estimado.`} tone="ruby" />
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="p-6 text-white" style={{ background: `linear-gradient(135deg, ${C.navy}, #0f172a)` }}>
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[.14em] text-white/60">
+              <Calculator className="h-4 w-4" /> Custo transparente do lance
+            </div>
+            <div className="mt-3 text-3xl font-black">{brMoney(flow.financedAmount)}</div>
+            <div className="mt-1 text-xs text-white/60">Valor total financiado, já incluindo o IOF</div>
+          </div>
+          <div className="space-y-3 p-6 text-sm">
+            <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">Lance disponibilizado</span><strong style={{ color: C.navy }}>{brMoney(flow.financedBid)}</strong></div>
+            <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">IOF adicional — 0,38%</span><strong>{brMoney(flow.iofAdditional)}</strong></div>
+            <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">IOF diário — 0,0082%</span><strong>{brMoney(flow.iofDaily)}</strong></div>
+            <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">Juros projetados</span><strong>{brMoney(flow.interestCost)}</strong></div>
+            <div className="flex items-center justify-between gap-4 rounded-2xl bg-slate-50 p-4"><span className="font-black" style={{ color: C.navy }}>Total das parcelas</span><strong className="text-lg" style={{ color: C.ruby }}>{brMoney(flow.totalFinancingPayments)}</strong></div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[.14em] text-slate-500">Comparativo projetado</div>
+              <h3 className="mt-2 text-2xl font-black" style={{ color: C.navy }}>Financiar tudo ou combinar inteligentemente?</h3>
+            </div>
+            <div className={`rounded-full px-3 py-1.5 text-xs font-black ${favorable ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+              {favorable ? `Diferença de ${brMoney(flow.projectedDifference)}` : "Revisar condições"}
+            </div>
+          </div>
+          <div className="mt-7 space-y-6">
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3 text-sm"><span className="font-black" style={{ color: C.navy }}>Lance Prime + Consórcio</span><strong>{brMoney(flow.mixedTotalPayments)}</strong></div>
+              <div className="h-4 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${mixedWidth}%`, background: `linear-gradient(90deg, ${C.gold}, ${C.ruby})` }} /></div>
+              <div className="mt-2 text-xs text-slate-500">Compromisso mensal inicial estimado: {brMoney(flow.mixedMonthlyCommitment)}</div>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3 text-sm"><span className="font-black" style={{ color: C.navy }}>Financiamento imobiliário integral</span><strong>{brMoney(flow.traditionalTotalPayments)}</strong></div>
+              <div className="h-4 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-slate-400" style={{ width: `${traditionalWidth}%` }} /></div>
+              <div className="mt-2 text-xs text-slate-500">Parcela PRICE estimada: {brMoney(flow.traditionalInstallment)} · taxa-base {brPercent(flow.traditionalMonthlyRate)} a.m.</div>
+            </div>
+          </div>
+          <div className="mt-7 flex items-start gap-3 rounded-2xl border border-amber-100 bg-amber-50/70 p-4 text-xs leading-relaxed text-amber-900">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+            O comparativo usa o fluxo projetado do consórcio e a taxa de financiamento imobiliário cadastrada nos parâmetros Pró Max. Custos cartorários, seguros e tarifas não informados não integram esta projeção.
+          </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}><CalendarDays className="h-4 w-4" /> Primeiros 12 meses do Lance Prime</div>
+            <p className="mt-1 text-xs text-slate-500">Sistema PRICE com juros, amortização e saldo projetados.</p>
+          </div>
+          <div className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600">CET {brPercent(flow.cetAnnual)} a.a.</div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-[720px] w-full border-collapse text-sm">
+            <thead className="bg-slate-50 text-[11px] uppercase tracking-[.1em] text-slate-500">
+              <tr><th className="p-3 text-left">Mês</th><th className="p-3 text-right">Parcela</th><th className="p-3 text-right">Juros</th><th className="p-3 text-right">Amortização</th><th className="p-3 text-right">Saldo</th></tr>
+            </thead>
+            <tbody>
+              {schedulePreview.map((entry) => (
+                <tr key={entry.month} className="border-t border-slate-100">
+                  <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
+                  <td className="p-3 text-right font-semibold">{brMoney(entry.payment)}</td>
+                  <td className="p-3 text-right">{brMoney(entry.interest)}</td>
+                  <td className="p-3 text-right">{brMoney(entry.amortization)}</td>
+                  <td className="p-3 text-right font-black" style={{ color: C.ruby }}>{brMoney(entry.endingBalance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center rounded-3xl border border-slate-200 bg-slate-50 p-5">
+        <div className="flex items-start gap-3">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" style={{ color: C.ruby }} />
+          <div>
+            <div className="text-sm font-black" style={{ color: C.navy }}>Informação importante sobre IOF e CET</div>
+            <p className="mt-1 text-xs leading-relaxed text-slate-600">
+              O IOF foi estimado como operação comum de crédito, com adicional de 0,38% e alíquota diária de 0,0082%, limitada a 365 dias por amortização. O CET considera o valor líquido do lance e todas as parcelas do financiamento. Datas reais, tarifas, seguros, garantias e condições da instituição podem alterar o resultado final.
+            </p>
+          </div>
+        </div>
+        <div className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-black text-white" style={{ background: C.navy }}>
+          Sujeito à análise de crédito <ArrowRight className="h-4 w-4" />
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PlaceholderModel({ model }: { model: (typeof MODELS)[number] }) {
   return (
     <section className="rounded-xl border bg-white p-8 text-center shadow-sm">
@@ -3394,7 +3659,7 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
         </div>
       </section>
 
-      <section className="grid gap-2 md:grid-cols-4 xl:grid-cols-7">
+      <section className="grid gap-2 md:grid-cols-4 xl:grid-cols-8">
         {visibleModels.map((item) => {
           const active = item.key === activeModel;
           return (
@@ -3427,6 +3692,8 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
         <AlavancagemPatrimonialModel proposal={proposal} params={params} allowedModes={allowedAlavPatrimonialModes} />
       ) : activeModel === "equity" ? (
         <EquityModel proposal={proposal} params={params} allowedModes={allowedEquityModes} />
+      ) : activeModel === "lance_prime" ? (
+        <LancePrimeModel proposal={proposal} params={params} />
       ) : (
         <PlaceholderModel model={model} />
       )}

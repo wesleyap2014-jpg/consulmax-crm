@@ -1052,8 +1052,12 @@ export default function ComissoesPage() {
   const currentUser = useMemo(() => users.find((u) => u.auth_user_id === authUserId) || null, [users, authUserId]);
   const currentUnit = useMemo(() => units.find((u) => u.id === currentUser?.unit_id) || null, [units, currentUser]);
   const matrixUnit = useMemo(() => units.find((u) => u.tipo === "matriz") || null, [units]);
-  const isMatrixAdmin = !!currentUser && currentUser.role === "admin" && currentUnit?.tipo === "matriz";
-  const isBranchManager = currentUser?.hierarchy_level === "gestor_filial";
+  const currentHierarchyLevel = normalize(currentUser?.hierarchy_level);
+  const currentUnitType = normalize(currentUnit?.tipo);
+  const isMatrixAdmin =
+    !!currentUser &&
+    (currentHierarchyLevel === "matriz" || (currentUser.role === "admin" && currentUnitType === "matriz"));
+  const isBranchManager = !isMatrixAdmin && currentHierarchyLevel === "gestor_filial";
 
   const scopedUnitIds = useMemo(() => {
     if (isMatrixAdmin) return units.map((u) => u.id);
@@ -1070,6 +1074,19 @@ export default function ComissoesPage() {
     const allowed = new Set(scopedUserIds);
     return activeUsers.filter((u) => allowed.has(u.id));
   }, [activeUsers, scopedUserIds]);
+
+  const scopedVendedorIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          users
+            .filter((u) => scopedUserIds.includes(u.id))
+            .flatMap((u) => [u.id, u.auth_user_id])
+            .filter((id): id is string => !!id)
+        )
+      ),
+    [users, scopedUserIds]
+  );
 
   const scopedUnits = useMemo(() => {
     const allowed = new Set(scopedUnitIds);
@@ -1530,19 +1547,39 @@ export default function ComissoesPage() {
     setLoading(true);
 
     try {
+      const vendedorIdentifiersFor = (id: string) => {
+        const profile = usersById[id] || usersByAuth[id] || null;
+        return Array.from(new Set([profile?.id || id, profile?.auth_user_id].filter((value): value is string => !!value)));
+      };
+      const selectedVendedorProfile = vendedorId !== "all" ? usersById[vendedorId] || usersByAuth[vendedorId] || null : null;
+      const selectedVendedorProfileId = selectedVendedorProfile?.id || (vendedorId !== "all" ? vendedorId : null);
+      const selectedVendedorIds = vendedorId !== "all" ? vendedorIdentifiersFor(vendedorId) : [];
+      const selectedVendedorAllowed =
+        vendedorId !== "all" &&
+        (isMatrixAdmin || (!!selectedVendedorProfileId && scopedUserIds.includes(selectedVendedorProfileId)));
+      const vendedorIdsForUnit = (unitId: string) =>
+        Array.from(
+          new Set(
+            users
+              .filter((u) => u.unit_id === unitId)
+              .flatMap((u) => [u.id, u.auth_user_id])
+              .filter((id): id is string => !!id)
+          )
+        );
+
       let qb = supabase.from("commissions").select("*");
       if (status !== "all") qb = qb.eq("status", status);
 
       if (vendedorId !== "all") {
-        qb = isMatrixAdmin || scopedUserIds.includes(vendedorId)
-          ? qb.eq("vendedor_id", vendedorId)
+        qb = selectedVendedorAllowed && selectedVendedorIds.length
+          ? qb.in("vendedor_id", selectedVendedorIds)
           : qb.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       } else if (!isMatrixAdmin) {
-        qb = scopedUserIds.length
-          ? qb.in("vendedor_id", scopedUserIds)
+        qb = scopedVendedorIds.length
+          ? qb.in("vendedor_id", scopedVendedorIds)
           : qb.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       } else if (unitFilter !== "all") {
-        const ids = users.filter((u) => u.unit_id === unitFilter).map((u) => u.id);
+        const ids = vendedorIdsForUnit(unitFilter);
         qb = ids.length ? qb.in("vendedor_id", ids) : qb.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       }
 
@@ -1639,15 +1676,15 @@ export default function ComissoesPage() {
         .order("data_venda", { ascending: false });
 
       if (vendedorId !== "all") {
-        qbV = isMatrixAdmin || scopedUserIds.includes(vendedorId)
-          ? qbV.eq("vendedor_id", vendedorId)
+        qbV = selectedVendedorAllowed && selectedVendedorIds.length
+          ? qbV.in("vendedor_id", selectedVendedorIds)
           : qbV.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       } else if (!isMatrixAdmin) {
-        qbV = scopedUserIds.length
-          ? qbV.in("vendedor_id", scopedUserIds)
+        qbV = scopedVendedorIds.length
+          ? qbV.in("vendedor_id", scopedVendedorIds)
           : qbV.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       } else if (unitFilter !== "all") {
-        const ids = users.filter((u) => u.unit_id === unitFilter).map((u) => u.id);
+        const ids = vendedorIdsForUnit(unitFilter);
         qbV = ids.length ? qbV.in("vendedor_id", ids) : qbV.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
       }
 
@@ -1705,7 +1742,7 @@ export default function ComissoesPage() {
       ]);
 
       const scopedFreshBatches = ((freshBatches || []) as CommissionBatch[]).filter(
-        (batch) => isMatrixAdmin || scopedUserIds.includes(batch.vendedor_id)
+        (batch) => isMatrixAdmin || scopedUserIds.includes(canonUserId(batch.vendedor_id) || batch.vendedor_id)
       );
       const scopedBatchIds = new Set(scopedFreshBatches.map((batch) => batch.id));
       const scopedFreshEntries = ((freshEntries || []) as CommissionEntry[]).filter((entry) => scopedBatchIds.has(entry.batch_id));
@@ -1779,7 +1816,7 @@ export default function ComissoesPage() {
 
   useEffect(() => {
     fetchData();
-  }, [vendedorId, status, segmento, tabela, unitFilter, adminFilter, periodStart, periodEnd, isAdmin, isMatrixAdmin, authUserId, scopedUserIds]);
+  }, [vendedorId, status, segmento, tabela, unitFilter, adminFilter, periodStart, periodEnd, isAdmin, isMatrixAdmin, authUserId, scopedUserIds, scopedVendedorIds]);
 
   const now = new Date();
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1821,16 +1858,19 @@ export default function ComissoesPage() {
   const partitionEntriesVisible = useMemo(() => {
     return partitionEntries.filter((entry) => {
       const batch = partitionBatches.find((b) => b.id === entry.batch_id);
-      const vendedor = batch?.vendedor_id ? usersById[batch.vendedor_id] : null;
+      const vendedor = batch?.vendedor_id ? usersById[batch.vendedor_id] || usersByAuth[batch.vendedor_id] : null;
       const unitId = entry.business_unit_id || batch?.business_unit_id || vendedor?.unit_id || null;
+      const entryRecipientId = canonUserId(entry.recipient_user_id) || entry.recipient_user_id;
+      const batchVendedorId = canonUserId(batch?.vendedor_id) || batch?.vendedor_id;
+      const selectedVendedorId = canonUserId(vendedorId) || vendedorId;
 
       if (!isMatrixAdmin) {
         if (isBranchManager && unitId !== currentUser?.unit_id) return false;
-        if (!isBranchManager && entry.recipient_user_id !== currentUser?.id) return false;
+        if (!isBranchManager && entryRecipientId !== currentUser?.id) return false;
       }
 
       if (unitFilter !== "all" && unitId !== unitFilter) return false;
-      if (vendedorId !== "all" && entry.recipient_user_id !== vendedorId && batch?.vendedor_id !== vendedorId) return false;
+      if (vendedorId !== "all" && entryRecipientId !== selectedVendedorId && batchVendedorId !== selectedVendedorId) return false;
       if (status !== "all" && entry.status !== status) return false;
       if (!isBetweenISO(batch?.data_venda, localDateFromISO(periodStart), localDateFromISO(periodEnd))) return false;
 

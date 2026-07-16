@@ -28,22 +28,36 @@ import {
 } from "lucide-react";
 
 /** ===================== Tipos ===================== */
-type UserRow = { id: string; auth_user_id: string; nome: string; role?: string | null; user_role?: string | null; is_active?: boolean | null };
-type AgendaRow = { id: string; tipo: string; titulo: string; inicio_at: string; fim_at: string; user_id: string | null; cliente_nome?: string | null; lead_nome?: string | null; telefone?: string | null; videocall_url?: string | null };
-type OppRow = { id: string; segmento: string | null; valor_credito: number | null; estagio: string | null; score: number | null; expected_close_at: string | null; vendedor_id: string; lead_id: string };
+type UserRow = { id: string; auth_user_id: string; nome: string; role?: string | null; user_role?: string | null; is_active?: boolean | null; unit_id?: string | null; hierarchy_level?: string | null };
+type UnitRow = { id: string; nome: string; tipo: string; is_active?: boolean | null };
+type AgendaRow = { id: string; tipo: string; titulo: string; inicio_at: string; fim_at: string; user_id: string | null; videocall_url?: string | null; cliente?: { id: string; nome?: string | null; telefone?: string | null } | null; lead?: { id: string; nome?: string | null; telefone?: string | null } | null };
+type OppRow = { id: string; segmento: string | null; valor_credito: number | null; estagio: string | null; score: number | null; expected_close_at: string | null; fechamento_previsto_em?: string | null; vendedor_id: string; lead_id: string };
 type LeadRow = { id: string; nome: string; telefone?: string | null };
 type GroupRow = { id: string; administradora: string; segmento: string; codigo: string; participantes?: number | null; prox_vencimento: string | null; prox_sorteio: string | null; prox_assembleia: string | null };
 type LastAssemblyRow = { group_id: string; date: string | null; ll_high?: number | null; ll_low?: number | null; median?: number | null; reference_number?: number | null };
 type ClienteRow = { id: string; nome: string; data_nascimento: string | null; telefone?: string | null };
 type GiroDueRow = { owner_auth_id: string; due_count: number };
 type GiroItemRow = { id?: string | null; lead_id?: string | null; cliente_id?: string | null; cliente_nome?: string | null; lead_nome?: string | null; nome?: string | null; telefone?: string | null; carteira_ativa_total?: number | null; valor_carteira_ativa?: number | null; owner_auth_id?: string | null };
-type KBProcRow = { id: string; title?: string | null; titulo?: string | null; status?: string | null; created_at?: string | null; updated_at?: string | null };
+type KBProcRow = { id: string; title?: string | null; status?: string | null; created_at?: string | null; updated_at?: string | null };
 type CommissionRow = { id: string; venda_id: string; vendedor_id: string; valor_total: number | null; base_calculo?: number | null; percent_aplicado?: number | null; status: string | null; data_venda?: string | null };
 type CommissionFlowRow = { id?: string; commission_id: string; mes?: number | null; percentual?: number | null; valor_previsto: number | null; valor_pago_vendedor: number | null; data_pagamento_vendedor: string | null };
+type CommissionBatchRow = { id: string; venda_id: string; vendedor_id: string; business_unit_id?: string | null; status?: string | null; legacy?: boolean | null };
+type CommissionEntryRow = { id: string; batch_id: string; recipient_user_id?: string | null; recipient_unit_id?: string | null; business_unit_id?: string | null; status?: string | null };
+type CommissionEntryFlowRow = { id: string; entry_id: string; batch_id: string; valor_previsto: number | null; valor_pago: number | null; data_pagamento: string | null; status?: string | null };
 type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; segmento?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
 type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
+type DashboardScope = {
+  mode: "matrix" | "branch" | "seller";
+  isGlobal: boolean;
+  currentUserId: string;
+  currentUnitId: string | null;
+  selectedUserId: string | null;
+  profileIds: string[];
+  authIds: string[];
+  vendedorIds: string[];
+};
 
 const ALL = "__all__";
 const PV_OFFSET_MIN = -4 * 60;
@@ -59,14 +73,35 @@ function fmtDateBRFromYMD(ymd?: string | null) { const d10 = toYMD(ymd) || ""; c
 function monthRangeYMDFromOffset(now: Date, offsetMin: number) { const local = new Date(now.getTime() + offsetMin * 60 * 1000); const y = local.getUTCFullYear(); const m = local.getUTCMonth(); const f = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`; return { startYMD: f(new Date(Date.UTC(y, m, 1, 12, 0, 0))), endYMD: f(new Date(Date.UTC(y, m + 1, 1, 12, 0, 0))), year: y, month: m + 1 }; }
 function fmtBRL(v: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v || 0)); }
 function fmtDTForOffset(iso: string, offsetMin: number) { const local = new Date(new Date(iso).getTime() + offsetMin * 60 * 1000); return `${pad2(local.getUTCDate())}/${pad2(local.getUTCMonth() + 1)} ${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}`; }
-function isAdmin(u?: UserRow | null) { return (u?.role || u?.user_role || "").toLowerCase() === "admin"; }
+function isMatrixUser(u?: UserRow | null, unit?: UnitRow | null) { const level = normalizeText(u?.hierarchy_level); return Boolean(u && (level === "matriz" || ((u.role || u.user_role || "").toLowerCase() === "admin" && normalizeText(unit?.tipo) === "matriz"))); }
+function isBranchManagerUser(u?: UserRow | null, unit?: UnitRow | null) { return Boolean(u && !isMatrixUser(u, unit) && normalizeText(u.hierarchy_level) === "gestor_filial"); }
+function buildDashboardScope(me: UserRow, users: UserRow[], units: UnitRow[], vendorScope: string): DashboardScope {
+  const unit = units.find((u) => u.id === me.unit_id) || null;
+  const matrix = isMatrixUser(me, unit);
+  const branch = isBranchManagerUser(me, unit);
+  const allowed = matrix ? users : branch ? users.filter((u) => u.unit_id === me.unit_id) : users.filter((u) => u.id === me.id);
+  const selected = vendorScope !== ALL ? allowed.find((u) => u.id === vendorScope) || null : null;
+  const scoped = selected ? [selected] : allowed;
+  const profileIds = Array.from(new Set(scoped.map((u) => u.id).filter(Boolean)));
+  const authIds = Array.from(new Set(scoped.map((u) => u.auth_user_id).filter(Boolean)));
+  return {
+    mode: matrix ? "matrix" : branch ? "branch" : "seller",
+    isGlobal: matrix && vendorScope === ALL,
+    currentUserId: me.id,
+    currentUnitId: me.unit_id || null,
+    selectedUserId: selected?.id || null,
+    profileIds,
+    authIds,
+    vendedorIds: Array.from(new Set([...profileIds, ...authIds])),
+  };
+}
 function humanErr(e: any) { if (!e) return "Erro desconhecido."; if (typeof e === "string") return e; return String(e?.message || e?.error_description || e?.details || e?.hint || JSON.stringify(e)); }
 function metaFieldForMonth(month: number) { return `m${String(month).padStart(2, "0")}` as any; }
 function daysDiffYMD(a: string, b: string) { if (!a || !b) return 0; const [ay, am, ad] = a.slice(0, 10).split("-").map(Number); const [by, bm, bd] = b.slice(0, 10).split("-").map(Number); return Math.round((Date.UTC(ay, am - 1, ad, 12) - Date.UTC(by, bm - 1, bd, 12)) / 86400000); }
 function weekdayYMD(ymd: string) { const [y, m, d] = ymd.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); }
 function isBillingRuleDay(ymd: string) { const w = weekdayYMD(ymd); return w === 2 || w === 4; }
 function normalizeText(v?: string | null) { return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase(); }
-function isOpenOpportunityStage(v?: string | null) { const s = normalizeText(v); return ["novo", "qualificando", "qualificacao", "proposta", "negociacao"].includes(s); }
+function isOpenOpportunityStage(v?: string | null) { const s = normalizeText(v); return ["novo", "novo lead", "qualificando", "qualificacao", "qualificando/diagnostico", "reuniao agendada", "proposta", "negociacao", "proposta apresentada/negociacao", "fechamento programado/aguardando documentos"].includes(s); }
 function stripAccents(s: string) { return s.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
 function normalizeAdmin(raw?: string | null): string { const s = stripAccents(String(raw ?? "")).toLowerCase(); const cleaned = s.replace(/consorcios?|consorcio|holding|sa|s\/a|s\.a\.?/g, "").replace(/[^\w]/g, "").trim(); if (cleaned.includes("embracon")) return "Embracon"; if (cleaned.includes("hs")) return "HS"; if (cleaned.includes("maggi")) return "Maggi"; return (raw ?? "").toString().trim(); }
 function normalizeGroupDigits(g?: string | number | null): string { const s = String(g ?? "").trim(); const first = s.split(/[\/\-\s]/)[0] || s; const m = first.match(/\d+/); if (m) return m[0]; return s.replace(/\D/g, ""); }
@@ -99,13 +134,22 @@ export default function Inicio() {
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [me, setMe] = useState<UserRow | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [units, setUnits] = useState<UnitRow[]>([]);
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const [vendorScope, setVendorScope] = useState<string>(ALL);
   const scopedUser = useMemo(() => (vendorScope === ALL ? null : usersById.get(vendorScope) || null), [vendorScope, usersById]);
+  const currentUnit = useMemo(() => units.find((u) => u.id === me?.unit_id) || null, [units, me?.unit_id]);
+  const isMatrixAdmin = isMatrixUser(me, currentUnit);
+  const isBranchManager = isBranchManagerUser(me, currentUnit);
+  const canManageTeam = isMatrixAdmin || isBranchManager;
+  const selectableUsers = useMemo(() => {
+    if (isMatrixAdmin) return users;
+    if (isBranchManager) return users.filter((u) => u.unit_id === me?.unit_id);
+    return me ? users.filter((u) => u.id === me.id) : [];
+  }, [users, me, isMatrixAdmin, isBranchManager]);
 
   const rangeToday = useMemo(() => { const ymd = ymdFromDateInOffset(new Date(), PV_OFFSET_MIN); const { startISO, endISO } = rangeISOForDayInOffset(ymd, PV_OFFSET_MIN); return { ymd, br: fmtDateBRFromYMD(ymd), startISO, endISO }; }, []);
   const rangeMonth = useMemo(() => monthRangeYMDFromOffset(new Date(), PV_OFFSET_MIN), []);
-  const OPEN_STAGES = useMemo(() => ["Novo", "Qualificando", "Qualificação", "Qualificacao", "Proposta", "Negociação", "Negociacao"], []);
 
   const [kpi, setKpi] = useState({ openOppCount: 0, openOppTotal: 0, todayEventsCount: 0, todayGroupsCount: 0, myDayCount: 0, pendingGroupRegistrationCount: 0, monthSalesTotal: 0, monthSalesMeta: 0, monthSalesPct: 0, carteiraAtivaTotal: 0, openStockReqCount: 0, vendasSemComissaoCount: 0, giroDueCount: 0, newProceduresCount: 0, commissionsPendingCount: 0, commissionsPendingTotal: 0, commissionScheduledTotal: 0, commissionScheduledDate: "" as string | null });
   const [overdueOpps, setOverdueOpps] = useState<(OppRow & { lead_nome?: string; lead_tel?: string | null; daysWaiting?: number })[]>([]);
@@ -131,12 +175,20 @@ export default function Inicio() {
     const { data: auth } = await supabase.auth.getUser();
     const authId = auth.user?.id;
     if (!authId) throw new Error("Sem usuário autenticado.");
-    const { data: meRow, error: meErr } = await supabase.from("users").select("id,auth_user_id,nome,role,user_role,is_active").eq("auth_user_id", authId).maybeSingle();
+    const { data: meRow, error: meErr } = await supabase.from("users").select("id,auth_user_id,nome,role,user_role,is_active,unit_id,hierarchy_level").eq("auth_user_id", authId).maybeSingle();
     if (meErr) throw meErr;
     if (!meRow) throw new Error("Usuário não encontrado na tabela users.");
-    const { data: usersRows, error: usersErr } = await supabase.from("users").select("id,auth_user_id,nome,role,user_role,is_active").eq("is_active", true).order("nome", { ascending: true });
+    const [{ data: usersRows, error: usersErr }, { data: unitsRows, error: unitsErr }] = await Promise.all([
+      supabase.from("users").select("id,auth_user_id,nome,role,user_role,is_active,unit_id,hierarchy_level").eq("is_active", true).order("nome", { ascending: true }),
+      supabase.from("units").select("id,nome,tipo,is_active").order("tipo", { ascending: true }).order("nome", { ascending: true }),
+    ]);
     if (usersErr) throw usersErr;
-    return { meRow: meRow as UserRow, usersRows: (usersRows || []) as UserRow[], admin: isAdmin(meRow), initialScope: isAdmin(meRow) ? ALL : meRow.id };
+    if (unitsErr) throw unitsErr;
+    const allUsers = (usersRows || []) as UserRow[];
+    const allUnits = (unitsRows || []) as UnitRow[];
+    const meUnit = allUnits.find((u) => u.id === (meRow as UserRow).unit_id) || null;
+    const canTeam = isMatrixUser(meRow as UserRow, meUnit) || isBranchManagerUser(meRow as UserRow, meUnit);
+    return { meRow: meRow as UserRow, usersRows: allUsers, unitsRows: allUnits, initialScope: canTeam ? ALL : meRow.id };
   }
 
   async function tryLoadLeadsMap(ids: string[]) {
@@ -147,36 +199,82 @@ export default function Inicio() {
     return new Map<string, LeadRow>();
   }
 
-  async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
+  async function loadDashboard(scope: DashboardScope) {
     const today = rangeToday.ymd;
     const tomorrow = addDaysYMD(today, 1);
     const yesterday = addDaysYMD(today, -1);
     const endWeek = addDaysYMD(today, 6);
-    const windowStartISO = rangeISOForDayInOffset(today, PV_OFFSET_MIN).startISO;
-    const windowEndISO = rangeISOForDayInOffset(endWeek, PV_OFFSET_MIN).endISO;
+    const agendaWindowStartISO = `${today}T00:00:00.000Z`;
+    const agendaWindowEndISO = `${endWeek}T23:59:59.999Z`;
+    const noRowsId = "00000000-0000-0000-0000-000000000000";
+    const applyVendedorScope = (query: any) => scope.isGlobal
+      ? query
+      : scope.vendedorIds.length
+        ? query.in("vendedor_id", scope.vendedorIds)
+        : query.eq("vendedor_id", noRowsId);
+    const applyProfileScope = (query: any, column: string) => scope.isGlobal
+      ? query
+      : scope.profileIds.length
+        ? query.in(column, scope.profileIds)
+        : query.eq(column, noRowsId);
+    const applyAuthScope = (query: any, column: string) => scope.isGlobal
+      ? query
+      : scope.authIds.length
+        ? query.in(column, scope.authIds)
+        : query.eq(column, noRowsId);
 
-    let openOppQ = supabase.from("opportunities").select("id,segmento,valor_credito,estagio,score,expected_close_at,vendedor_id,lead_id").in("estagio", OPEN_STAGES).limit(5000);
-    if (!admin) openOppQ = openOppQ.eq("vendedor_id", scopeAuthId);
-    if (admin && scopeAuthId !== ALL) openOppQ = openOppQ.eq("vendedor_id", scopeAuthId);
+    const scopedGroupKeys = new Set<string>();
+    if (!scope.isGlobal) {
+      const scopedGroupsQ = applyVendedorScope(
+        supabase.from("vendas").select("administradora,grupo,vendedor_id").not("grupo", "is", null).limit(5000)
+      );
+      const { data: scopedGroupSales, error: scopedGroupErr } = await scopedGroupsQ;
+      if (scopedGroupErr) console.warn("[Inicio] Não foi possível delimitar os grupos do escopo:", scopedGroupErr);
+      (scopedGroupSales || []).forEach((v: any) => {
+        if (v.administradora && v.grupo) scopedGroupKeys.add(groupKey(v.administradora, v.grupo));
+      });
+    }
+
+    let openOppQ = supabase.from("opportunities").select("id,segmento,valor_credito,estagio,score,expected_close_at,fechamento_previsto_em,vendedor_id,lead_id").limit(5000);
+    openOppQ = applyAuthScope(openOppQ, "vendedor_id");
     const { data: openOppRowsRaw, error: openOppErr } = await openOppQ;
-    if (openOppErr) throw openOppErr;
+    if (openOppErr) console.warn("[Inicio] Não foi possível carregar oportunidades:", openOppErr);
     const openOppRows = ((openOppRowsRaw || []) as any as OppRow[]).filter((o) => isOpenOpportunityStage(o.estagio));
     const openOppCount = openOppRows.length;
     const openOppTotal = openOppRows.reduce((acc, r) => acc + (Number(r.valor_credito || 0) || 0), 0);
-    const overdueComputed = openOppRows.filter((o) => Boolean(toYMD(o.expected_close_at)) && (toYMD(o.expected_close_at) as string) < today).map((o) => ({ ...o, daysWaiting: Math.max(0, daysDiffYMD(today, toYMD(o.expected_close_at) as string)) })).sort((a, b) => (b.daysWaiting || 0) - (a.daysWaiting || 0)).slice(0, 10);
+    const overdueComputed = openOppRows
+      .map((o) => ({ row: o, due: toYMD(o.expected_close_at || o.fechamento_previsto_em) }))
+      .filter((o) => Boolean(o.due) && (o.due as string) < today)
+      .map(({ row, due }) => ({ ...row, daysWaiting: Math.max(0, daysDiffYMD(today, due as string)) }))
+      .sort((a, b) => (b.daysWaiting || 0) - (a.daysWaiting || 0))
+      .slice(0, 10);
     const leadsMap = await tryLoadLeadsMap(Array.from(new Set(overdueComputed.map((o) => o.lead_id).filter(Boolean))));
     const overdueOppsEnriched = overdueComputed.map((o) => { const ld = leadsMap.get(o.lead_id); return { ...o, lead_nome: ld?.nome, lead_tel: ld?.telefone || null }; });
 
-    let agQ = supabase.from("v_agenda_eventos_enriquecida").select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url").gte("inicio_at", windowStartISO).lte("inicio_at", windowEndISO).order("inicio_at", { ascending: true }).limit(200);
-    if (!admin) agQ = agQ.eq("user_id", scopeAuthId);
-    if (admin && scopeAuthId !== ALL) agQ = agQ.eq("user_id", scopeAuthId);
-    const { data: agRows, error: agErr } = await agQ;
-    if (agErr) throw agErr;
-    const todayEventsCount = (agRows || []).filter((e: any) => { const t = new Date(e.inicio_at).toISOString(); return t >= rangeToday.startISO && t <= rangeToday.endISO; }).length;
+    let agQ = supabase
+      .from("agenda_eventos")
+      .select("id,tipo,titulo,inicio_at,fim_at,user_id,videocall_url,cliente:clientes!agenda_eventos_cliente_id_fkey(id,nome,telefone),lead:leads!agenda_eventos_lead_id_fkey(id,nome,telefone)")
+      .gte("inicio_at", agendaWindowStartISO)
+      .lte("inicio_at", agendaWindowEndISO)
+      .order("inicio_at", { ascending: true })
+      .limit(500);
+    agQ = scope.isGlobal
+      ? agQ
+      : scope.vendedorIds.length
+        ? agQ.in("user_id", scope.vendedorIds)
+        : agQ.eq("user_id", noRowsId);
+    const { data: agRowsRaw, error: agErr } = await agQ;
+    if (agErr) console.warn("[Inicio] Não foi possível carregar próximos eventos:", agErr);
+    const agRows = (agRowsRaw || []) as unknown as AgendaRow[];
+    const todayEventsCount = agRows.filter((e) => {
+      const nominalDate = ["aniversario", "assembleia"].includes(normalizeText(e.tipo));
+      return nominalDate ? toYMD(e.inicio_at) === today : ymdFromDateInOffset(new Date(e.inicio_at), PV_OFFSET_MIN) === today;
+    }).length;
 
     const { data: groupRowsRaw, error: groupsErr } = await supabase.from("groups").select("id,administradora,segmento,codigo,participantes,prox_vencimento,prox_sorteio,prox_assembleia").limit(5000);
-    if (groupsErr) throw groupsErr;
-    const groupRows = (groupRowsRaw || []) as any as GroupRow[];
+    if (groupsErr) console.warn("[Inicio] Não foi possível carregar grupos:", groupsErr);
+    const allGroupRows = (groupRowsRaw || []) as any as GroupRow[];
+    const groupRows = scope.isGlobal ? allGroupRows : allGroupRows.filter((g) => scopedGroupKeys.has(groupKey(g.administradora, g.codigo)));
     const groupVencYMD = (g: GroupRow) => toYMD(g.prox_vencimento);
     const groupSorteioYMD = (g: GroupRow) => toYMD(g.prox_sorteio);
     const groupAsmYMD = (g: GroupRow) => groupAssemblyYMD(g.prox_assembleia);
@@ -187,7 +285,7 @@ export default function Inicio() {
     const realGroupKeys = new Set(groupRows.map((g) => groupKey(g.administradora, g.codigo)));
     const sorteioDates = Array.from(new Set(groupRows.map((g) => toYMD(g.prox_sorteio)).filter(Boolean) as string[]));
     const drawsByDate = new Map<string, boolean>();
-    if (sorteioDates.length) { const { data: draws, error: drawsErr } = await supabase.from("lottery_draws").select("draw_date").in("draw_date", sorteioDates); if (drawsErr) throw drawsErr; (draws || []).forEach((d: any) => drawsByDate.set(toYMD(d.draw_date) as string, true)); }
+    if (sorteioDates.length) { const { data: draws, error: drawsErr } = await supabase.from("lottery_draws").select("draw_date").in("draw_date", sorteioDates); if (drawsErr) console.warn("[Inicio] Não foi possível carregar resultados da loteria:", drawsErr); (draws || []).forEach((d: any) => drawsByDate.set(toYMD(d.draw_date) as string, true)); }
 
     const lastAsmByGroup = new Map<string, LastAssemblyRow>();
     const realGroupIds = groupRows.map((g) => g.id).filter(Boolean);
@@ -195,55 +293,95 @@ export default function Inicio() {
 
     const { startYMD, endYMD, year, month } = rangeMonth;
     let salesQ = supabase.from("vendas").select("valor_venda,vendedor_id,data_venda").gte("data_venda", startYMD).lt("data_venda", endYMD);
-    if (!admin) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
-    if (admin && scopeAuthId !== ALL) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
+    salesQ = applyVendedorScope(salesQ);
     const { data: salesRows, error: salesErr } = await salesQ;
-    if (salesErr) throw salesErr;
+    if (salesErr) console.warn("[Inicio] Não foi possível carregar vendas do mês:", salesErr);
     const monthSalesTotal = (salesRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
     const field = metaFieldForMonth(month);
     let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
-    if (!admin) metaQ = metaQ.eq("vendedor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) metaQ = metaQ.eq("vendedor_id", scopeUserId);
+    metaQ = applyVendedorScope(metaQ);
     const { data: metaRows, error: metaErr } = await metaQ;
-    if (metaErr) throw metaErr;
+    if (metaErr) console.warn("[Inicio] Não foi possível carregar metas:", metaErr);
     const monthSalesMeta = (metaRows || []).reduce((acc: number, r: any) => acc + (Number(r?.[field] || 0) || 0), 0);
     const monthSalesPct = monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
 
     let cartQ = supabase.from("vendas").select("valor_venda,vendedor_id,codigo").eq("codigo", "00");
-    if (!admin) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
-    if (admin && scopeAuthId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
+    cartQ = applyVendedorScope(cartQ);
     const { data: cartRows, error: cartErr } = await cartQ;
-    if (cartErr) throw cartErr;
+    if (cartErr) console.warn("[Inicio] Não foi possível carregar carteira ativa:", cartErr);
     const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
     let reqQ = supabase.from("stock_reservation_requests").select("id").eq("status", "aberta").limit(1000);
-    if (!admin) reqQ = reqQ.eq("vendor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) reqQ = reqQ.eq("vendor_id", scopeUserId);
+    reqQ = applyProfileScope(reqQ, "vendor_id");
     const { data: reqRows, error: reqErr } = await reqQ;
-    if (reqErr) throw reqErr;
+    if (reqErr) console.warn("[Inicio] Não foi possível carregar solicitações de reserva:", reqErr);
     const openStockReqCount = (reqRows || []).length;
 
     let commQ = supabase.from("commissions").select("id,venda_id,vendedor_id,valor_total,base_calculo,percent_aplicado,status,data_venda").limit(5000);
-    if (!admin) commQ = commQ.eq("vendedor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) commQ = commQ.eq("vendedor_id", scopeUserId);
+    commQ = applyVendedorScope(commQ);
     const { data: commRowsRaw, error: commErr } = await commQ;
-    if (commErr) throw commErr;
+    if (commErr) console.warn("[Inicio] Não foi possível carregar comissões legadas:", commErr);
     const commRows = (commRowsRaw || []) as any as CommissionRow[];
     const commIds = commRows.map((c) => c.id);
     const vendaIdsWithComm = new Set(commRows.map((c) => c.venda_id).filter(Boolean));
 
     let flowRows: CommissionFlowRow[] = [];
-    if (commIds.length) { const { data: flowData, error: flowErr } = await supabase.from("commission_flow").select("id,commission_id,mes,percentual,valor_previsto,valor_pago_vendedor,data_pagamento_vendedor").in("commission_id", commIds).order("mes", { ascending: true }); if (flowErr) throw flowErr; flowRows = (flowData || []) as any as CommissionFlowRow[]; }
+    if (commIds.length) { const { data: flowData, error: flowErr } = await supabase.from("commission_flow").select("id,commission_id,mes,percentual,valor_previsto,valor_pago_vendedor,data_pagamento_vendedor").in("commission_id", commIds).order("mes", { ascending: true }); if (flowErr) console.warn("[Inicio] Não foi possível carregar o fluxo legado de comissões:", flowErr); flowRows = (flowData || []) as any as CommissionFlowRow[]; }
     const flowByCommission = new Map<string, CommissionFlowRow[]>();
     for (const f of flowRows) { if (!flowByCommission.has(f.commission_id)) flowByCommission.set(f.commission_id, []); flowByCommission.get(f.commission_id)!.push(f); }
     const vendaIds = Array.from(new Set(commRows.map((c) => c.venda_id).filter(Boolean)));
     const vendasById = new Map<string, VendaMini>();
-    if (vendaIds.length) { const { data: vendasExtras, error: vendasExtrasErr } = await supabase.from("vendas").select("id,vendedor_id,codigo,cancelada_em").in("id", vendaIds); if (vendasExtrasErr) throw vendasExtrasErr; (vendasExtras || []).forEach((v: any) => vendasById.set(v.id, v as VendaMini)); }
-    const operationalCommissions = commRows.filter((c) => c.status !== "estorno" && !isVendaCancelada(vendasById.get(c.venda_id)));
+    if (vendaIds.length) { const { data: vendasExtras, error: vendasExtrasErr } = await supabase.from("vendas").select("id,vendedor_id,codigo,cancelada_em").in("id", vendaIds); if (vendasExtrasErr) console.warn("[Inicio] Não foi possível validar vendas das comissões legadas:", vendasExtrasErr); (vendasExtras || []).forEach((v: any) => vendasById.set(v.id, v as VendaMini)); }
+
+    let batchQ = supabase.from("commission_batches").select("*").limit(5000);
+    batchQ = applyVendedorScope(batchQ);
+    const { data: batchRowsRaw, error: batchErr } = await batchQ;
+    if (batchErr) console.warn("[Inicio] Não foi possível carregar comissões particionadas:", batchErr);
+    const allPartitionBatches = (batchRowsRaw || []) as any as CommissionBatchRow[];
+    const partitionBatches = allPartitionBatches.filter((b) => b.legacy !== true && !["estornado", "cancelado"].includes(normalizeText(b.status)));
+    const partitionBatchIds = partitionBatches.map((b) => b.id);
+    const partitionBatchById = new Map(partitionBatches.map((b) => [b.id, b]));
+    const partitionVendaIds = new Set(partitionBatches.map((b) => b.venda_id).filter(Boolean));
+    partitionVendaIds.forEach((id) => vendaIdsWithComm.add(id));
+
+    let partitionEntries: CommissionEntryRow[] = [];
+    let partitionFlows: CommissionEntryFlowRow[] = [];
+    if (partitionBatchIds.length) {
+      const [{ data: entryRows, error: entryErr }, { data: entryFlowRows, error: entryFlowErr }] = await Promise.all([
+        supabase.from("commission_entries").select("*").in("batch_id", partitionBatchIds).limit(10000),
+        supabase.from("commission_entry_flow").select("*").in("batch_id", partitionBatchIds).limit(20000),
+      ]);
+      if (entryErr) console.warn("[Inicio] Não foi possível carregar divisões de comissão:", entryErr);
+      if (entryFlowErr) console.warn("[Inicio] Não foi possível carregar o fluxo particionado:", entryFlowErr);
+      partitionEntries = (entryRows || []) as any as CommissionEntryRow[];
+      partitionFlows = (entryFlowRows || []) as any as CommissionEntryFlowRow[];
+    }
+
+    const visiblePartitionEntries = partitionEntries.filter((entry) => {
+      if (["estornado", "cancelado"].includes(normalizeText(entry.status))) return false;
+      if (scope.mode === "matrix") return true;
+      if (scope.mode === "branch") {
+        return Boolean(scope.currentUnitId && (entry.business_unit_id === scope.currentUnitId || entry.recipient_unit_id === scope.currentUnitId));
+      }
+      return scope.vendedorIds.includes(String(entry.recipient_user_id || ""));
+    });
+    const visiblePartitionEntryIds = new Set(visiblePartitionEntries.map((entry) => entry.id));
+    const visiblePartitionFlows = partitionFlows.filter((flow) => {
+      if (!visiblePartitionEntryIds.has(flow.entry_id)) return false;
+      if (["estornado", "cancelado"].includes(normalizeText(flow.status))) return false;
+      return partitionBatchById.has(flow.batch_id);
+    });
+    const partitionPendingByBatch = new Map<string, number>();
+    for (const flow of visiblePartitionFlows) {
+      const pending = Math.max(0, (Number(flow.valor_previsto) || 0) - (Number(flow.valor_pago) || 0));
+      if (pending > 0.009) partitionPendingByBatch.set(flow.batch_id, (partitionPendingByBatch.get(flow.batch_id) || 0) + pending);
+    }
+
+    const operationalCommissions = commRows.filter((c) => c.status !== "estorno" && !partitionVendaIds.has(c.venda_id) && !isVendaCancelada(vendasById.get(c.venda_id)));
     const pendingCommissions = operationalCommissions.map((c) => ({ c, pending: pendingCommissionGross(c, flowByCommission.get(c.id) || []) })).filter((x) => x.pending > 0.009);
-    const commissionsPendingCount = pendingCommissions.length;
-    const commissionsPendingTotal = pendingCommissions.reduce((acc, x) => acc + x.pending, 0);
+    const commissionsPendingCount = pendingCommissions.length + partitionPendingByBatch.size;
+    const commissionsPendingTotal = pendingCommissions.reduce((acc, x) => acc + x.pending, 0) + Array.from(partitionPendingByBatch.values()).reduce((acc, value) => acc + value, 0);
 
     const scheduledByDate = new Map<string, number>();
     for (const c of operationalCommissions) {
@@ -257,29 +395,54 @@ export default function Inicio() {
         scheduledByDate.set(direct, (scheduledByDate.get(direct) || 0) + value);
       }
     }
+    for (const flow of visiblePartitionFlows) {
+      if ((Number(flow.valor_pago) || 0) > 0 || normalizeText(flow.status) === "pago") continue;
+      const direct = toYMD(flow.data_pagamento);
+      if (!direct) continue;
+      const value = Math.max(0, (Number(flow.valor_previsto) || 0) - (Number(flow.valor_pago) || 0));
+      if (value <= 0) continue;
+      scheduledByDate.set(direct, (scheduledByDate.get(direct) || 0) + value);
+    }
     const scheduledDates = Array.from(scheduledByDate.keys()).filter((d) => d >= today).sort();
     const commissionScheduledDate = scheduledDates[0] || null;
     const commissionScheduledTotal = commissionScheduledDate ? scheduledByDate.get(commissionScheduledDate) || 0 : 0;
 
     let vendasSemQ = supabase.from("vendas").select("id,data_venda,vendedor_id,segmento,tabela,administradora,grupo,valor_venda,numero_proposta,cliente_lead_id,lead_id,encarteirada_em,codigo,cancelada_em,status,contemplada").not("encarteirada_em", "is", null).order("data_venda", { ascending: false });
-    if (!admin) vendasSemQ = vendasSemQ.eq("vendedor_id", scopeAuthId);
-    if (admin && scopeAuthId !== ALL) vendasSemQ = vendasSemQ.eq("vendedor_id", scopeAuthId);
+    vendasSemQ = applyVendedorScope(vendasSemQ);
     const { data: vendasSemRows, error: vendasSemErr } = await vendasSemQ;
-    if (vendasSemErr) throw vendasSemErr;
+    if (vendasSemErr) console.warn("[Inicio] Não foi possível carregar vendas sem comissão:", vendasSemErr);
     const vendasSemComissaoCount = ((vendasSemRows || []) as any as VendaMini[]).filter((v) => !vendaIdsWithComm.has(v.id)).filter((v) => !isVendaCancelada(v)).length;
     const vendasForStubs = ((vendasSemRows || []) as any as VendaMini[]).filter((v) => !isVendaCancelada(v) && v.administradora && v.grupo);
     const missingGroupsMap = new Map<string, VendaMini>();
     vendasForStubs.forEach((v) => { const k = groupKey(v.administradora, v.grupo); if (!realGroupKeys.has(k) && !missingGroupsMap.has(k)) missingGroupsMap.set(k, v); });
     const pendingGroupRegistrationCount = missingGroupsMap.size;
 
-    let giroDueCount = 0;
-    if (admin && scopeAuthId === ALL) { const { data, error } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count"); if (error) throw error; giroDueCount = (data || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0); } else { const { data, error } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count").eq("owner_auth_id", scopeAuthId).maybeSingle(); if (error) throw error; giroDueCount = (data as GiroDueRow | null)?.due_count || 0; }
     let giroList: { id: string; nome: string; carteiraAtiva: number }[] = [];
-    try { let giroItemsQ = supabase.from("v_giro_due_items").select("id,lead_id,cliente_id,cliente_nome,lead_nome,nome,telefone,carteira_ativa_total,valor_carteira_ativa,owner_auth_id").limit(5000); if (!admin) giroItemsQ = giroItemsQ.eq("owner_auth_id", scopeAuthId); if (admin && scopeAuthId !== ALL) giroItemsQ = giroItemsQ.eq("owner_auth_id", scopeAuthId); const { data: giroItems, error: giroItemsErr } = await giroItemsQ; if (!giroItemsErr && giroItems) { giroList = (giroItems as any as GiroItemRow[]).map((r, idx) => ({ id: String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`), nome: String((r.cliente_nome || r.lead_nome || r.nome || "Cliente") ?? "Cliente").trim(), carteiraAtiva: Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? 0) || 0 })); giroList.sort((a, b) => (b.carteiraAtiva || 0) - (a.carteiraAtiva || 0)); } } catch { giroList = []; }
+    try {
+      let giroItemsQ = supabase.from("v_giro_due_items").select("*").limit(5000);
+      giroItemsQ = applyAuthScope(giroItemsQ, "owner_auth_id");
+      const { data: giroItems, error: giroItemsErr } = await giroItemsQ;
+      if (giroItemsErr) throw giroItemsErr;
+      giroList = ((giroItems || []) as any as GiroItemRow[]).map((r, idx) => ({ id: String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`), nome: String((r.cliente_nome || r.lead_nome || r.nome || "Cliente") ?? "Cliente").trim(), carteiraAtiva: Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? 0) || 0 }));
+      giroList.sort((a, b) => (b.carteiraAtiva || 0) - (a.carteiraAtiva || 0));
+    } catch (e) {
+      console.warn("[Inicio] Não foi possível carregar itens de giro:", e);
+    }
+    let giroDueCount = giroList.length;
+    try {
+      let giroCountQ = supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
+      giroCountQ = applyAuthScope(giroCountQ, "owner_auth_id");
+      const { data: giroCounts, error: giroCountErr } = await giroCountQ;
+      if (giroCountErr) throw giroCountErr;
+      giroDueCount = Math.max(giroDueCount, (giroCounts || []).reduce((acc: number, r: GiroDueRow) => acc + (Number(r?.due_count || 0) || 0), 0));
+    } catch (e) {
+      console.warn("[Inicio] Não foi possível carregar o contador de giros; usando os itens encontrados:", e);
+    }
 
-    const { data: allBirth, error: birthErr } = await supabase.from("clientes").select("id,nome,data_nascimento,telefone").not("data_nascimento", "is", null).limit(2000);
-    if (birthErr) throw birthErr;
-    const birthdayToday = ((allBirth || []) as ClienteRow[]).filter((c) => (toYMD(c.data_nascimento) || "").slice(5) === today.slice(5)).slice(0, 50);
+    const birthdayToday = agRows
+      .filter((e) => normalizeText(e.tipo) === "aniversario" && toYMD(e.inicio_at) === today)
+      .map((e) => ({ id: e.cliente?.id || e.lead?.id || e.id, nome: e.cliente?.nome || e.lead?.nome || e.titulo || "Cliente", data_nascimento: e.inicio_at, telefone: e.cliente?.telefone || e.lead?.telefone || null }))
+      .slice(0, 50) as ClienteRow[];
     const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
     if (isBillingRuleDay(today)) {
       try {
@@ -290,8 +453,7 @@ export default function Inicio() {
           .is("inad_revertida_em", null)
           .limit(5000);
 
-        if (!admin) inadQ = inadQ.eq("vendedor_id", scopeAuthId);
-        if (admin && scopeAuthId !== ALL) inadQ = inadQ.eq("vendedor_id", scopeAuthId);
+        inadQ = applyVendedorScope(inadQ);
 
         const { data: inadRowsRaw, error: inadErr } = await inadQ;
         if (inadErr) throw inadErr;
@@ -335,7 +497,7 @@ export default function Inicio() {
     }
 
     let newProceduresCount = 0;
-    try { const sevenDaysAgo = addDaysYMD(today, -7); const { data: kbRows, error: kbErr } = await supabase.from("kb_procedures").select("id,title,titulo,status,created_at,updated_at").order("created_at", { ascending: false }).limit(200); if (!kbErr && kbRows) newProceduresCount = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active" && (toYMD(p.created_at) || "") >= sevenDaysAgo).length; } catch {}
+    try { const sevenDaysAgo = addDaysYMD(today, -7); const { data: kbRows, error: kbErr } = await supabase.from("kb_procedures").select("id,title,status,created_at,updated_at").order("created_at", { ascending: false }).limit(200); if (!kbErr && kbRows) newProceduresCount = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active" && (toYMD(p.created_at) || "") >= sevenDaysAgo).length; } catch {}
 
     const myDay: MeuDiaAlert[] = [];
     if (pendingGroupRegistrationCount > 0) { const groups = Array.from(missingGroupsMap.values()).map((v) => ({ codigo: normalizeGroupDigits(v.grupo) })); myDay.push({ id: "pending-groups", priority: 10, icon: "alert", title: `Grupos pendentes de cadastro: ${groupListLabel(groups)}`, desc: "Há vendas em grupos que ainda não estão cadastrados na Gestão de Grupos.", action: { label: "Cadastrar Grupos", to: "/gestao-de-grupos" } }); }
@@ -378,7 +540,13 @@ export default function Inicio() {
     myDay.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
 
     const items: NextEventItem[] = [];
-    for (const e of (agRows || []) as AgendaRow[]) { const startUtcMs = new Date(e.inicio_at).getTime(); const ymd = ymdFromDateInOffset(new Date(startUtcMs), PV_OFFSET_MIN); if (!isWithinNextWeekWindow(today, ymd)) continue; items.push({ id: `ag:${e.id}`, whenSort: startUtcMs, whenLabel: fmtDTForOffset(e.inicio_at, PV_OFFSET_MIN), flag: flagFromYMDWeek(today, ymd), title: e.titulo || "Evento", desc: `${e.tipo || "Agenda"} • ${(e.cliente_nome || e.lead_nome || "—") as any}`, action: { label: "Abrir Agenda", to: "/agenda" } }); }
+    for (const e of (agRows || []) as AgendaRow[]) {
+      if (["aniversario", "assembleia"].includes(normalizeText(e.tipo))) continue;
+      const startUtcMs = new Date(e.inicio_at).getTime();
+      const ymd = ymdFromDateInOffset(new Date(startUtcMs), PV_OFFSET_MIN);
+      if (!isWithinNextWeekWindow(today, ymd)) continue;
+      items.push({ id: `ag:${e.id}`, whenSort: startUtcMs, whenLabel: fmtDTForOffset(e.inicio_at, PV_OFFSET_MIN), flag: flagFromYMDWeek(today, ymd), title: e.titulo || "Evento", desc: `${e.tipo || "Agenda"} • ${e.cliente?.nome || e.lead?.nome || "—"}`, action: { label: "Abrir Agenda", to: "/agenda" } });
+    }
     const pushGroupEvent = (g: GroupRow, kind: "Vencimento" | "Sorteio" | "Assembleia", dateRaw: string | null) => {
       const d = kind === "Assembleia" ? groupAssemblyYMD(dateRaw) : toYMD(dateRaw);
       if (!d || !isWithinNextWeekWindow(today, d)) return;
@@ -401,15 +569,14 @@ export default function Inicio() {
     setKpi({ openOppCount, openOppTotal, todayEventsCount, todayGroupsCount, myDayCount: myDay.length, pendingGroupRegistrationCount, monthSalesTotal, monthSalesMeta, monthSalesPct, carteiraAtivaTotal, openStockReqCount, vendasSemComissaoCount, giroDueCount, newProceduresCount, commissionsPendingCount, commissionsPendingTotal, commissionScheduledTotal, commissionScheduledDate });
   }
 
-  function getScopes() { if (!me) return null; const admin = isAdmin(me); if (!admin) return { admin, scopeUserId: me.id, scopeAuthId: me.auth_user_id }; if (vendorScope === ALL) return { admin, scopeUserId: ALL, scopeAuthId: ALL }; const u = usersById.get(vendorScope); if (!u) return { admin, scopeUserId: vendorScope, scopeAuthId: ALL }; return { admin, scopeUserId: u.id, scopeAuthId: u.auth_user_id }; }
-  async function reload(hard = false) { const scopes = getScopes(); if (!scopes) return; if (hard) setRefreshing(true); setErrMsg(null); try { await loadDashboard(scopes.scopeUserId, scopes.scopeAuthId, scopes.admin); } catch (e) { console.error("[Inicio] loadDashboard error:", e); setErrMsg(humanErr(e)); } finally { if (hard) setRefreshing(false); } }
+  function getScopes() { return me ? buildDashboardScope(me, users, units, vendorScope) : null; }
+  async function reload(hard = false) { const scope = getScopes(); if (!scope) return; if (hard) setRefreshing(true); setErrMsg(null); try { await loadDashboard(scope); } catch (e) { console.error("[Inicio] loadDashboard error:", e); setErrMsg(humanErr(e)); } finally { if (hard) setRefreshing(false); } }
 
-  useEffect(() => { let alive = true; (async () => { setLoading(true); setErrMsg(null); try { const { meRow, usersRows, admin, initialScope } = await loadMeAndUsers(); if (!alive) return; setMe(meRow); setUsers(usersRows); setVendorScope(initialScope); const initScopes = admin && initialScope === ALL ? { su: ALL, sa: ALL } : { su: meRow.id, sa: meRow.auth_user_id }; await loadDashboard(initScopes.su, initScopes.sa, admin); } catch (e) { console.error("[Inicio] init error:", e); if (alive) setErrMsg(humanErr(e)); } finally { if (alive) setLoading(false); } })(); return () => { alive = false; }; }, []);
-  useEffect(() => { if (!me || !isAdmin(me)) return; if (vendorScope !== ALL && !usersById.has(vendorScope)) return; reload(false); }, [vendorScope]);
+  useEffect(() => { let alive = true; (async () => { setLoading(true); setErrMsg(null); try { const { meRow, usersRows, unitsRows, initialScope } = await loadMeAndUsers(); if (!alive) return; setMe(meRow); setUsers(usersRows); setUnits(unitsRows); setVendorScope(initialScope); await loadDashboard(buildDashboardScope(meRow, usersRows, unitsRows, initialScope)); } catch (e) { console.error("[Inicio] init error:", e); if (alive) setErrMsg(humanErr(e)); } finally { if (alive) setLoading(false); } })(); return () => { alive = false; }; }, []);
+  useEffect(() => { if (!me || !canManageTeam) return; if (vendorScope !== ALL && !selectableUsers.some((u) => u.id === vendorScope)) return; reload(false); }, [vendorScope]);
   useEffect(() => { if (!me) return; const path = location.pathname.toLowerCase(); if (path === "/" || path === "/inicio") reload(false); }, [location.pathname, me?.id, vendorScope]);
   useEffect(() => { if (!me) return; const handleRefreshOnReturn = () => { const path = window.location.pathname.toLowerCase(); if (path === "/" || path === "/inicio") reload(false); }; const handleVisibility = () => { if (document.visibilityState === "visible") handleRefreshOnReturn(); }; window.addEventListener("focus", handleRefreshOnReturn); document.addEventListener("visibilitychange", handleVisibility); return () => { window.removeEventListener("focus", handleRefreshOnReturn); document.removeEventListener("visibilitychange", handleVisibility); }; }, [me?.id, vendorScope, users.length]);
 
-  const admin = isAdmin(me);
   const brand = {
     ruby: "#A11C27",
     navy: "#1E293F",
@@ -627,15 +794,15 @@ export default function Inicio() {
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row lg:items-center">
-                {admin && (
+                {canManageTeam && (
                   <div className="min-w-[260px]">
                     <Select value={vendorScope} onValueChange={setVendorScope}>
                       <SelectTrigger className="rounded-2xl border border-white/20 bg-white/10 text-white shadow-sm backdrop-blur placeholder:text-white/70">
                         <SelectValue placeholder="Vendedor: Todos" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={ALL}>Todos (Admin)</SelectItem>
-                        {users
+                        <SelectItem value={ALL}>{isMatrixAdmin ? "Todos (Matriz)" : "Todos da unidade"}</SelectItem>
+                        {selectableUsers
                           .filter((u) => (u.role || u.user_role || "").toLowerCase() !== "viewer")
                           .map((u) => (
                             <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>
@@ -689,7 +856,7 @@ export default function Inicio() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Meu Dia" value={kpi.myDayCount} helper="ações para hoje" icon={<Bell className="h-5 w-5" />} featured />
           <StatCard label="Oportunidades" value={kpi.openOppCount} helper={fmtBRL(kpi.openOppTotal)} icon={<AlertTriangle className="h-5 w-5" />} to="/oportunidades" />
-          <StatCard label="Agenda" value={kpi.todayEventsCount} helper={admin && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : admin ? "Visão geral" : "Somente seus eventos"} icon={<Calendar className="h-5 w-5" />} to="/agenda" />
+          <StatCard label="Agenda" value={kpi.todayEventsCount} helper={canManageTeam && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : isMatrixAdmin ? "Visão geral" : isBranchManager ? "Sua unidade" : "Somente seus eventos"} icon={<Calendar className="h-5 w-5" />} to="/agenda" />
           <Card className={softCard}>
             <CardContent className="flex items-center gap-4 p-5">
               <Donut pct={kpi.monthSalesPct} size={112} stroke={10} centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`} centerBottom="da meta" />

@@ -25,6 +25,7 @@ const PropostasProMax = React.lazy(() => import("./pages/PropostasProMax"));
 const PropostasCadenciado = React.lazy(() => import("./pages/PropostasCadenciado"));
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
 const Carteira = React.lazy(() => import("./pages/Carteira"));
+const GiroDeCarteira = React.lazy(() => import("./pages/GiroDeCarteiraV2"));
 const Usuarios = React.lazy(() => import("./pages/Usuarios"));
 const GestaoDeGrupos = React.lazy(() => import("./pages/GestaoDeGrupos"));
 const Parametros = React.lazy(() => import("./pages/Parametros"));
@@ -64,22 +65,7 @@ function EB({ title, children }: { title?: string; children: React.ReactNode }) 
   return <ErrorBoundary title={title} resetKeys={[location.pathname]}>{children}</ErrorBoundary>;
 }
 
-function GiroDeCarteiraInlineTest() {
-  return (
-    <div style={{ minHeight: "100vh", padding: 40, background: "#ecfdf5", color: "#064e3b" }}>
-      <div style={{ maxWidth: 1000, margin: "0 auto", border: "2px solid #10b981", borderRadius: 24, background: "white", padding: 32 }}>
-        <div style={{ display: "inline-block", border: "1px solid #10b981", borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700 }}>TESTE ROTA RAIZ /giro-de-carteira</div>
-        <h1 style={{ marginTop: 20, fontSize: 34, fontWeight: 800 }}>A rota raiz /giro-de-carteira está renderizando.</h1>
-        <p style={{ marginTop: 12, fontSize: 16 }}>Esta tela bypassa RequireAuth, App, Header, Sidebar e Outlet.</p>
-      </div>
-    </div>
-  );
-}
-
 export const router = createBrowserRouter([
-  { path: "/giro-de-carteira", element: <GiroDeCarteiraInlineTest /> },
-  { path: "/giro", element: <Navigate to="/giro-de-carteira" replace /> },
-
   // ==== Rotas públicas ====
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
@@ -172,8 +158,9 @@ export const router = createBrowserRouter([
           { path: "rh", element: withSuspense(<RH />) },
           { path: "rh/vagas", element: withSuspense(<RHVagas />) },
 
-          { path: "giro-de-carteira", element: <EB title="Erro no Giro de Carteira"><GiroDeCarteiraInlineTest /></EB> },
+          { path: "giro-de-carteira", element: <EB title="Erro no Giro de Carteira">{withSuspense(<GiroDeCarteira />)}</EB> },
           { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: "giro", element: <Navigate to="/giro-de-carteira" replace /> },
 
           { path: "ranking", element: withSuspense(<RankingVendedores />) },
           { path: "ranking-vendedores", element: <Navigate to="/ranking" replace /> },

@@ -36,7 +36,7 @@ type LeadRow = { id: string; nome: string; telefone?: string | null };
 type GroupRow = { id: string; administradora: string; segmento: string; codigo: string; participantes?: number | null; prox_vencimento: string | null; prox_sorteio: string | null; prox_assembleia: string | null };
 type ClienteRow = { id: string; nome: string; data_nascimento: string | null; telefone?: string | null };
 type GiroDueRow = { owner_auth_id: string; due_count: number };
-type GiroItemRow = { id?: string | null; lead_id?: string | null; cliente_id?: string | null; cliente_nome?: string | null; lead_nome?: string | null; nome?: string | null; telefone?: string | null; carteira_ativa_total?: number | null; valor_carteira_ativa?: number | null; owner_auth_id?: string | null };
+type GiroItemRow = { id?: string | null; task_id?: string | null; giro_task_id?: string | null; lead_id?: string | null; cliente_id?: string | null; cliente_nome?: string | null; lead_nome?: string | null; nome?: string | null; telefone?: string | null; carteira_total?: number | null; carteira_ativa_total?: number | null; valor_carteira_ativa?: number | null; owner_auth_id?: string | null };
 type KBProcRow = { id: string; title?: string | null; status?: string | null; created_at?: string | null; updated_at?: string | null };
 type CommissionRow = { id: string; venda_id: string; vendedor_id: string; valor_total: number | null; base_calculo?: number | null; percent_aplicado?: number | null; status: string | null; data_venda?: string | null };
 type CommissionFlowRow = { id?: string; commission_id: string; mes?: number | null; percentual?: number | null; valor_previsto: number | null; valor_pago_vendedor: number | null; data_pagamento_vendedor: string | null };
@@ -209,11 +209,6 @@ export default function Inicio() {
       : scope.vendedorIds.length
         ? query.in("vendedor_id", scope.vendedorIds)
         : query.eq("vendedor_id", noRowsId);
-    const applyProfileScope = (query: any, column: string) => scope.isGlobal
-      ? query
-      : scope.profileIds.length
-        ? query.in(column, scope.profileIds)
-        : query.eq(column, noRowsId);
     const applyAuthScope = (query: any, column: string) => scope.isGlobal
       ? query
       : scope.authIds.length
@@ -303,10 +298,10 @@ export default function Inicio() {
     if (cartErr) console.warn("[Inicio] Não foi possível carregar carteira ativa:", cartErr);
     const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    let reqQ = supabase.from("stock_reservation_requests").select("id").eq("status", "aberta").limit(1000);
-    reqQ = applyProfileScope(reqQ, "vendor_id");
+    let reqQ = supabase.from("vendas").select("id,vendedor_id").eq("status", "nova").eq("tipo_venda", "Bolsão").limit(5000);
+    reqQ = applyVendedorScope(reqQ);
     const { data: reqRows, error: reqErr } = await reqQ;
-    if (reqErr) console.warn("[Inicio] Não foi possível carregar solicitações de reserva:", reqErr);
+    if (reqErr) console.warn("[Inicio] Não foi possível carregar reservas de Bolsão aguardando encarteiramento:", reqErr);
     const openStockReqCount = (reqRows || []).length;
 
     let commQ = supabase.from("commissions").select("id,venda_id,vendedor_id,valor_total,base_calculo,percent_aplicado,status,data_venda").limit(5000);
@@ -438,7 +433,29 @@ export default function Inicio() {
         console.warn("[Inicio] A fonte alternativa de giros também não respondeu:", e);
       }
     }
-    giroList = giroRows.map((r, idx) => ({ id: String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`), nome: String((r.cliente_nome || r.lead_nome || r.nome || "Cliente") ?? "Cliente").trim(), carteiraAtiva: Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? 0) || 0 }));
+    const giroClienteIds = Array.from(new Set(giroRows.map((r) => r.cliente_id).filter(Boolean).map(String)));
+    const giroLeadIds = Array.from(new Set(giroRows.map((r) => r.lead_id).filter(Boolean).map(String)));
+    const giroClientesById = new Map<string, { nome?: string | null }>();
+    const giroLeadsById = new Map<string, { nome?: string | null }>();
+    if (giroClienteIds.length) {
+      const { data, error } = await supabase.from("clientes").select("id,nome").in("id", giroClienteIds);
+      if (error) console.warn("[Inicio] Não foi possível identificar os clientes dos giros:", error);
+      else (data || []).forEach((row: any) => giroClientesById.set(String(row.id), row));
+    }
+    if (giroLeadIds.length) {
+      const { data, error } = await supabase.from("leads").select("id,nome").in("id", giroLeadIds);
+      if (error) console.warn("[Inicio] Não foi possível identificar os leads dos giros:", error);
+      else (data || []).forEach((row: any) => giroLeadsById.set(String(row.id), row));
+    }
+    giroList = giroRows.map((r, idx) => {
+      const cliente = r.cliente_id ? giroClientesById.get(String(r.cliente_id)) : undefined;
+      const lead = r.lead_id ? giroLeadsById.get(String(r.lead_id)) : undefined;
+      return {
+        id: String(r.task_id || r.giro_task_id || r.id || r.cliente_id || r.lead_id || `giro_${idx}`),
+        nome: String(cliente?.nome || r.cliente_nome || r.lead_nome || lead?.nome || r.nome || "Cliente sem cadastro").trim(),
+        carteiraAtiva: Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? r.carteira_total ?? 0) || 0,
+      };
+    });
     giroList.sort((a, b) => (b.carteiraAtiva || 0) - (a.carteiraAtiva || 0));
     let giroDueCount = giroList.length;
     try {
@@ -895,7 +912,7 @@ export default function Inicio() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <ActionCard title="Oportunidades" desc="Criar, qualificar e avançar negociações." icon={<Target className="h-5 w-5" />} to="/oportunidades" />
                 <ActionCard title="Simular" desc="Montar estratégia de consórcio para o lead." icon={<Briefcase className="h-5 w-5" />} to="/simuladores" />
-                <ActionCard title="Gerar Proposta" desc="Transformar simulação em proposta visual." icon={<FileText className="h-5 w-5" />} to="/propostas" />
+                <ActionCard title="Gerar Proposta" desc="Transformar simulação em proposta visual." icon={<FileText className="h-5 w-5" />} to="/propostas-pro-max" />
                 <ActionCard title="Comissões" desc="Acompanhar pendências, fluxo e recibos." icon={<Trophy className="h-5 w-5" />} to="/comissoes" />
                 <ActionCard title="Gestão de Grupos" desc="Sorteios, assembleias, lances e vencimentos." icon={<Calendar className="h-5 w-5" />} to="/gestao-de-grupos" />
                 <ActionCard title="Contempladas" desc="Consultar estoque e solicitações de reserva." icon={<Ticket className="h-5 w-5" />} to="/estoque-contempladas" />

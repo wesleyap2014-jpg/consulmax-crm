@@ -2959,35 +2959,6 @@ export default function ComissoesPage() {
     if (!canEdit) return alert("Somente admin pode retornar a comissão.");
     if (returnBusy) return;
 
-    const { data: paidFlows, error: paidCheckError } = await supabase
-      .from("commission_entry_flow")
-      .select("id")
-      .eq("batch_id", row.batch.id)
-      .gt("valor_pago", 0)
-      .limit(1);
-
-    if (paidCheckError) {
-      return alert("Não foi possível verificar os pagamentos da comissão: " + paidCheckError.message);
-    }
-
-    if (paidFlows?.length) {
-      return alert("Esta comissão já possui parcela paga. Use Lançar Estorno no fluxo de pagamento.");
-    }
-
-    const { data: adjustments, error: adjustmentCheckError } = await supabase
-      .from("commission_adjustments")
-      .select("id")
-      .eq("batch_id", row.batch.id)
-      .limit(1);
-
-    if (adjustmentCheckError) {
-      return alert("Não foi possível verificar os estornos da comissão: " + adjustmentCheckError.message);
-    }
-
-    if (adjustments?.length) {
-      return alert("Esta comissão possui histórico de estorno e não pode retornar para Nova venda.");
-    }
-
     const proposta = row.venda?.numero_proposta ? ` da proposta ${row.venda.numero_proposta}` : "";
     if (!confirm(`Retornar a comissão${proposta} para Nova venda? O fluxo gerado será removido para permitir uma nova geração com as configurações atuais.`)) {
       return;
@@ -2996,45 +2967,28 @@ export default function ComissoesPage() {
     setReturnBusy(row.batch.id);
 
     try {
-      const firstAttempt = await supabase
-        .from("commission_batches")
-        .delete()
-        .eq("id", row.batch.id)
-        .eq("venda_id", row.batch.venda_id)
-        .select("id");
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
 
-      let removed = !firstAttempt.error && (firstAttempt.data?.length || 0) > 0;
-
-      if (!removed && firstAttempt.error?.code === "23503") {
-        const { error: flowDeleteError } = await supabase
-          .from("commission_entry_flow")
-          .delete()
-          .eq("batch_id", row.batch.id);
-
-        if (flowDeleteError) throw flowDeleteError;
-
-        const { error: entryDeleteError } = await supabase
-          .from("commission_entries")
-          .delete()
-          .eq("batch_id", row.batch.id);
-
-        if (entryDeleteError) throw entryDeleteError;
-
-        const secondAttempt = await supabase
-          .from("commission_batches")
-          .delete()
-          .eq("id", row.batch.id)
-          .eq("venda_id", row.batch.venda_id)
-          .select("id");
-
-        if (secondAttempt.error) throw secondAttempt.error;
-        removed = (secondAttempt.data?.length || 0) > 0;
-      } else if (firstAttempt.error) {
-        throw firstAttempt.error;
+      if (sessionError || !accessToken) {
+        throw new Error("Sua sessão expirou. Entre novamente no CRM e tente retornar a comissão.");
       }
 
-      if (!removed) {
-        throw new Error("A comissão não foi removida. Verifique as permissões e tente novamente.");
+      const response = await fetch("/api/commissions/return", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          batch_id: row.batch.id,
+          venda_id: row.batch.venda_id,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Não foi possível retornar a comissão.");
       }
 
       setExpandedPartitionBatchIds((prev) => {

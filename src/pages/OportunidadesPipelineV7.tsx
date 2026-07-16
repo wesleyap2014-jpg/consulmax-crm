@@ -4,9 +4,14 @@ import { supabase } from "@/lib/supabaseClient";
 import OportunidadesPipelineV6 from "./OportunidadesPipelineV6";
 
 type UserRow = {
+  id: string;
   auth_user_id: string;
   nome: string;
   email?: string | null;
+  role?: string | null;
+  user_role?: string | null;
+  unit_id?: string | null;
+  hierarchy_level?: string | null;
 };
 
 type LeadRow = {
@@ -37,6 +42,7 @@ const C = {
 };
 
 const onlyDigits = (v?: string | null) => String(v || "").replace(/\D/g, "");
+const normalizeText = (v?: string | null) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 const brl = (n?: number | null) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -58,20 +64,25 @@ export default function OportunidadesPipelineV7() {
 
   async function loadData() {
     setLoading(true);
-    const [u, o] = await Promise.all([
-      supabase
-        .from("users")
-        .select("auth_user_id,nome,email")
-        .eq("is_active", true)
-        .order("nome", { ascending: true }),
-      supabase
-        .from("opportunities")
-        .select("id,lead_id,vendedor_id,owner_id,segmento,estagio,valor_credito,leads:lead_id(id,nome,telefone,owner_id)")
-        .order("created_at", { ascending: false })
-        .limit(500),
-    ]);
-
-    if (!u.error) setUsers((u.data || []) as UserRow[]);
+    const { data: auth } = await supabase.auth.getUser();
+    const authId = auth?.user?.id;
+    if (!authId) { setLoading(false); return; }
+    const { data: profile } = await supabase.from("users").select("id,auth_user_id,nome,email,role,user_role,unit_id,hierarchy_level").eq("auth_user_id", authId).maybeSingle();
+    if (!profile) { setLoading(false); return; }
+    let unitType = "";
+    if (profile.unit_id) { const { data: unit } = await supabase.from("units").select("tipo").eq("id", profile.unit_id).maybeSingle(); unitType = normalizeText(unit?.tipo); }
+    const matrix = normalizeText(profile.hierarchy_level) === "matriz" || (normalizeText(profile.role || profile.user_role) === "admin" && unitType === "matriz");
+    const branch = !matrix && normalizeText(profile.hierarchy_level) === "gestor_filial";
+    let usersQ = supabase.from("users").select("id,auth_user_id,nome,email,role,user_role,unit_id,hierarchy_level").eq("is_active", true).order("nome", { ascending: true });
+    if (branch && profile.unit_id) usersQ = usersQ.eq("unit_id", profile.unit_id);
+    if (!matrix && !branch) usersQ = usersQ.eq("id", profile.id);
+    const u = await usersQ;
+    const scopedUsers = (u.data || [profile]) as UserRow[];
+    const authIds = Array.from(new Set(scopedUsers.map((user) => user.auth_user_id).filter(Boolean)));
+    let oppsQ = supabase.from("opportunities").select("id,lead_id,vendedor_id,owner_id,segmento,estagio,valor_credito,leads:lead_id(id,nome,telefone,owner_id)").order("created_at", { ascending: false }).limit(500);
+    if (!matrix) oppsQ = authIds.length ? oppsQ.in("vendedor_id", authIds) : oppsQ.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+    const o = await oppsQ;
+    if (!u.error) setUsers(scopedUsers);
     if (!o.error) setOpps((o.data || []) as unknown as OppRow[]);
     setLoading(false);
   }

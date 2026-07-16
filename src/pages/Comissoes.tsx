@@ -1785,7 +1785,7 @@ export default function ComissoesPage() {
 
       if (!isMatrixAdmin) {
         if (isBranchManager && unitId !== currentUser?.unit_id) return false;
-        if (!isBranchManager && entry.recipient_user_id !== currentUser?.id && batch?.vendedor_id !== currentUser?.id) return false;
+        if (!isBranchManager && entry.recipient_user_id !== currentUser?.id) return false;
       }
 
       if (unitFilter !== "all" && unitId !== unitFilter) return false;
@@ -1824,7 +1824,10 @@ export default function ComissoesPage() {
         const venda = partitionVendaById[batch.venda_id];
         const unidade = unitById[batch.business_unit_id || ""];
         const vendedor = usersById[batch.vendedor_id];
-        const flows = partitionFlows.filter((flow) => flow.batch_id === batch.id).sort((a, b) => a.mes - b.mes);
+        const batchEntryIds = new Set(batchEntries.map((entry) => entry.id));
+        const flows = partitionFlows
+          .filter((flow) => flow.batch_id === batch.id && batchEntryIds.has(flow.entry_id))
+          .sort((a, b) => a.mes - b.mes);
         const gross = batchEntries.reduce((acc, entry) => acc + (Number(entry.gross_amount) || 0), 0);
         const tax = batchEntries.reduce((acc, entry) => acc + (Number(entry.tax_amount) || 0), 0);
         const net = batchEntries.reduce((acc, entry) => acc + (Number(entry.net_amount) || 0), 0);
@@ -3036,7 +3039,14 @@ export default function ComissoesPage() {
     const dataISO = brDateToISO(partitionRefundDateBR);
     if (!dataISO) return alert("Informe a data do estorno no formato dd/mm/aaaa.");
 
-    if (activeRefundsForMonth(partitionRefundBatchId, mes).length > 0) {
+    const scopedRow = partitionBatchRowsVisible.find((row) => row.batch.id === partitionRefundBatchId);
+    const scopedEntryIds = new Set((scopedRow?.entries || []).map((entry) => entry.id));
+
+    if (!scopedEntryIds.size) {
+      return alert("Nenhuma participação visível encontrada para essa comissão.");
+    }
+
+    if (activeRefundsForMonth(partitionRefundBatchId, mes, Array.from(scopedEntryIds)).length > 0) {
       return alert("Essa parcela já possui estorno ativo. Reverta o estorno antes de lançar outro.");
     }
 
@@ -3044,6 +3054,7 @@ export default function ComissoesPage() {
       (flow) =>
         flow.batch_id === partitionRefundBatchId &&
         Number(flow.mes) === mes &&
+        scopedEntryIds.has(flow.entry_id) &&
         (Number(flow.valor_pago) || 0) > 0
     );
 
@@ -3091,10 +3102,17 @@ export default function ComissoesPage() {
     fetchData();
   }
 
-  async function reverterEstornosParticionados(batchId: string) {
+  async function reverterEstornosParticionados(batchId: string, entryIds?: string[]) {
     if (!canEdit) return alert("Somente admin pode reverter estorno.");
 
-    const activeRefunds = partitionAdjustments.filter((a) => a.batch_id === batchId && a.adjustment_type === "estorno" && !a.is_reversed);
+    const allowedEntryIds = entryIds?.length ? new Set(entryIds) : null;
+    const activeRefunds = partitionAdjustments.filter(
+      (a) =>
+        a.batch_id === batchId &&
+        a.adjustment_type === "estorno" &&
+        !a.is_reversed &&
+        (!allowedEntryIds || allowedEntryIds.has(a.entry_id))
+    );
     const activeRefundIds = activeRefunds.map((a) => a.id);
     const totalAtivo = activeRefunds.reduce((acc, cur) => acc + (Number(cur.amount) || 0), 0);
 
@@ -3187,20 +3205,26 @@ export default function ComissoesPage() {
     if (gerar) downloadDemonstrativoParticionadoPDF();
   }
 
-  function activeRefundsForMonth(batchId: string, mes: number) {
+  function activeRefundsForMonth(batchId: string, mes: number, entryIds?: string[]) {
+    const allowedEntryIds = entryIds?.length ? new Set(entryIds) : null;
     return partitionAdjustments.filter(
       (a) =>
         a.batch_id === batchId &&
         a.adjustment_type === "estorno" &&
         !a.is_reversed &&
-        String(a.parcela || "") === String(mes)
+        String(a.parcela || "") === String(mes) &&
+        (!allowedEntryIds || allowedEntryIds.has(a.entry_id))
     );
   }
 
   function monthHasActiveRefund(flowsMes: CommissionEntryFlow[]) {
     const representative = flowsMes[0];
     if (!representative) return false;
-    return activeRefundsForMonth(representative.batch_id, Number(representative.mes)).length > 0;
+    return activeRefundsForMonth(
+      representative.batch_id,
+      Number(representative.mes),
+      flowsMes.map((flow) => flow.entry_id)
+    ).length > 0;
   }
 
   function renderPartitionMonthAction(flowsMes: CommissionEntryFlow[]) {
@@ -3310,9 +3334,8 @@ export default function ComissoesPage() {
     };
 
     const reportLevel = getReportLevel();
-    // Para o demonstrativo hierárquico, a base analítica é sempre a comissão do vendedor:
-    // clientes somam vendedor, vendedores somam unidade e unidades somam matriz.
-    const targetRecipientType = "vendedor";
+    // O demonstrativo segue a mesma hierarquia da tela:
+    // matriz vê todas as partes; unidade vê sua parte e seus prepostos; vendedor vê apenas a própria parte.
 
     const flowInPeriod = (flow: CommissionEntryFlow) => {
       if (demonstrativoTipo === "data") return flow.data_pagamento === reciboDate;
@@ -3347,8 +3370,6 @@ export default function ComissoesPage() {
     const canIncludeSale = (entry: CommissionEntry, batch?: CommissionBatch | null, venda?: Venda | null) => {
       const saleVendorId = getSaleVendorId(batch, venda);
       const saleUnitId = getSaleUnitId(batch, venda, entry);
-
-      if (entry.recipient_type !== targetRecipientType) return false;
 
       if (reportLevel === "vendedor") {
         const targetVendor = vendedorId !== "all" ? vendedorId : currentUser?.id || "";
@@ -4401,11 +4422,13 @@ export default function ComissoesPage() {
                 {partitionBatchRowsAPagar.map((row) => {
                   const expanded = !!expandedPartitionBatchIds[row.batch.id];
                   const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
+                  const rowEntryIds = new Set(row.entries.map((entry) => entry.id));
                   const activeRefunds = partitionAdjustments.filter(
                     (adjustment) =>
                       adjustment.batch_id === row.batch.id &&
                       adjustment.adjustment_type === "estorno" &&
-                      !adjustment.is_reversed
+                      !adjustment.is_reversed &&
+                      rowEntryIds.has(adjustment.entry_id)
                   );
                   const activeRefundTotal = activeRefunds.reduce(
                     (acc, adjustment) => acc + (Number(adjustment.amount) || 0),
@@ -4528,7 +4551,7 @@ export default function ComissoesPage() {
                                             size="sm"
                                             variant="outline"
                                             className="border-[#A11C27] text-[#A11C27]"
-                                            onClick={() => reverterEstornosParticionados(row.batch.id)}
+                                            onClick={() => reverterEstornosParticionados(row.batch.id, row.entries.map((entry) => entry.id))}
                                           >
                                             Reverter Estorno
                                           </Button>

@@ -3373,7 +3373,6 @@ function LancePrimeIneligible({ flow }: { flow: LancePrimeFlow }) {
 
 function LancePrimeModel({ proposal, params }: ProMaxModelosHubProps) {
   const flow = useMemo(() => buildLancePrimeFlow(proposal, params), [proposal, params]);
-  const schedulePreview = flow.schedule.slice(0, 12);
   const comparisonMax = Math.max(flow.traditionalTotalPayments, flow.mixedTotalPayments, 1);
   const mixedWidth = Math.max(4, (flow.mixedTotalPayments / comparisonMax) * 100);
   const traditionalWidth = Math.max(4, (flow.traditionalTotalPayments / comparisonMax) * 100);
@@ -3484,7 +3483,7 @@ function LancePrimeModel({ proposal, params }: ProMaxModelosHubProps) {
             <div>
               <div className="mb-2 flex items-center justify-between gap-3 text-sm"><span className="font-black" style={{ color: C.navy }}>Financiamento imobiliário integral</span><strong>{brMoney(flow.traditionalTotalPayments)}</strong></div>
               <div className="h-4 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-slate-400" style={{ width: `${traditionalWidth}%` }} /></div>
-              <div className="mt-2 text-xs text-slate-500">Parcela PRICE estimada: {brMoney(flow.traditionalInstallment)} · taxa-base {brPercent(flow.traditionalMonthlyRate)} a.m.</div>
+              <div className="mt-2 text-xs text-slate-500">Parcela PRICE estimada: {brMoney(flow.traditionalInstallment)} · {flow.traditionalTermMonths} meses · taxa-base {brPercent(flow.traditionalMonthlyRate)} a.m.</div>
             </div>
           </div>
           <div className="mt-7 flex items-start gap-3 rounded-2xl border border-amber-100 bg-amber-50/70 p-4 text-xs leading-relaxed text-amber-900">
@@ -3497,27 +3496,45 @@ function LancePrimeModel({ proposal, params }: ProMaxModelosHubProps) {
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}><CalendarDays className="h-4 w-4" /> Primeiros 12 meses do Lance Prime</div>
-            <p className="mt-1 text-xs text-slate-500">Sistema PRICE com juros, amortização e saldo projetados.</p>
+            <div className="flex items-center gap-2 text-sm font-black" style={{ color: C.navy }}><CalendarDays className="h-4 w-4" /> Projeção das Parcelas</div>
+            <p className="mt-1 text-xs text-slate-500">Demonstração mês a mês do MIX de crédito e dos financiamentos PRICE e SAC em {flow.traditionalTermMonths} meses.</p>
           </div>
           <div className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600">CET {brPercent(flow.cetAnnual)} a.a.</div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-[720px] w-full border-collapse text-sm">
-            <thead className="bg-slate-50 text-[11px] uppercase tracking-[.1em] text-slate-500">
-              <tr><th className="p-3 text-left">Mês</th><th className="p-3 text-right">Parcela</th><th className="p-3 text-right">Juros</th><th className="p-3 text-right">Amortização</th><th className="p-3 text-right">Saldo</th></tr>
+        <div className="max-h-[440px] overflow-auto">
+          <table className="min-w-[1080px] w-full border-collapse text-sm">
+            <thead className="sticky top-0 z-20 bg-slate-50 text-[11px] uppercase tracking-[.08em] text-slate-500 shadow-[0_1px_0_rgba(148,163,184,.25)]">
+              <tr>
+                <th className="p-3 text-left">Mês</th>
+                <th className="p-3 text-right">Parcela do Lance</th>
+                <th className="p-3 text-right">Parcela do Consórcio</th>
+                <th className="p-3 text-right">Parcela Total</th>
+                <th className="p-3 text-right">Finan. PRICE</th>
+                <th className="p-3 text-right">Finan. SAC</th>
+              </tr>
             </thead>
             <tbody>
-              {schedulePreview.map((entry) => (
+              {flow.projection.map((entry) => (
                 <tr key={entry.month} className="border-t border-slate-100">
                   <td className="p-3 font-black" style={{ color: C.navy }}>Mês {entry.month}</td>
-                  <td className="p-3 text-right font-semibold">{brMoney(entry.payment)}</td>
-                  <td className="p-3 text-right">{brMoney(entry.interest)}</td>
-                  <td className="p-3 text-right">{brMoney(entry.amortization)}</td>
-                  <td className="p-3 text-right font-black" style={{ color: C.ruby }}>{brMoney(entry.endingBalance)}</td>
+                  <td className="p-3 text-right font-semibold">{brMoney(entry.lanceInstallment)}</td>
+                  <td className="p-3 text-right font-semibold">{brMoney(entry.consortiumInstallment)}</td>
+                  <td className="p-3 text-right font-black" style={{ color: C.ruby }}>{brMoney(entry.totalInstallment)}</td>
+                  <td className="p-3 text-right">{brMoney(entry.priceInstallment)}</td>
+                  <td className="p-3 text-right">{brMoney(entry.sacInstallment)}</td>
                 </tr>
               ))}
             </tbody>
+            <tfoot className="sticky bottom-0 z-20 bg-slate-950 text-white shadow-[0_-4px_16px_rgba(15,23,42,.18)]">
+              <tr>
+                <td className="p-3 font-black uppercase tracking-[.08em]">Totais</td>
+                <td className="p-3 text-right text-white/45">—</td>
+                <td className="p-3 text-right text-white/45">—</td>
+                <td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(flow.projectionTotals.totalInstallment)}</td>
+                <td className="p-3 text-right font-black">{brMoney(flow.projectionTotals.priceInstallment)}</td>
+                <td className="p-3 text-right font-black">{brMoney(flow.projectionTotals.sacInstallment)}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </section>

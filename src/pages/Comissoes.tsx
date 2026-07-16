@@ -1079,6 +1079,7 @@ export default function ComissoesPage() {
   const [allVendasComissao, setAllVendasComissao] = useState<Venda[]>([]);
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
+  const [returnBusy, setReturnBusy] = useState<string | null>(null);
 
   const [openRules, setOpenRules] = useState(false);
   const [ruleVendorId, setRuleVendorId] = useState<string>("");
@@ -2950,6 +2951,107 @@ export default function ComissoesPage() {
     fetchData();
   }
 
+  async function retornarComissaoParticionada(row: {
+    batch: CommissionBatch;
+    venda?: Venda;
+    flows: CommissionEntryFlow[];
+  }) {
+    if (!canEdit) return alert("Somente admin pode retornar a comissão.");
+    if (returnBusy) return;
+
+    const { data: paidFlows, error: paidCheckError } = await supabase
+      .from("commission_entry_flow")
+      .select("id")
+      .eq("batch_id", row.batch.id)
+      .gt("valor_pago", 0)
+      .limit(1);
+
+    if (paidCheckError) {
+      return alert("Não foi possível verificar os pagamentos da comissão: " + paidCheckError.message);
+    }
+
+    if (paidFlows?.length) {
+      return alert("Esta comissão já possui parcela paga. Use Lançar Estorno no fluxo de pagamento.");
+    }
+
+    const { data: adjustments, error: adjustmentCheckError } = await supabase
+      .from("commission_adjustments")
+      .select("id")
+      .eq("batch_id", row.batch.id)
+      .limit(1);
+
+    if (adjustmentCheckError) {
+      return alert("Não foi possível verificar os estornos da comissão: " + adjustmentCheckError.message);
+    }
+
+    if (adjustments?.length) {
+      return alert("Esta comissão possui histórico de estorno e não pode retornar para Nova venda.");
+    }
+
+    const proposta = row.venda?.numero_proposta ? ` da proposta ${row.venda.numero_proposta}` : "";
+    if (!confirm(`Retornar a comissão${proposta} para Nova venda? O fluxo gerado será removido para permitir uma nova geração com as configurações atuais.`)) {
+      return;
+    }
+
+    setReturnBusy(row.batch.id);
+
+    try {
+      const firstAttempt = await supabase
+        .from("commission_batches")
+        .delete()
+        .eq("id", row.batch.id)
+        .eq("venda_id", row.batch.venda_id)
+        .select("id");
+
+      let removed = !firstAttempt.error && (firstAttempt.data?.length || 0) > 0;
+
+      if (!removed && firstAttempt.error?.code === "23503") {
+        const { error: flowDeleteError } = await supabase
+          .from("commission_entry_flow")
+          .delete()
+          .eq("batch_id", row.batch.id);
+
+        if (flowDeleteError) throw flowDeleteError;
+
+        const { error: entryDeleteError } = await supabase
+          .from("commission_entries")
+          .delete()
+          .eq("batch_id", row.batch.id);
+
+        if (entryDeleteError) throw entryDeleteError;
+
+        const secondAttempt = await supabase
+          .from("commission_batches")
+          .delete()
+          .eq("id", row.batch.id)
+          .eq("venda_id", row.batch.venda_id)
+          .select("id");
+
+        if (secondAttempt.error) throw secondAttempt.error;
+        removed = (secondAttempt.data?.length || 0) > 0;
+      } else if (firstAttempt.error) {
+        throw firstAttempt.error;
+      }
+
+      if (!removed) {
+        throw new Error("A comissão não foi removida. Verifique as permissões e tente novamente.");
+      }
+
+      setExpandedPartitionBatchIds((prev) => {
+        const next = { ...prev };
+        delete next[row.batch.id];
+        return next;
+      });
+
+      await fetchData();
+      alert("Comissão retornada. A venda está novamente disponível em Nova venda.");
+    } catch (error: any) {
+      alert("Erro ao retornar comissão: " + (error?.message || error));
+    } finally {
+      setReturnBusy(null);
+    }
+  }
+
   function abrirEstornoParticionado(row: {
     batch: CommissionBatch;
     venda?: Venda;
@@ -4361,6 +4463,16 @@ export default function ComissoesPage() {
                 {partitionBatchRowsAPagar.map((row) => {
                   const expanded = !!expandedPartitionBatchIds[row.batch.id];
                   const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
+                  const activeRefunds = partitionAdjustments.filter(
+                    (adjustment) =>
+                      adjustment.batch_id === row.batch.id &&
+                      adjustment.adjustment_type === "estorno" &&
+                      !adjustment.is_reversed
+                  );
+                  const activeRefundTotal = activeRefunds.reduce(
+                    (acc, adjustment) => acc + (Number(adjustment.amount) || 0),
+                    0
+                  );
                   const flowStatusLabel = isFlowGroupPaid(row.flows)
                     ? "Pago"
                     : isFlowGroupProgrammed(row.flows)
@@ -4407,16 +4519,15 @@ export default function ComissoesPage() {
                         <td className="p-2">
                           <div className="flex flex-wrap gap-2">
                             {canEdit && (
-                              <>
-                                <Button size="sm" variant="outline" onClick={() => abrirEstornoParticionado(row)}>
-                                  Estornar
-                                </Button>
-                                {partitionAdjustments.some((a) => a.batch_id === row.batch.id && a.adjustment_type === "estorno" && !a.is_reversed) && (
-                                  <Button size="sm" variant="outline" className="border-[#A11C27] text-[#A11C27]" onClick={() => reverterEstornosParticionados(row.batch.id)}>
-                                    Reverter Estorno
-                                  </Button>
-                                )}
-                              </>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => retornarComissaoParticionada(row)}
+                                disabled={returnBusy === row.batch.id}
+                              >
+                                {returnBusy === row.batch.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+                                Retornar
+                              </Button>
                             )}
                           </div>
                         </td>
@@ -4465,6 +4576,38 @@ export default function ComissoesPage() {
                                       </tr>
                                     );
                                   })}
+                                  <tr className="border-t bg-gray-50/70">
+                                    <td className="p-2 font-medium">Estorno</td>
+                                    <td className="p-2 text-gray-600">
+                                      {activeRefunds.length
+                                        ? `Ativo • ${BRL(activeRefundTotal)}`
+                                        : "Sem estorno lançado"}
+                                    </td>
+                                    <td className="p-2">
+                                      {canEdit ? (
+                                        activeRefunds.length ? (
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="border-[#A11C27] text-[#A11C27]"
+                                            onClick={() => reverterEstornosParticionados(row.batch.id)}
+                                          >
+                                            Reverter Estorno
+                                          </Button>
+                                        ) : (
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => abrirEstornoParticionado(row)}
+                                          >
+                                            Lançar Estorno
+                                          </Button>
+                                        )
+                                      ) : (
+                                        "—"
+                                      )}
+                                    </td>
+                                  </tr>
                                 </tbody>
                               </table>
                               <div className="mt-2 text-xs text-gray-500">

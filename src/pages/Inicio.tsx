@@ -34,7 +34,6 @@ type AgendaRow = { id: string; tipo: string; titulo: string; inicio_at: string; 
 type OppRow = { id: string; segmento: string | null; valor_credito: number | null; estagio: string | null; score: number | null; expected_close_at: string | null; fechamento_previsto_em?: string | null; vendedor_id: string; lead_id: string };
 type LeadRow = { id: string; nome: string; telefone?: string | null };
 type GroupRow = { id: string; administradora: string; segmento: string; codigo: string; participantes?: number | null; prox_vencimento: string | null; prox_sorteio: string | null; prox_assembleia: string | null };
-type LastAssemblyRow = { group_id: string; date: string | null; ll_high?: number | null; ll_low?: number | null; median?: number | null; reference_number?: number | null };
 type ClienteRow = { id: string; nome: string; data_nascimento: string | null; telefone?: string | null };
 type GiroDueRow = { owner_auth_id: string; due_count: number };
 type GiroItemRow = { id?: string | null; lead_id?: string | null; cliente_id?: string | null; cliente_nome?: string | null; lead_nome?: string | null; nome?: string | null; telefone?: string | null; carteira_ativa_total?: number | null; valor_carteira_ativa?: number | null; owner_auth_id?: string | null };
@@ -110,10 +109,8 @@ function isVendaCancelada(v?: { codigo?: string | null; cancelada_em?: string | 
 function totalCommissionGross(c: CommissionRow) { return Number(c.valor_total ?? ((Number(c.base_calculo) || 0) * (Number(c.percent_aplicado) || 0))) || 0; }
 function paidCommissionGross(flow: CommissionFlowRow[]) { return flow.reduce((acc, f) => acc + (Number(f.valor_pago_vendedor) || 0), 0); }
 function pendingCommissionGross(c: CommissionRow, flow: CommissionFlowRow[]) { return Math.max(0, totalCommissionGross(c) - paidCommissionGross(flow)); }
-function fmtPct4(v: number | null | undefined) { if (v == null) return "—"; return `${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}%`; }
 function groupListLabel(groups: Array<{ codigo?: string | null }>, max = 6) { const codes = Array.from(new Set(groups.map((g) => String(g.codigo || "").trim()).filter(Boolean))); if (!codes.length) return "—"; const head = codes.slice(0, max).join(", "); return codes.length > max ? `${head} +${codes.length - max}` : head; }
 function hasDraw(drawsByDate: Map<string, boolean>, dateRaw?: string | null) { const d = toYMD(dateRaw); return Boolean(d && drawsByDate.get(d)); }
-function lastAsmInfo(lastAsmByGroup: Map<string, LastAssemblyRow>, groupId: string) { const r = lastAsmByGroup.get(groupId); if (!r) return "Sem apuração anterior"; const med = r.median ?? (r.ll_high != null && r.ll_low != null ? (r.ll_high + r.ll_low) / 2 : null); return `Última apuração: ${fmtDateBRFromYMD(r.date)}${med != null ? ` • Mediana: ${fmtPct4(med)}` : ""}${r.reference_number != null ? ` • Ref: ${r.reference_number}` : ""}`; }
 
 /** ===================== UI Aux ===================== */
 function Donut({ pct, size = 132, stroke = 12, centerTop, centerBottom }: { pct: number; size?: number; stroke?: number; centerTop: React.ReactNode; centerBottom?: React.ReactNode }) { const clamped = Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : 0; const r = (size - stroke) / 2; const c = 2 * Math.PI * r; const dash = (clamped / 100) * c; return (<div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}><svg width={size} height={size} className="block"><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(148,163,184,0.35)" strokeWidth={stroke} /><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(15,23,42,0.9)" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${dash} ${c - dash}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} /></svg><div className="absolute inset-0 flex flex-col items-center justify-center text-center"><div className="text-xl font-semibold text-slate-900">{centerTop}</div>{centerBottom ? <div className="text-xs text-slate-600 -mt-0.5">{centerBottom}</div> : null}</div></div>); }
@@ -265,9 +262,9 @@ export default function Inicio() {
         : agQ.eq("user_id", noRowsId);
     const { data: agRowsRaw, error: agErr } = await agQ;
     if (agErr) console.warn("[Inicio] Não foi possível carregar próximos eventos:", agErr);
-    const agRows = (agRowsRaw || []) as unknown as AgendaRow[];
+    const agRows = ((agRowsRaw || []) as unknown as AgendaRow[]).filter((e) => normalizeText(e.tipo) !== "assembleia");
     const todayEventsCount = agRows.filter((e) => {
-      const nominalDate = ["aniversario", "assembleia"].includes(normalizeText(e.tipo));
+      const nominalDate = normalizeText(e.tipo) === "aniversario";
       return nominalDate ? toYMD(e.inicio_at) === today : ymdFromDateInOffset(new Date(e.inicio_at), PV_OFFSET_MIN) === today;
     }).length;
 
@@ -280,16 +277,10 @@ export default function Inicio() {
     const groupAsmYMD = (g: GroupRow) => groupAssemblyYMD(g.prox_assembleia);
     const groupsToday = groupRows.filter((g) => [groupVencYMD(g), groupSorteioYMD(g), groupAsmYMD(g)].includes(today));
     const todayGroupsCount = groupsToday.length;
-    const groupsWindow = groupRows.filter((g) => [groupVencYMD(g), groupSorteioYMD(g), groupAsmYMD(g)].filter(Boolean).some((d) => (d as string) >= today && (d as string) <= endWeek));
-
     const realGroupKeys = new Set(groupRows.map((g) => groupKey(g.administradora, g.codigo)));
     const sorteioDates = Array.from(new Set(groupRows.map((g) => toYMD(g.prox_sorteio)).filter(Boolean) as string[]));
     const drawsByDate = new Map<string, boolean>();
     if (sorteioDates.length) { const { data: draws, error: drawsErr } = await supabase.from("lottery_draws").select("draw_date").in("draw_date", sorteioDates); if (drawsErr) console.warn("[Inicio] Não foi possível carregar resultados da loteria:", drawsErr); (draws || []).forEach((d: any) => drawsByDate.set(toYMD(d.draw_date) as string, true)); }
-
-    const lastAsmByGroup = new Map<string, LastAssemblyRow>();
-    const realGroupIds = groupRows.map((g) => g.id).filter(Boolean);
-    if (realGroupIds.length) { const { data: lastAsm, error: lastAsmErr } = await supabase.from("v_group_last_assembly").select("group_id,date,ll_high,ll_low,median,reference_number").in("group_id", realGroupIds); if (!lastAsmErr) (lastAsm || []).forEach((r: any) => lastAsmByGroup.set(r.group_id, r as LastAssemblyRow)); }
 
     const { startYMD, endYMD, year, month } = rangeMonth;
     let salesQ = supabase.from("vendas").select("valor_venda,vendedor_id,data_venda").gte("data_venda", startYMD).lt("data_venda", endYMD);
@@ -418,26 +409,52 @@ export default function Inicio() {
     const pendingGroupRegistrationCount = missingGroupsMap.size;
 
     let giroList: { id: string; nome: string; carteiraAtiva: number }[] = [];
+    let giroRows: GiroItemRow[] = [];
     try {
       let giroItemsQ = supabase.from("v_giro_due_items").select("*").limit(5000);
-      giroItemsQ = applyAuthScope(giroItemsQ, "owner_auth_id");
+      giroItemsQ = scope.isGlobal
+        ? giroItemsQ
+        : scope.vendedorIds.length
+          ? giroItemsQ.in("owner_auth_id", scope.vendedorIds)
+          : giroItemsQ.eq("owner_auth_id", noRowsId);
       const { data: giroItems, error: giroItemsErr } = await giroItemsQ;
       if (giroItemsErr) throw giroItemsErr;
-      giroList = ((giroItems || []) as any as GiroItemRow[]).map((r, idx) => ({ id: String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`), nome: String((r.cliente_nome || r.lead_nome || r.nome || "Cliente") ?? "Cliente").trim(), carteiraAtiva: Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? 0) || 0 }));
-      giroList.sort((a, b) => (b.carteiraAtiva || 0) - (a.carteiraAtiva || 0));
+      giroRows = (giroItems || []) as any as GiroItemRow[];
     } catch (e) {
       console.warn("[Inicio] Não foi possível carregar itens de giro:", e);
     }
+    if (!giroRows.length && !scope.isGlobal && scope.vendedorIds.length) {
+      const directResults = await Promise.all(scope.vendedorIds.map((ownerId) => supabase.from("v_giro_due_items").select("*").eq("owner_auth_id", ownerId).limit(5000)));
+      const rowsById = new Map<string, GiroItemRow>();
+      directResults.forEach(({ data }) => ((data || []) as any as GiroItemRow[]).forEach((row, idx) => rowsById.set(String(row.id || row.cliente_id || row.lead_id || `${row.owner_auth_id || "owner"}_${idx}`), row)));
+      giroRows = Array.from(rowsById.values());
+    }
+    if (!giroRows.length) {
+      try {
+        const { data: rpcRows, error: rpcErr } = await supabase.rpc("next_giro_batch");
+        if (rpcErr) throw rpcErr;
+        giroRows = (Array.isArray(rpcRows) ? rpcRows : []) as GiroItemRow[];
+      } catch (e) {
+        console.warn("[Inicio] A fonte alternativa de giros também não respondeu:", e);
+      }
+    }
+    giroList = giroRows.map((r, idx) => ({ id: String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`), nome: String((r.cliente_nome || r.lead_nome || r.nome || "Cliente") ?? "Cliente").trim(), carteiraAtiva: Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? 0) || 0 }));
+    giroList.sort((a, b) => (b.carteiraAtiva || 0) - (a.carteiraAtiva || 0));
     let giroDueCount = giroList.length;
     try {
       let giroCountQ = supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
-      giroCountQ = applyAuthScope(giroCountQ, "owner_auth_id");
+      giroCountQ = scope.isGlobal
+        ? giroCountQ
+        : scope.vendedorIds.length
+          ? giroCountQ.in("owner_auth_id", scope.vendedorIds)
+          : giroCountQ.eq("owner_auth_id", noRowsId);
       const { data: giroCounts, error: giroCountErr } = await giroCountQ;
       if (giroCountErr) throw giroCountErr;
       giroDueCount = Math.max(giroDueCount, (giroCounts || []).reduce((acc: number, r: GiroDueRow) => acc + (Number(r?.due_count || 0) || 0), 0));
     } catch (e) {
       console.warn("[Inicio] Não foi possível carregar o contador de giros; usando os itens encontrados:", e);
     }
+    if (!giroList.length) giroDueCount = 0;
 
     const birthdayToday = agRows
       .filter((e) => normalizeText(e.tipo) === "aniversario" && toYMD(e.inicio_at) === today)
@@ -541,19 +558,12 @@ export default function Inicio() {
 
     const items: NextEventItem[] = [];
     for (const e of (agRows || []) as AgendaRow[]) {
-      if (["aniversario", "assembleia"].includes(normalizeText(e.tipo))) continue;
+      if (normalizeText(e.tipo) === "aniversario") continue;
       const startUtcMs = new Date(e.inicio_at).getTime();
       const ymd = ymdFromDateInOffset(new Date(startUtcMs), PV_OFFSET_MIN);
       if (!isWithinNextWeekWindow(today, ymd)) continue;
       items.push({ id: `ag:${e.id}`, whenSort: startUtcMs, whenLabel: fmtDTForOffset(e.inicio_at, PV_OFFSET_MIN), flag: flagFromYMDWeek(today, ymd), title: e.titulo || "Evento", desc: `${e.tipo || "Agenda"} • ${e.cliente?.nome || e.lead?.nome || "—"}`, action: { label: "Abrir Agenda", to: "/agenda" } });
     }
-    const pushGroupEvent = (g: GroupRow, kind: "Vencimento" | "Sorteio" | "Assembleia", dateRaw: string | null) => {
-      const d = kind === "Assembleia" ? groupAssemblyYMD(dateRaw) : toYMD(dateRaw);
-      if (!d || !isWithinNextWeekWindow(today, d)) return;
-      const drawInfo = kind === "Sorteio" || kind === "Assembleia" ? ` • Loteria: ${hasDraw(drawsByDate, g.prox_sorteio) ? "informada" : "pendente"}` : "";
-      items.push({ id: `grp:${g.id}:${kind}:${d}`, whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), kind === "Vencimento" ? 9 : kind === "Sorteio" ? 11 : 12), whenLabel: fmtDateBRFromYMD(d), flag: flagFromYMDWeek(today, d), title: `${kind} Grupo ${g.codigo}`, desc: `${g.administradora} | ${g.segmento} | ${lastAsmInfo(lastAsmByGroup, g.id)}${drawInfo}`, action: { label: "Ver Grupos", to: "/gestao-de-grupos" } });
-    };
-    groupsWindow.forEach((g) => { pushGroupEvent(g, "Vencimento", g.prox_vencimento); pushGroupEvent(g, "Sorteio", g.prox_sorteio); pushGroupEvent(g, "Assembleia", g.prox_assembleia); });
     for (const [d, total] of scheduledByDate.entries()) { if (!isWithinNextWeekWindow(today, d)) continue; items.push({ id: `cf:${d}`, whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 13), whenLabel: fmtDateBRFromYMD(d), flag: flagFromYMDWeek(today, d), title: d === today ? "Comissão de hoje" : "Recebimento de Comissão", desc: d === today ? `🎉 Hoje você receberá ${fmtBRL(total)} de comissão. Celebre esse momento.` : `💰 Você receberá ${fmtBRL(total)} de comissão.`, action: { label: "Abrir Comissões", to: "/comissoes" } }); }
     for (const c of birthdayToday) items.push({ id: `bday:${c.id}`, whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 8), whenLabel: fmtDateBRFromYMD(today), flag: "Hoje", title: "Aniversário", desc: `Hoje é aniversário do cliente ${c.nome}. Parabenize-o! 🎂🎉`, action: { label: "Ver Clientes", to: "/clientes" } });
     items.sort((a, b) => a.whenSort - b.whenSort);

@@ -16,7 +16,7 @@ import {
 } from "recharts";
 
 type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null; origem?: string | null; descricao?: string | null; owner_id?: string | null; created_at?: string | null };
-type Vendedor = { auth_user_id: string; nome: string };
+type Vendedor = { id: string; auth_user_id: string; nome: string; role?: string | null; user_role?: string | null; unit_id?: string | null; hierarchy_level?: string | null };
 type StageUI = "novo_lead" | "diagnostico" | "reuniao_agendada" | "proposta_negociacao" | "fechamento_programado" | "fechado_ganho" | "fechado_perdido";
 type Opp = {
   id: string; lead_id: string; vendedor_id: string; owner_id?: string | null; segmento: string | null; valor_credito: number | null;
@@ -52,6 +52,7 @@ const allStages: StageUI[] = [...activeStages, "fechado_ganho", "fechado_perdido
 const lostReasons = ["Sem renda", "Não respondeu", "Achou caro", "Comprou financiamento", "Consultou terceiro e travou", "Sem urgência", "Crédito/parcela incompatível", "Prazo de contemplação não atendia", "Outro"];
 
 const onlyDigits = (v?: string | null) => String(v || "").replace(/\D/g, "");
+const normalizeText = (v?: string | null) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 const normalizeStage = (s?: string | null): StageUI => oldToStage[String(s || "").trim()] || "novo_lead";
 const dbStage = (s: StageUI) => stageLabels[s];
 const moneyBase = (o: Opp) => Number(o.valor_credito || o.credito_desejado || 0);
@@ -103,15 +104,39 @@ export default function OportunidadesPipelineV5() {
     const { data: auth } = await supabase.auth.getUser();
     const uid = auth?.user?.id || null;
     setMeId(uid);
-    const [leadRes, userRes, oppRes] = await Promise.all([
-      supabase.from("leads").select("id,nome,telefone,email,origem,descricao,owner_id,created_at").order("created_at", { ascending: false }),
-      supabase.from("users").select("auth_user_id,nome").eq("is_active", true).order("nome"),
-      supabase.from("opportunities").select("id,lead_id,vendedor_id,owner_id,segmento,valor_credito,observacao,score,estagio,expected_close_at,created_at,credito_desejado,parcela_desejada,lance_disponivel,prazo_contemplacao,finalidade_recurso,reuniao_at,reuniao_tipo,reuniao_link,proposta_id,fechamento_previsto_em,documentos_pendentes,lost_reason,lost_details,won_at,lost_at").order("created_at", { ascending: false }),
-    ]);
-    setLeads((leadRes.data || []) as Lead[]);
-    setVendedores((userRes.data || []) as Vendedor[]);
-    setOpps((oppRes.data || []) as Opp[]);
-    const ids = ((oppRes.data || []) as Opp[]).map((o) => o.id);
+    if (!uid) { setLoading(false); return; }
+    const { data: profile } = await supabase.from("users").select("id,auth_user_id,nome,role,user_role,unit_id,hierarchy_level").eq("auth_user_id", uid).maybeSingle();
+    if (!profile) { setLoading(false); return; }
+    let unitType = "";
+    if (profile.unit_id) { const { data: unit } = await supabase.from("units").select("tipo").eq("id", profile.unit_id).maybeSingle(); unitType = normalizeText(unit?.tipo); }
+    const matrix = normalizeText(profile.hierarchy_level) === "matriz" || (normalizeText(profile.role || profile.user_role) === "admin" && unitType === "matriz");
+    const branch = !matrix && normalizeText(profile.hierarchy_level) === "gestor_filial";
+    let userQ = supabase.from("users").select("id,auth_user_id,nome,role,user_role,unit_id,hierarchy_level").eq("is_active", true).order("nome");
+    if (branch && profile.unit_id) userQ = userQ.eq("unit_id", profile.unit_id);
+    if (!matrix && !branch) userQ = userQ.eq("id", profile.id);
+    const { data: userRows } = await userQ;
+    const scopedUsers = (userRows || [profile]) as Vendedor[];
+    const authIds = Array.from(new Set(scopedUsers.map((u) => u.auth_user_id).filter(Boolean)));
+    let oppQ = supabase.from("opportunities").select("id,lead_id,vendedor_id,owner_id,segmento,valor_credito,observacao,score,estagio,expected_close_at,created_at,credito_desejado,parcela_desejada,lance_disponivel,prazo_contemplacao,finalidade_recurso,reuniao_at,reuniao_tipo,reuniao_link,proposta_id,fechamento_previsto_em,documentos_pendentes,lost_reason,lost_details,won_at,lost_at").order("created_at", { ascending: false });
+    if (!matrix) oppQ = authIds.length ? oppQ.in("vendedor_id", authIds) : oppQ.eq("vendedor_id", "00000000-0000-0000-0000-000000000000");
+    const oppRes = await oppQ;
+    const scopedOpps = (oppRes.data || []) as Opp[];
+    let leadRows: Lead[] = [];
+    if (matrix) {
+      const { data } = await supabase.from("leads").select("id,nome,telefone,email,origem,descricao,owner_id,created_at").order("created_at", { ascending: false });
+      leadRows = (data || []) as Lead[];
+    } else {
+      const linkedIds = Array.from(new Set(scopedOpps.map((o) => o.lead_id).filter(Boolean)));
+      const [owned, linked] = await Promise.all([
+        authIds.length ? supabase.from("leads").select("id,nome,telefone,email,origem,descricao,owner_id,created_at").in("owner_id", authIds).order("created_at", { ascending: false }) : Promise.resolve({ data: [] as any[] }),
+        linkedIds.length ? supabase.from("leads").select("id,nome,telefone,email,origem,descricao,owner_id,created_at").in("id", linkedIds) : Promise.resolve({ data: [] as any[] }),
+      ]);
+      leadRows = Array.from(new Map([...(owned.data || []), ...(linked.data || [])].map((lead: any) => [lead.id, lead as Lead])).values());
+    }
+    setLeads(leadRows);
+    setVendedores(scopedUsers);
+    setOpps(scopedOpps);
+    const ids = scopedOpps.map((o) => o.id);
     if (ids.length) {
       const nres = await supabase.from("opportunity_notes").select("id,opportunity_id,lead_id,user_id,note,kind,created_at").in("opportunity_id", ids).order("created_at", { ascending: false });
       if (!nres.error) setNotes((nres.data || []) as Note[]);

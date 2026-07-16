@@ -86,7 +86,7 @@ type Proposal = SimRow & {
   promax?: ProMaxMetadata;
 };
 
-type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "equity" | "blindagem_caixa";
+type ModelKey = "extrato" | "aquisicao" | "previdencia" | "alav_financeira" | "alav_patrimonial" | "equity" | "lance_prime" | "blindagem_caixa";
 type ShareModelKey =
   | ModelKey
   | "alav_financeira_tradicional"
@@ -147,6 +147,7 @@ type ProposalParams = {
   equity_pronaf_anual: number;
   equity_pronamp_anual: number;
   equity_demais_anual: number;
+  lance_prime_mensal: number;
 };
 
 const DEFAULT_PARAMS: ProposalParams = {
@@ -167,6 +168,7 @@ const DEFAULT_PARAMS: ProposalParams = {
   equity_pronaf_anual: 0.08,
   equity_pronamp_anual: 0.12,
   equity_demais_anual: 0.18,
+  lance_prime_mensal: 0.015,
 };
 
 const C = {
@@ -234,6 +236,7 @@ const SHARE_MODEL_OPTIONS: Array<{ key: ModelKey; label: string }> = [
   { key: "alav_financeira", label: "Alav. Financeira" },
   { key: "alav_patrimonial", label: "Alav. Patrimonial" },
   { key: "equity", label: "Equity" },
+  { key: "lance_prime", label: "Lance Prime" },
   { key: "blindagem_caixa", label: "Blindagem de Caixa" },
 ];
 
@@ -251,6 +254,7 @@ const SHARE_MODEL_KEYS = new Set<ShareModelKey>([
   "equity",
   "equity_direto",
   "equity_cadenciado",
+  "lance_prime",
   "blindagem_caixa",
 ]);
 
@@ -1688,6 +1692,7 @@ export default function PropostasProMax() {
               <ParamInput label="Pronaf ano" value={proposalParams.equity_pronaf_anual} onChange={(value) => updateProposalParam("equity_pronaf_anual", value)} />
               <ParamInput label="Pronamp ano" value={proposalParams.equity_pronamp_anual} onChange={(value) => updateProposalParam("equity_pronamp_anual", value)} />
               <ParamInput label="Demais linhas ano" value={proposalParams.equity_demais_anual} onChange={(value) => updateProposalParam("equity_demais_anual", value)} />
+              <ParamInput label="Lance Prime mês" value={proposalParams.lance_prime_mensal} onChange={(value) => updateProposalParam("lance_prime_mensal", value)} />
             </div>
           </section>
         )}

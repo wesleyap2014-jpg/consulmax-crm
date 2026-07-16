@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Pencil,
   Eye,
+  CalendarDays,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -306,6 +307,89 @@ function brDateToISO(value: string) {
   const date = new Date(y, m - 1, d);
   if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function maskBRDate(value: string) {
+  const digits = (value || "").replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function DateInputWithCalendar({
+  value,
+  onChange,
+  valueFormat = "iso",
+  disabled = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  valueFormat?: "iso" | "br";
+  disabled?: boolean;
+}) {
+  const valueAsText = valueFormat === "iso" ? isoToBRDate(value) : value;
+  const [draft, setDraft] = useState(valueAsText);
+
+  useEffect(() => {
+    setDraft(valueFormat === "iso" ? isoToBRDate(value) : value);
+  }, [value, valueFormat]);
+
+  const calendarValue = valueFormat === "iso" ? String(value || "").slice(0, 10) : brDateToISO(value) || "";
+
+  const handleTextChange = (rawValue: string) => {
+    const masked = maskBRDate(rawValue);
+    setDraft(masked);
+
+    if (valueFormat === "br") {
+      onChange(masked);
+      return;
+    }
+
+    if (!masked) {
+      onChange("");
+      return;
+    }
+
+    const iso = brDateToISO(masked);
+    if (iso) onChange(iso);
+  };
+
+  const handleCalendarChange = (iso: string) => {
+    const formatted = isoToBRDate(iso);
+    setDraft(formatted);
+    onChange(valueFormat === "iso" ? iso : formatted);
+  };
+
+  return (
+    <div className="relative">
+      <Input
+        value={draft}
+        onChange={(e) => handleTextChange(e.target.value)}
+        onBlur={() => {
+          if (valueFormat === "iso" && draft && !brDateToISO(draft)) {
+            setDraft(isoToBRDate(value));
+          }
+        }}
+        placeholder="dd/mm/aaaa"
+        inputMode="numeric"
+        maxLength={10}
+        disabled={disabled}
+        className="pr-10"
+      />
+      <CalendarDays
+        aria-hidden="true"
+        className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${disabled ? "text-gray-300" : "text-gray-500"}`}
+      />
+      <input
+        type="date"
+        value={calendarValue}
+        onChange={(e) => handleCalendarChange(e.target.value)}
+        disabled={disabled}
+        aria-label="Escolher data no calendário"
+        className={`absolute inset-y-0 right-0 w-10 opacity-0 ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
+      />
+    </div>
+  );
 }
 
 const normalize = (s?: string | null) =>
@@ -4131,12 +4215,12 @@ export default function ComissoesPage() {
 
             <div className="flex flex-col gap-2">
               <Label>Início do período</Label>
-              <Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+              <DateInputWithCalendar value={periodStart} onChange={setPeriodStart} />
             </div>
 
             <div className="flex flex-col gap-2">
               <Label>Fim do período</Label>
-              <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+              <DateInputWithCalendar value={periodEnd} onChange={setPeriodEnd} />
             </div>
 
             <div className="flex flex-col gap-2">
@@ -4455,7 +4539,7 @@ export default function ComissoesPage() {
               {demonstrativoTipo === "data" ? (
                 <div className="flex flex-col gap-2">
                   <Label>Data do demonstrativo</Label>
-                  <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
+                  <DateInputWithCalendar value={reciboDate} onChange={setReciboDate} />
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -5281,7 +5365,7 @@ export default function ComissoesPage() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="flex flex-col gap-2">
                     <Label>Data do pagamento</Label>
-                    <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+                    <DateInputWithCalendar value={payDate} onChange={setPayDate} />
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label>Valor pago ao vendedor (opcional)</Label>
@@ -5376,11 +5460,10 @@ export default function ComissoesPage() {
             <div className="space-y-4">
               <div className="flex flex-col gap-2">
                 <Label>Data programada</Label>
-                <Input
+                <DateInputWithCalendar
                   value={partitionScheduleDateBR}
-                  onChange={(e) => setPartitionScheduleDateBR(e.target.value)}
-                  placeholder="dd/mm/aaaa"
-                  inputMode="numeric"
+                  onChange={setPartitionScheduleDateBR}
+                  valueFormat="br"
                 />
                 <div className="text-xs text-gray-500">Use o formato dd/mm/aaaa. Essa data será usada no demonstrativo.</div>
               </div>
@@ -5411,7 +5494,7 @@ export default function ComissoesPage() {
                 <div className="space-y-4">
                   <div className="flex flex-col gap-2">
                     <Label>Data do pagamento</Label>
-                    <Input type="date" value={partitionPayDate} onChange={(e) => setPartitionPayDate(e.target.value)} />
+                    <DateInputWithCalendar value={partitionPayDate} onChange={setPartitionPayDate} />
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5547,7 +5630,11 @@ export default function ComissoesPage() {
 
                     <div className="flex flex-col gap-2">
                       <Label>Data do estorno</Label>
-                      <Input value={partitionRefundDateBR} onChange={(e) => setPartitionRefundDateBR(e.target.value)} placeholder="dd/mm/aaaa" />
+                      <DateInputWithCalendar
+                        value={partitionRefundDateBR}
+                        onChange={setPartitionRefundDateBR}
+                        valueFormat="br"
+                      />
                     </div>
                   </div>
 
@@ -5601,7 +5688,7 @@ export default function ComissoesPage() {
               </div>
               <div>
                 <Label>Data do estorno</Label>
-                <Input type="date" value={bulkRefundDate} onChange={(e) => setBulkRefundDate(e.target.value)} disabled={!canEdit} />
+                <DateInputWithCalendar value={bulkRefundDate} onChange={setBulkRefundDate} disabled={!canEdit} />
               </div>
             </div>
 
@@ -5695,7 +5782,7 @@ function UploadArea({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="flex flex-col gap-2">
           <Label>Data do pagamento</Label>
-          <Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} />
+          <DateInputWithCalendar value={dataPg} onChange={setDataPg} />
         </div>
         <div className="flex flex-col gap-2">
           <Label>Valor pago ao vendedor (opcional)</Label>

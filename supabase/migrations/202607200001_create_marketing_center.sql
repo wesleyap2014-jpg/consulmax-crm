@@ -17,7 +17,7 @@ create or replace function public.marketing_is_admin()
 returns boolean
 language sql
 stable
-security definer
+security invoker
 set search_path = public
 as $$
   select exists (
@@ -28,6 +28,8 @@ as $$
   );
 $$;
 
+revoke all on function public.marketing_is_admin() from public;
+revoke all on function public.marketing_is_admin() from anon;
 grant execute on function public.marketing_is_admin() to authenticated;
 
 -- =========================================================
@@ -185,9 +187,19 @@ alter table public.marketing_campaigns enable row level security;
 alter table public.marketing_content_items enable row level security;
 alter table public.marketing_creatives enable row level security;
 
-drop policy if exists "marketing_plans_authenticated_read" on public.marketing_media_plans;
-create policy "marketing_plans_authenticated_read"
-on public.marketing_media_plans for select to authenticated using (true);
+revoke all on public.marketing_media_plans from anon;
+revoke all on public.marketing_campaigns from anon;
+revoke all on public.marketing_content_items from anon;
+revoke all on public.marketing_creatives from anon;
+
+grant select, insert, update, delete on public.marketing_media_plans to authenticated;
+grant select, insert, update, delete on public.marketing_campaigns to authenticated;
+grant select, insert, update, delete on public.marketing_content_items to authenticated;
+grant select, insert, update, delete on public.marketing_creatives to authenticated;
+
+drop policy if exists "marketing_plans_admin_read" on public.marketing_media_plans;
+create policy "marketing_plans_admin_read"
+on public.marketing_media_plans for select to authenticated using (public.marketing_is_admin());
 drop policy if exists "marketing_plans_admin_insert" on public.marketing_media_plans;
 create policy "marketing_plans_admin_insert"
 on public.marketing_media_plans for insert to authenticated with check (public.marketing_is_admin());
@@ -198,9 +210,9 @@ drop policy if exists "marketing_plans_admin_delete" on public.marketing_media_p
 create policy "marketing_plans_admin_delete"
 on public.marketing_media_plans for delete to authenticated using (public.marketing_is_admin());
 
-drop policy if exists "marketing_campaigns_authenticated_read" on public.marketing_campaigns;
-create policy "marketing_campaigns_authenticated_read"
-on public.marketing_campaigns for select to authenticated using (true);
+drop policy if exists "marketing_campaigns_admin_read" on public.marketing_campaigns;
+create policy "marketing_campaigns_admin_read"
+on public.marketing_campaigns for select to authenticated using (public.marketing_is_admin());
 drop policy if exists "marketing_campaigns_admin_insert" on public.marketing_campaigns;
 create policy "marketing_campaigns_admin_insert"
 on public.marketing_campaigns for insert to authenticated with check (public.marketing_is_admin());
@@ -211,9 +223,9 @@ drop policy if exists "marketing_campaigns_admin_delete" on public.marketing_cam
 create policy "marketing_campaigns_admin_delete"
 on public.marketing_campaigns for delete to authenticated using (public.marketing_is_admin());
 
-drop policy if exists "marketing_content_authenticated_read" on public.marketing_content_items;
-create policy "marketing_content_authenticated_read"
-on public.marketing_content_items for select to authenticated using (true);
+drop policy if exists "marketing_content_admin_read" on public.marketing_content_items;
+create policy "marketing_content_admin_read"
+on public.marketing_content_items for select to authenticated using (public.marketing_is_admin());
 drop policy if exists "marketing_content_admin_insert" on public.marketing_content_items;
 create policy "marketing_content_admin_insert"
 on public.marketing_content_items for insert to authenticated with check (public.marketing_is_admin());
@@ -250,7 +262,18 @@ set public = excluded.public,
 drop policy if exists "marketing_creatives_storage_read" on storage.objects;
 create policy "marketing_creatives_storage_read"
 on storage.objects for select to authenticated
-using (bucket_id = 'marketing-creatives');
+using (
+  bucket_id = 'marketing-creatives'
+  and (
+    public.marketing_is_admin()
+    or exists (
+      select 1
+      from public.marketing_creatives c
+      where c.file_path = name
+        and c.status = 'publicado'
+    )
+  )
+);
 
 drop policy if exists "marketing_creatives_storage_admin_insert" on storage.objects;
 create policy "marketing_creatives_storage_admin_insert"
@@ -267,4 +290,3 @@ drop policy if exists "marketing_creatives_storage_admin_delete" on storage.obje
 create policy "marketing_creatives_storage_admin_delete"
 on storage.objects for delete to authenticated
 using (bucket_id = 'marketing-creatives' and public.marketing_is_admin());
-

@@ -1,7 +1,7 @@
 // api/max-chat.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-type Mode = "livre" | "estrategia" | "objeções";
+type Mode = "livre" | "estrategia" | "objeções" | "marketing";
 
 interface MaxRequestBody {
   prompt: string;
@@ -105,6 +105,17 @@ Tarefa atual: sugerir e trabalhar objeções de vendas.
   - Como o cliente fala (frase real)
   - Sugestão de resposta
   - Próxima ação recomendada (aprofundar, reagendar, envolver cônjuge etc.).
+        `;
+        break;
+      case "marketing":
+        modeInstruction = `
+Tarefa atual: atuar como estrategista e redator de marketing da Consulmax Consórcios.
+- Crie conteúdos claros, responsáveis, comerciais e alinhados ao posicionamento premium e consultivo da marca.
+- Adapte cada resposta ao público, segmento, canal e formato informados no briefing.
+- Quando solicitado, entregue texto de arte, legenda, WhatsApp, roteiro, briefing visual e chamada para ação.
+- Não prometa contemplação, rentabilidade, economia ou resultado garantido.
+- Trate consórcio como uma ferramenta de planejamento e aquisição, respeitando o contexto enviado.
+- Se o usuário pedir JSON, responda somente com JSON válido, sem markdown ou comentários adicionais.
         `;
         break;
       case "livre":

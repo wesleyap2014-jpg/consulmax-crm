@@ -22,6 +22,7 @@ import {
   LineChart,
   Link as LinkIcon,
   MessageCircle,
+  Megaphone,
   SlidersHorizontal,
   Trophy,
   UserCog,
@@ -48,7 +49,7 @@ type FlatItem = {
   activeMatch?: (pathname: string) => boolean;
 };
 
-type GroupKey = "vendas" | "pos" | "admin" | "fin" | "max";
+type GroupKey = "vendas" | "marketing" | "pos" | "admin" | "fin" | "max";
 
 type NavGroup = {
   title: string;
@@ -277,6 +278,10 @@ function groupForPath(pathname: string): GroupKey {
     return "pos";
   }
 
+  if (isAnyPathActive(pathname, ["/marketing"])) {
+    return "marketing";
+  }
+
   if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes", "/processos", "/rh"])) {
     return "admin";
   }
@@ -469,6 +474,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
         ],
       },
+      marketing: {
+        title: "Marketing",
+        icon: Megaphone,
+        items: [
+          { to: "/marketing", label: "Central de Marketing", icon: Megaphone, end: true },
+        ],
+      },
       admin: {
         title: "Administrativo",
         icon: SlidersHorizontal,
@@ -512,7 +524,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const mobileTapFx = "active:scale-[0.99] active:opacity-90";
 
   const flatItems = useMemo(() => {
-    const groupOrder: GroupKey[] = ["vendas", "pos", "admin", "fin", "max"];
+    const groupOrder: GroupKey[] = ["vendas", "marketing", "pos", "admin", "fin", "max"];
     return groupOrder.flatMap((key) => navGroups[key].items);
   }, [navGroups]);
 
@@ -670,7 +682,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
         {(!collapsed || isSmall) && (
           <>
-            {(["vendas", "pos", "admin", "fin", "max"] as GroupKey[]).map((key) => (
+            {(["vendas", "marketing", "pos", "admin", "fin", "max"] as GroupKey[]).map((key) => (
               <div key={key} className="grid gap-2">
                 {renderSectionPill(key)}
                 {openGroup === key && (

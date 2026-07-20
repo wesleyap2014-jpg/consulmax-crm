@@ -41,6 +41,7 @@ const PublicPoliticaPrivacidade = React.lazy(() => import("./pages/PublicPolitic
 const FluxoDeCaixa = React.lazy(() => import("./pages/FluxoDeCaixa"));
 const Planejamento = React.lazy(() => import("./pages/Planejamento"));
 const CentralProjetos = React.lazy(() => import("./pages/CentralProjetos"));
+const Marketing = React.lazy(() => import("./pages/Marketing"));
 const Relatorios = React.lazy(() => import("./pages/Relatorios"));
 const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
 const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
@@ -110,6 +111,7 @@ export const router = createBrowserRouter([
           { path: "agenda", element: withSuspense(<Agenda />) },
           { path: "planejamento", element: withSuspense(<Planejamento />) },
           { path: "central-projetos", element: withSuspense(<CentralProjetos />) },
+          { path: "marketing", element: withSuspense(<Marketing />) },
           { path: "gestao-de-projetos", element: <Navigate to="/central-projetos" replace /> },
           { path: "projetos", element: <Navigate to="/central-projetos" replace /> },
           { path: "procedimentos", element: withSuspense(<Procedimentos />) },

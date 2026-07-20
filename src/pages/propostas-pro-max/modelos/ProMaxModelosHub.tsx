@@ -2060,7 +2060,7 @@ function OptimizedStrategyBoard({ flow }: { flow: AlavancagemPatrimonialFlow }) 
 function OptimizedPatrimonialComparison({ flow }: { flow: AlavancagemPatrimonialFlow }) {
   const { optimizedStrategy: strategy, summary } = flow;
   const isRental = strategy.destination === "aluguel";
-  const advantagePositive = strategy.patrimonialAdvantage >= 0;
+  const finalAssetValue = Math.max(0, strategy.optimizedPatrimony - strategy.fundFinalBalance);
 
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
@@ -2094,44 +2094,37 @@ function OptimizedPatrimonialComparison({ flow }: { flow: AlavancagemPatrimonial
 
         <div className="rounded-xl border p-5" style={{ borderColor: "rgba(161,28,39,.28)", background: "linear-gradient(135deg, rgba(161,28,39,.06), rgba(181,165,115,.08))" }}>
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Alavancagem Otimizada</div>
-              <div className="mt-1 text-2xl font-black" style={{ color: C.ruby }}>{brMoney(strategy.optimizedPatrimony)}</div>
-            </div>
+            <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Alavancagem Otimizada</div>
             <TrendingUp className="h-7 w-7" style={{ color: C.ruby }} />
           </div>
           <div className="mt-5 space-y-3 text-sm">
-            <div className="flex justify-between gap-4 border-b pb-3"><span className="text-slate-500">Total pago ao consórcio</span><strong>{brMoney(strategy.totalPaidConsortium)}</strong></div>
             <div className="flex justify-between gap-4 border-b pb-3"><span className="text-slate-500">Saldo final do Fundo DI</span><strong style={{ color: C.gold }}>{brMoney(strategy.fundFinalBalance)}</strong></div>
-            <div className="flex justify-between gap-4 border-b pb-3"><span className="text-slate-500">Rendimento acumulado do Fundo DI</span><strong style={{ color: C.gold }}>{brMoney(strategy.fundAccumulatedReturn)}</strong></div>
-            {isRental ? <div className="flex justify-between gap-4 border-b pb-3"><span className="text-slate-500">Aluguéis líquidos recebidos</span><strong style={{ color: C.gold }}>{brMoney(strategy.accumulatedNetRent)}</strong></div> : null}
-            <div className="flex justify-between gap-4"><span className="font-semibold text-slate-600">Patrimônio ao final</span><strong className="text-lg" style={{ color: C.ruby }}>{brMoney(strategy.optimizedPatrimony)}</strong></div>
+            <div className="flex justify-between gap-4 border-b pb-3"><span className="text-slate-500">Valor final do bem</span><strong style={{ color: C.navy }}>{brMoney(finalAssetValue)}</strong></div>
+            <div className="flex justify-between gap-4 rounded-lg bg-white/80 p-3"><span className="font-black" style={{ color: C.navy }}>Patrimônio final</span><strong className="text-xl" style={{ color: C.ruby }}>{brMoney(strategy.optimizedPatrimony)}</strong></div>
           </div>
         </div>
       </div>
 
-      <div className="grid gap-4 border-t bg-slate-50 p-5 lg:grid-cols-[1.15fr_.85fr]">
-        <div className="rounded-xl border bg-white p-5">
-          <div className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Custo líquido projetado do bem</div>
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-sm font-black">
-            <span className="rounded-lg bg-slate-100 px-3 py-2">{brMoney(strategy.totalPaidConsortium)}</span>
-            <span className="text-slate-400">−</span>
-            <span className="rounded-lg bg-amber-50 px-3 py-2" style={{ color: C.gold }}>{brMoney(strategy.fundAccumulatedReturn)}</span>
-            {isRental ? <><span className="text-slate-400">−</span><span className="rounded-lg bg-amber-50 px-3 py-2" style={{ color: C.gold }}>{brMoney(strategy.accumulatedNetRent)}</span></> : null}
-            <span className="text-slate-400">=</span>
-            <span className="rounded-lg px-3 py-2 text-white" style={{ background: C.ruby }}>{brMoney(strategy.netAssetCost)}</span>
+      <div className="border-t bg-slate-50 p-5">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl border bg-white p-4">
+            <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Total pago com o consórcio</div>
+            <div className="mt-2 text-xl font-black" style={{ color: C.navy }}>{brMoney(strategy.totalPaidConsortium)}</div>
           </div>
+          <div className="rounded-xl border bg-white p-4">
+            <div className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Rendimento Fundo DI</div>
+            <div className="mt-2 text-xl font-black" style={{ color: C.gold }}>{brMoney(strategy.fundAccumulatedReturn)}</div>
+          </div>
+          <div className="rounded-xl p-4 text-white" style={{ background: C.ruby }}>
+            <div className="text-xs font-black uppercase tracking-[.1em] text-white/70">Desembolso Líquido</div>
+            <div className="mt-2 text-xl font-black">{brMoney(strategy.netAssetCost)}</div>
+          </div>
+        </div>
+        {isRental ? (
           <p className="mt-3 text-xs leading-relaxed text-slate-500">
-            Total pago ao consórcio menos o rendimento acumulado do Fundo DI{isRental ? " e os aluguéis líquidos recebidos" : ""}. O principal aplicado continua compondo o patrimônio do cliente.
+            No modo aluguel, a renda líquida acumulada de {brMoney(strategy.accumulatedNetRent)} também reduz o desembolso líquido.
           </p>
-        </div>
-        <div className="rounded-xl p-5 text-white" style={{ background: advantagePositive ? "linear-gradient(135deg, #1E293F, #A11C27)" : "linear-gradient(135deg, #78350F, #A11C27)" }}>
-          <div className="text-xs font-black uppercase tracking-[.12em] text-white/65">Vantagem patrimonial projetada</div>
-          <div className="mt-2 text-3xl font-black">{brMoney(strategy.patrimonialAdvantage)}</div>
-          <p className="mt-2 text-xs leading-relaxed text-white/75">
-            Diferença entre o patrimônio da estratégia otimizada e o patrimônio da compra à vista ao final do período.
-          </p>
-        </div>
+        ) : null}
       </div>
 
       <div className="border-t px-5 py-4 text-xs leading-relaxed text-slate-500">
@@ -2144,7 +2137,7 @@ function OptimizedPatrimonialComparison({ flow }: { flow: AlavancagemPatrimonial
 function OptimizedPatrimonialProjection({ flow }: { flow: AlavancagemPatrimonialFlow }) {
   const { optimizedStrategy: strategy, summary } = flow;
   const isRental = strategy.destination === "aluguel";
-  const finalEntry = strategy.projection[strategy.projection.length - 1];
+  const totalMonthlyResult = strategy.fundAccumulatedReturn + strategy.accumulatedNetRent - strategy.totalInstallments;
 
   return (
     <section className="overflow-hidden rounded-xl border bg-white shadow-sm">
@@ -2154,7 +2147,7 @@ function OptimizedPatrimonialProjection({ flow }: { flow: AlavancagemPatrimonial
             <FileSpreadsheet className="h-4 w-4" /> Projeção mensal da estratégia
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Evolução do consórcio, do Fundo DI{isRental ? ", da renda do aluguel" : ""} e do patrimônio líquido mês a mês.
+            Receita/Despesa do mês = rendimento do Fundo DI{isRental ? " + renda do aluguel" : ""} − parcela do consórcio.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-black">
@@ -2163,42 +2156,32 @@ function OptimizedPatrimonialProjection({ flow }: { flow: AlavancagemPatrimonial
         </div>
       </div>
       <div className="max-h-[480px] overflow-auto">
-        <table className="w-full min-w-[1280px] border-collapse text-sm">
+        <table className="w-full min-w-[820px] border-collapse text-sm">
           <thead className="sticky top-0 z-20 bg-slate-50 text-[11px] uppercase tracking-[.08em] text-slate-500 shadow-[0_1px_0_rgba(148,163,184,.25)]">
             <tr>
               <th className="p-3 text-left">Mês</th>
               <th className="p-3 text-right">Parcela do Consórcio</th>
-              <th className="p-3 text-right">Saldo Fundo DI</th>
               <th className="p-3 text-right">Rendimento DI</th>
-              {isRental ? <th className="p-3 text-right">Aluguel Líquido</th> : null}
-              <th className="p-3 text-right">Desembolso Mensal</th>
-              <th className="p-3 text-right">Total Pago</th>
-              <th className="p-3 text-right">Saldo Devedor</th>
-              <th className="p-3 text-right">Patrimônio Otimizado</th>
+              {isRental ? <th className="p-3 text-right">Renda Aluguel</th> : null}
+              <th className="p-3 text-right">Receita/Despesa Mês</th>
             </tr>
           </thead>
           <tbody>
             {strategy.projection.map((entry) => {
               const contemplated = entry.month === summary.contemplationMonth;
+              const monthlyResult = entry.fundReturn + entry.rentNet - entry.installment;
               return (
                 <tr key={entry.month} className={`border-t border-slate-100 ${contemplated ? "bg-amber-50/70" : "odd:bg-slate-50/40"}`}>
                   <td className="p-3 font-black" style={{ color: contemplated ? C.ruby : C.navy }}>
                     Mês {entry.month}
                     {contemplated ? <span className="ml-2 rounded-full bg-white px-2 py-1 text-[10px] uppercase tracking-[.08em]" style={{ color: C.ruby }}>Contemplação</span> : null}
                   </td>
-                  <td className="p-3 text-right font-semibold">
-                    {brMoney(entry.installment)}
-                    {entry.bidPayment > 0 ? <span className="block text-[10px] font-black" style={{ color: C.ruby }}>+ lance {brMoney(entry.bidPayment)}</span> : null}
-                  </td>
-                  <td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(entry.fundEndingBalance)}</td>
+                  <td className="p-3 text-right font-semibold">{brMoney(entry.installment)}</td>
                   <td className="p-3 text-right font-semibold" style={{ color: C.gold }}>{brMoney(entry.fundReturn)}</td>
                   {isRental ? <td className="p-3 text-right font-semibold" style={{ color: C.gold }}>{brMoney(entry.rentNet)}</td> : null}
-                  <td className="p-3 text-right font-semibold" style={{ color: entry.monthlySurplus > 0 ? C.gold : C.ruby }}>
-                    {entry.monthlySurplus > 0 ? `Sobra ${brMoney(entry.monthlySurplus)}` : brMoney(entry.monthlyOutflow)}
+                  <td className="p-3 text-right font-black" style={{ color: monthlyResult >= 0 ? C.gold : C.ruby }}>
+                    {monthlyResult >= 0 ? `Receita ${brMoney(monthlyResult)}` : `Despesa ${brMoney(Math.abs(monthlyResult))}`}
                   </td>
-                  <td className="p-3 text-right font-semibold">{brMoney(entry.totalPaidConsortium)}</td>
-                  <td className="p-3 text-right text-slate-600">{brMoney(entry.debtBalance)}</td>
-                  <td className="p-3 text-right font-black" style={{ color: C.navy }}>{brMoney(entry.optimizedPatrimony)}</td>
                 </tr>
               );
             })}
@@ -2206,14 +2189,12 @@ function OptimizedPatrimonialProjection({ flow }: { flow: AlavancagemPatrimonial
           <tfoot className="sticky bottom-0 z-20 bg-slate-950 text-white shadow-[0_-4px_16px_rgba(15,23,42,.18)]">
             <tr>
               <td className="p-3 font-black uppercase tracking-[.08em]">Resultado</td>
-              <td className="p-3 text-right font-black">{brMoney(strategy.totalPaidConsortium)}</td>
-              <td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(strategy.fundFinalBalance)}</td>
+              <td className="p-3 text-right font-black">{brMoney(strategy.totalInstallments)}</td>
               <td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(strategy.fundAccumulatedReturn)}</td>
               {isRental ? <td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(strategy.accumulatedNetRent)}</td> : null}
-              <td className="p-3 text-right font-black">{brMoney(strategy.externalCashOutflow)}</td>
-              <td className="p-3 text-right font-black">{brMoney(strategy.totalPaidConsortium)}</td>
-              <td className="p-3 text-right font-black">{brMoney(finalEntry?.debtBalance || 0)}</td>
-              <td className="p-3 text-right font-black" style={{ color: C.gold }}>{brMoney(strategy.optimizedPatrimony)}</td>
+              <td className="p-3 text-right font-black" style={{ color: totalMonthlyResult >= 0 ? C.gold : C.ruby }}>
+                {totalMonthlyResult >= 0 ? `Receita ${brMoney(totalMonthlyResult)}` : `Despesa ${brMoney(Math.abs(totalMonthlyResult))}`}
+              </td>
             </tr>
           </tfoot>
         </table>
@@ -2355,9 +2336,9 @@ function AlavancagemPatrimonialModel({
             </label>
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-500">Capital considerado</div><div className="font-black" style={{ color: C.navy }}>{brMoney(optimizedStrategy.availableCapital)}</div></div>
-            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-500">Menos lance próprio</div><div className="font-black" style={{ color: C.ruby }}>− {brMoney(optimizedStrategy.ownBid)}</div></div>
-            <div className="rounded-lg p-3" style={{ background: "rgba(181,165,115,.14)" }}><div className="text-xs text-slate-500">Capital aplicado no Fundo DI</div><div className="font-black" style={{ color: C.gold }}>{brMoney(optimizedStrategy.investedCapital)}</div></div>
+            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-500">Capital Próprio Disponível</div><div className="font-black" style={{ color: C.navy }}>{brMoney(optimizedStrategy.availableCapital)}</div></div>
+            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-500">Utilizado para lance</div><div className="font-black" style={{ color: C.ruby }}>{brMoney(optimizedStrategy.ownBid)}</div></div>
+            <div className="rounded-lg p-3" style={{ background: "rgba(181,165,115,.14)" }}><div className="text-xs text-slate-500">Destinado para aplicação</div><div className="font-black" style={{ color: C.gold }}>{brMoney(optimizedStrategy.investedCapital)}</div></div>
           </div>
           {assetDestination === "aluguel" ? (
             <div className="mt-4 flex flex-wrap gap-2 text-xs font-black">
@@ -2394,30 +2375,16 @@ function AlavancagemPatrimonialModel({
         </>
       ) : (
         <>
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric label="Crédito contemplado" value={brMoney(summary.availableAtContemplation)} tone="gold" />
-            <Metric label="Capital disponível" value={brMoney(optimizedStrategy.availableCapital)} />
-            <Metric label="Lance próprio" value={brMoney(optimizedStrategy.ownBid)} tone="ruby" />
-            <Metric label="Capital no Fundo DI" value={brMoney(optimizedStrategy.investedCapital)} tone="gold" />
-            <Metric label="Parcela projetada" value={brMoney(summary.postContemplationInstallment)} />
-            <Metric label="Total pago ao consórcio" value={brMoney(optimizedStrategy.totalPaidConsortium)} />
-            <Metric label="Rendimento acumulado DI" value={brMoney(optimizedStrategy.fundAccumulatedReturn)} tone="gold" />
-            <Metric
-              label={assetDestination === "aluguel" ? "Aluguéis líquidos" : "Saldo final Fundo DI"}
-              value={brMoney(assetDestination === "aluguel" ? optimizedStrategy.accumulatedNetRent : optimizedStrategy.fundFinalBalance)}
-              tone="gold"
-            />
+          <section className="rounded-xl border bg-white px-5 py-4 shadow-sm">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-slate-200">
+              <div><div className="text-xs font-semibold text-slate-500">Crédito para compra</div><div className="mt-1 text-lg font-black" style={{ color: C.navy }}>{brMoney(summary.availableAtContemplation)}</div></div>
+              <div className="xl:pl-5"><div className="text-xs font-semibold text-slate-500">Parcela do consórcio</div><div className="mt-1 text-lg font-black" style={{ color: C.ruby }}>{brMoney(summary.postContemplationInstallment)}</div></div>
+              <div className="xl:pl-5"><div className="text-xs font-semibold text-slate-500">Contemplação estimada</div><div className="mt-1 text-lg font-black" style={{ color: C.navy }}>Mês {summary.contemplationMonth}</div></div>
+              <div className="xl:pl-5"><div className="text-xs font-semibold text-slate-500">Horizonte da projeção</div><div className="mt-1 text-lg font-black" style={{ color: C.navy }}>{summary.planTerm} meses</div></div>
+            </div>
           </section>
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric label="Custo líquido do bem" value={brMoney(optimizedStrategy.netAssetCost)} tone="ruby" />
-            <Metric label="Patrimônio na compra à vista" value={brMoney(optimizedStrategy.cashPurchasePatrimony)} />
-            <Metric label="Patrimônio com a estratégia" value={brMoney(optimizedStrategy.optimizedPatrimony)} tone="gold" />
-            <Metric label="Vantagem patrimonial" value={brMoney(optimizedStrategy.patrimonialAdvantage)} tone="ruby" />
-          </section>
-          <OptimizedStrategyBoard flow={flow} />
           <OptimizedPatrimonialComparison flow={flow} />
           <OptimizedPatrimonialProjection flow={flow} />
-          <PatrimonialMonthlyChart flow={flow} mode="otimizada" />
         </>
       )}
     </div>

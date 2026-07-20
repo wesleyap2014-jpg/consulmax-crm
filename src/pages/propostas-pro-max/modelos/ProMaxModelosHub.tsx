@@ -170,6 +170,140 @@ function Metric({ label, value, tone = "navy" }: { label: string; value: string;
   );
 }
 
+function installmentRangeLabel(start: number, end: number) {
+  if (start === end) return start === 1 ? "1ª parcela" : `Parcela ${start}`;
+  return `Parcelas ${start} a ${end}`;
+}
+
+function ConsortiumSummaryCard({ proposal, flow }: { proposal: ProposalModelRow; flow: ReturnType<typeof buildExtratoFlow> }) {
+  const { summary } = flow;
+  const monthEntries = flow.entries.filter((entry) => entry.kind === "month");
+  const contemplationMonths = Array.from(new Set(
+    flow.entries
+      .filter((entry) => entry.kind === "event" && entry.title.toLocaleLowerCase("pt-BR").includes("contempla"))
+      .map((entry) => entry.month)
+  )).sort((a, b) => a - b);
+  const savedContemplationMonth = Math.max(0, Math.round(onlyNumber(proposal.parcela_contemplacao)));
+  const firstContemplationMonth = contemplationMonths[0] || savedContemplationMonth;
+  const lastContemplationMonth = contemplationMonths[contemplationMonths.length - 1] || savedContemplationMonth;
+  const contemplationLabel = contemplationMonths.length > 1 && firstContemplationMonth !== lastContemplationMonth
+    ? `Meses ${firstContemplationMonth} a ${lastContemplationMonth}`
+    : firstContemplationMonth > 0
+      ? `Mês ${firstContemplationMonth}`
+      : "Não informada";
+  const configuredInitialMonths = Math.max(0, Math.round(onlyNumber(proposal.antecip_parcelas)));
+  const firstInstallment = summary.firstInstallment || monthEntries[0]?.installment || 0;
+  const nextInstallment = summary.nextInstallments || firstInstallment;
+  const hasDifferentInitialInstallment = Math.abs(firstInstallment - nextInstallment) > 0.01;
+  const preContemplationEnd = Math.max(1, lastContemplationMonth || summary.planTerm || 1);
+  const initialInstallmentEnd = hasDifferentInitialInstallment
+    ? Math.min(preContemplationEnd, Math.max(1, configuredInitialMonths || 1))
+    : preContemplationEnd;
+  const regularInstallmentStart = initialInstallmentEnd + 1;
+  const hasRegularPreContemplationInstallments = regularInstallmentStart <= preContemplationEnd;
+  const remainingMonths = Math.max(0, flow.totalMonths - lastContemplationMonth);
+  const postContemplationEntry = monthEntries.find((entry) => entry.month > lastContemplationMonth);
+  const postContemplationInstallment = onlyNumber(proposal.parcela_escolhida) || summary.postContemplationInstallment || postContemplationEntry?.installment || 0;
+  const adminName = getAdminName(proposal);
+  const isEmbracon = adminName.toLocaleLowerCase("pt-BR").includes("embracon");
+
+  return (
+    <section className="overflow-hidden rounded-xl border bg-white shadow-sm" style={{ borderColor: "rgba(30,41,63,.14)" }}>
+      <div className="flex flex-col gap-3 px-5 py-4 text-white md:flex-row md:items-center md:justify-between" style={{ background: `linear-gradient(120deg, ${C.navy}, #111827)` }}>
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black">
+            <CheckCircle2 className="h-4 w-4" style={{ color: C.gold }} /> Resumo do Consórcio
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-white/65">
+            Os pontos essenciais da simulação, organizados da contratação até a contemplação.
+          </p>
+        </div>
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-black">
+          <CalendarDays className="h-3.5 w-3.5" /> Contemplação estimada: {contemplationLabel}
+        </div>
+      </div>
+
+      <div className="grid gap-4 p-5 xl:grid-cols-[.72fr_1.28fr]">
+        <div className="relative overflow-hidden rounded-xl p-5 text-white" style={{ background: `linear-gradient(145deg, ${C.ruby}, #7F1520)` }}>
+          <div className="absolute -right-12 -top-12 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
+          <div className="relative">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/12">
+              <Landmark className="h-5 w-5" />
+            </div>
+            <div className="mt-5 text-xs font-black uppercase tracking-[.12em] text-white/65">Crédito contratado</div>
+            <div className="mt-2 text-3xl font-black tracking-tight md:text-4xl">{brMoney(summary.contractedCredit)}</div>
+            <div className="mt-5 flex flex-wrap gap-2 text-xs font-semibold text-white/80">
+              <span className="rounded-full bg-white/10 px-3 py-1.5">{adminName}</span>
+              <span className="rounded-full bg-white/10 px-3 py-1.5">Prazo total: {summary.planTerm} meses</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className={`grid gap-3 ${hasRegularPreContemplationInstallments ? "md:grid-cols-2" : ""}`}>
+            <div className="rounded-xl border bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[11px] font-black uppercase tracking-[.12em] text-slate-500">Na contratação</div>
+                <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black text-white" style={{ background: C.navy }}>1</span>
+              </div>
+              <div className="mt-3 text-sm font-bold text-slate-600">{installmentRangeLabel(1, initialInstallmentEnd)}</div>
+              <div className="mt-1 text-2xl font-black" style={{ color: C.navy }}>{brMoney(firstInstallment)}</div>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                {isEmbracon
+                  ? "A primeira parcela pode ser paga em até 3x sem juros no cartão."
+                  : "Valor inicial previsto no extrato da simulação."}
+              </p>
+            </div>
+
+            {hasRegularPreContemplationInstallments ? (
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[11px] font-black uppercase tracking-[.12em] text-slate-500">Até a contemplação</div>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black text-white" style={{ background: C.gold }}>2</span>
+                </div>
+                <div className="mt-3 text-sm font-bold text-slate-600">{installmentRangeLabel(regularInstallmentStart, preContemplationEnd)}</div>
+                <div className="mt-1 text-2xl font-black" style={{ color: C.gold }}>{brMoney(nextInstallment)}</div>
+                <p className="mt-2 text-xs leading-relaxed text-slate-500">Valor mensal previsto até a contemplação estimada.</p>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-xl border p-4" style={{ borderColor: "rgba(161,28,39,.24)", background: "linear-gradient(135deg, rgba(161,28,39,.05), rgba(181,165,115,.08))" }}>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[.12em] text-slate-500">Após a contemplação</div>
+                <div className="mt-2 text-sm font-bold text-slate-600">Crédito líquido liberado</div>
+                <div className="mt-1 text-3xl font-black" style={{ color: C.ruby }}>{brMoney(summary.availableAtContemplation)}</div>
+              </div>
+
+              <div className="grid flex-1 gap-3 sm:grid-cols-3 lg:max-w-3xl">
+                <div className="rounded-lg border bg-white/85 p-3">
+                  <div className="text-[11px] font-bold uppercase tracking-[.08em] text-slate-500">Lance próprio</div>
+                  <div className="mt-1 text-base font-black" style={{ color: C.navy }}>{brMoney(summary.ownBidAtContemplation)}</div>
+                </div>
+                <div className="rounded-lg border bg-white/85 p-3">
+                  <div className="text-[11px] font-bold uppercase tracking-[.08em] text-slate-500">Parcelas restantes</div>
+                  <div className="mt-1 text-base font-black" style={{ color: C.navy }}>
+                    {remainingMonths} x de {brMoney(postContemplationInstallment)}
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-white/85 p-3">
+                  <div className="text-[11px] font-bold uppercase tracking-[.08em] text-slate-500">Prazo restante</div>
+                  <div className="mt-1 text-base font-black" style={{ color: C.navy }}>{remainingMonths} meses</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t bg-slate-50/70 px-5 py-3 text-[11px] leading-relaxed text-slate-500">
+        Valores consolidados diretamente do Extrato da simulação. A contemplação é uma estimativa e pode ocorrer antes ou depois do período apresentado.
+      </div>
+    </section>
+  );
+}
+
 function axisMoney(value: number) {
   const abs = Math.abs(value);
 
@@ -3850,6 +3984,7 @@ function PlaceholderModel({ model }: { model: (typeof MODELS)[number] }) {
 
 export default function ProMaxModelosHub({ proposal, params, allowedModels }: ProMaxModelosHubProps) {
   const [activeModel, setActiveModel] = useState<ModelKey>("extrato");
+  const consortiumSummaryFlow = useMemo(() => buildExtratoFlow(proposal, params), [proposal, params]);
   const visibleModels = useMemo(() => {
     if (!allowedModels?.length) return MODELS;
     const allowed = new Set(allowedModels);
@@ -3973,6 +4108,8 @@ export default function ProMaxModelosHub({ proposal, params, allowedModels }: Pr
           );
         })}
       </section>
+
+      <ConsortiumSummaryCard proposal={proposal} flow={consortiumSummaryFlow} />
 
       {activeModel === "extrato" ? (
         <ExtratoModel proposal={proposal} params={params} />

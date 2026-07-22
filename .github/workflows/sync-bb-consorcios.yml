@@ -1,0 +1,93 @@
+name: Sincronização BB Consórcios
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Tipo de sincronização
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - segment
+          - assemblies
+      segment:
+        description: Segmento quando o tipo for segment
+        required: false
+        default: auto_fipe
+        type: choice
+        options:
+          - auto_ipca
+          - auto_fipe
+          - outros_bens
+          - pesados
+          - motocicleta
+          - imoveis
+  schedule:
+    # GitHub usa UTC. 04:17 UTC equivale a 00:17 em Rondônia.
+    - cron: "17 */4 * * *"
+    # Consome solicitações criadas pelos botões da Central de Grupos.
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bb-consorcios-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Executar robô BB
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Verificar configuração segura
+        id: config
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BB_ROBOT_PORTAL_URL: ${{ secrets.BB_ROBOT_PORTAL_URL }}
+          BB_ROBOT_USERNAME: ${{ secrets.BB_ROBOT_USERNAME }}
+          BB_ROBOT_PASSWORD: ${{ secrets.BB_ROBOT_PASSWORD }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$BB_ROBOT_PORTAL_URL" ] && [ -n "$BB_ROBOT_USERNAME" ] && [ -n "$BB_ROBOT_PASSWORD" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Sincronização ignorada: adicione os cinco secrets obrigatórios do robô BB."
+          fi
+
+      - name: Instalar dependências do worker
+        if: steps.config.outputs.ready == 'true'
+        working-directory: workers/bb-groups-worker
+        run: npm ci
+
+      - name: Montar e compilar worker
+        if: steps.config.outputs.ready == 'true'
+        working-directory: workers/bb-groups-worker
+        run: npm run build
+
+      - name: Executar sincronização
+        if: steps.config.outputs.ready == 'true'
+        working-directory: workers/bb-groups-worker
+        env:
+          SYNC_TRIGGER: ${{ github.event_name == 'workflow_dispatch' && 'dispatch' || (github.event.schedule == '*/5 * * * *' && 'queue' || 'cron') }}
+          SYNC_MODE: ${{ inputs.mode || 'full' }}
+          SYNC_SEGMENT: ${{ inputs.segment || '' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BB_ROBOT_PORTAL_URL: ${{ secrets.BB_ROBOT_PORTAL_URL }}
+          BB_ROBOT_USERNAME: ${{ secrets.BB_ROBOT_USERNAME }}
+          BB_ROBOT_PASSWORD: ${{ secrets.BB_ROBOT_PASSWORD }}
+          BB_LOGIN_USERNAME_SELECTOR: ${{ vars.BB_LOGIN_USERNAME_SELECTOR }}
+          BB_LOGIN_PASSWORD_SELECTOR: ${{ vars.BB_LOGIN_PASSWORD_SELECTOR }}
+          BB_LOGIN_SUBMIT_SELECTOR: ${{ vars.BB_LOGIN_SUBMIT_SELECTOR }}
+        run: node scripts/run-github-sync.mjs

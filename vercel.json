@@ -4,20 +4,13 @@
   "outputDirectory": "dist",
   "functions": {
     "api/robots/sync-groups.ts": {
-      "maxDuration": 800
-    },
-    "api/cron/sync-bb-complete.ts": {
-      "maxDuration": 800
+      "maxDuration": 60
     },
     "api/agenda/birthday-whatsapp.ts": {
       "maxDuration": 300
     }
   },
   "crons": [
-    {
-      "path": "/api/cron/sync-bb-complete",
-      "schedule": "0 */4 * * *"
-    },
     {
       "path": "/api/agenda/birthday-whatsapp",
       "schedule": "30 8 * * *"

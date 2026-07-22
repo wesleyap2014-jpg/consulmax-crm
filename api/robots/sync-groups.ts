@@ -6,7 +6,7 @@ type AdminKey = 'bb' | 'maggi'
 
 type RobotResult = {
   ok: boolean
-  status: 'not_configured' | 'ready' | 'synced' | 'error'
+  status: 'not_configured' | 'ready' | 'queued' | 'synced' | 'error'
   administradora: AdminKey
   message: string
   found?: number
@@ -17,7 +17,7 @@ type RobotResult = {
 }
 
 export const config = {
-  maxDuration: 800,
+  maxDuration: 60,
 }
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
@@ -50,7 +50,7 @@ async function verifyUser(req: VercelRequest) {
   const { data, error } = await admin.auth.getUser(token)
   if (error || !data?.user) return { ok: false, error: 'Sessão inválida ou expirada.' }
 
-  const role = String(data.user.app_metadata?.role || data.user.user_metadata?.role || '').toLowerCase()
+  const role = String(data.user.app_metadata?.role || '').toLowerCase()
   if (role === 'admin') return { ok: true, user: data.user }
 
   const { data: profile } = await admin
@@ -83,12 +83,9 @@ function workerApplicationNotFound(data: any, rawText: string) {
   return message.includes('application not found')
 }
 
-function workerConfig(administradora: AdminKey) {
-  const workerUrl = administradora === 'bb'
-    ? process.env.BB_GROUPS_WORKER_URL || ''
-    : process.env.MAGGI_GROUPS_WORKER_URL || ''
-
-  const workerUrlEnv = administradora === 'bb' ? 'BB_GROUPS_WORKER_URL' : 'MAGGI_GROUPS_WORKER_URL'
+function workerConfig() {
+  const workerUrl = process.env.MAGGI_GROUPS_WORKER_URL || ''
+  const workerUrlEnv = 'MAGGI_GROUPS_WORKER_URL'
   const secret = process.env.ROBOT_API_SECRET || ''
   const missing = [
     [workerUrlEnv, workerUrl],
@@ -106,7 +103,7 @@ async function callExternalWorker(
   body: Record<string, any>,
   fallbackMessage: string
 ): Promise<RobotResult> {
-  const { workerUrl, workerUrlEnv, secret, missing } = workerConfig(administradora)
+  const { workerUrl, workerUrlEnv, secret, missing } = workerConfig()
 
   if (missing.length) {
     return {
@@ -182,36 +179,6 @@ async function callExternalWorker(
   }
 }
 
-async function callBBGroupsWorker(options: Record<string, any> = {}): Promise<RobotResult> {
-  const segmento = options.segmento || options.bbSegmento || 'auto_fipe'
-  return await callExternalWorker(
-    'bb',
-    '/sync/bb/groups',
-    { segmento },
-    `Sincronização BB concluída pelo worker externo para o segmento ${segmento}.`
-  )
-}
-
-async function callBBAssemblyWorker(options: Record<string, any> = {}): Promise<RobotResult> {
-  const grupo = options.grupo || options.group
-
-  if (!grupo) {
-    return {
-      ok: false,
-      status: 'error',
-      administradora: 'bb',
-      message: 'Informe o número do grupo para buscar resultado de assembleia.',
-    }
-  }
-
-  return await callExternalWorker(
-    'bb',
-    '/sync/bb/assembly-result',
-    { grupo },
-    `Resultado de assembleia BB atualizado pelo worker externo para o grupo ${grupo}.`
-  )
-}
-
 async function callMaggiAvailableGroupsWorker(options: Record<string, any> = {}): Promise<RobotResult> {
   const segments = options.segments || options.segmentos || options.segmento || undefined
   return await callExternalWorker(
@@ -222,15 +189,99 @@ async function callMaggiAvailableGroupsWorker(options: Record<string, any> = {})
   )
 }
 
-async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}): Promise<RobotResult> {
+const BB_SEGMENTS = new Set([
+  'auto_ipca',
+  'auto_fipe',
+  'outros_bens',
+  'pesados',
+  'motocicleta',
+  'imoveis',
+])
+
+async function enqueueBBJob(options: Record<string, any>, requestedBy: string): Promise<RobotResult> {
+  if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
+
+  const mode = isBBAssemblyRequest(options)
+    ? 'assemblies'
+    : options.segmento || options.bbSegmento
+      ? 'segment'
+      : 'full'
+  const segment = mode === 'segment'
+    ? String(options.segmento || options.bbSegmento || '').trim().toLowerCase()
+    : null
+
+  if (mode === 'segment' && !BB_SEGMENTS.has(segment || '')) {
+    return {
+      ok: false,
+      status: 'error',
+      administradora: 'bb',
+      message: 'Segmento BB inválido.',
+      details: { allowed_segments: Array.from(BB_SEGMENTS) },
+    }
+  }
+
+  const { data: activeJob, error: activeError } = await admin
+    .from('robot_sync_jobs')
+    .select('*')
+    .eq('administradora', 'bb')
+    .in('status', ['pending', 'running'])
+    .order('requested_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (activeError) throw activeError
+
+  if (activeJob) {
+    return {
+      ok: true,
+      status: 'queued',
+      administradora: 'bb',
+      message: activeJob.status === 'running'
+        ? 'Já existe uma sincronização BB em andamento no GitHub Actions.'
+        : 'Já existe uma sincronização BB aguardando o GitHub Actions.',
+      details: { job_id: activeJob.id, job: activeJob, reused: true },
+    }
+  }
+
+  const { data: job, error } = await admin
+    .from('robot_sync_jobs')
+    .insert({
+      administradora: 'bb',
+      mode,
+      segment,
+      source: 'manual',
+      status: 'pending',
+      requested_by: requestedBy,
+      current_stage: 'Aguardando GitHub Actions',
+      progress: {
+        segments: {},
+        assemblies: { total: 0, done: 0, success: 0, error: 0, currentGroup: '', errors: [] },
+      },
+    })
+    .select('*')
+    .single()
+
+  if (error) {
+    if (error.code === '23505') {
+      return enqueueBBJob(options, requestedBy)
+    }
+    throw error
+  }
+
+  return {
+    ok: true,
+    status: 'queued',
+    administradora: 'bb',
+    message: 'Sincronização BB adicionada à fila do GitHub Actions. O início pode levar alguns minutos.',
+    details: { job_id: job.id, job },
+  }
+}
+
+async function syncByRpa(administradora: AdminKey, options: Record<string, any> = {}, requestedBy = ''): Promise<RobotResult> {
   if (!admin) throw new Error('Supabase Admin não configurado na Vercel.')
 
   if (administradora === 'bb') {
-    if (isBBAssemblyRequest(options)) {
-      return await callBBAssemblyWorker(options)
-    }
-
-    return await callBBGroupsWorker(options)
+    return await enqueueBBJob(options, requestedBy)
   }
 
   return await callMaggiAvailableGroupsWorker(options)
@@ -253,9 +304,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const administradora = allowedAdmin(body?.administradora)
     if (!administradora) return res.status(400).json({ ok: false, error: 'Administradora inválida. Use bb ou maggi.' })
 
-    const result = await syncByRpa(administradora, body || {})
+    const result = await syncByRpa(administradora, body || {}, auth.user?.id || '')
     const status = result.status === 'not_configured'
       ? 409
+      : result.status === 'queued'
+        ? 202
       : result.details?.worker_unavailable
         ? 503
         : result.status === 'error'

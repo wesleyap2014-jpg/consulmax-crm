@@ -74,6 +74,15 @@ function normalizeWorkerUrl(url: string) {
   return url.replace(/\/+$/, '')
 }
 
+function workerApplicationNotFound(data: any, rawText: string) {
+  const message = [data?.error, data?.message, data?.raw, rawText]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  return message.includes('application not found')
+}
+
 function workerConfig(administradora: AdminKey) {
   const workerUrl = administradora === 'bb'
     ? process.env.BB_GROUPS_WORKER_URL || ''
@@ -133,14 +142,18 @@ async function callExternalWorker(
     }
 
     if (!response.ok) {
+      const unavailable = workerApplicationNotFound(data, text)
       return {
         ok: false,
         status: 'error',
         administradora,
-        message: data?.error || data?.message || `Worker ${administradora.toUpperCase()} retornou erro HTTP ${response.status}.`,
+        message: unavailable
+          ? `O serviço externo do robô ${administradora.toUpperCase()} não foi encontrado. Verifique o deployment no Railway e atualize ${workerUrlEnv} na Vercel.`
+          : data?.error || data?.message || `Worker ${administradora.toUpperCase()} retornou erro HTTP ${response.status}.`,
         details: {
           worker_status: response.status,
           worker_response: data,
+          worker_unavailable: unavailable,
         },
       }
     }
@@ -241,7 +254,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!administradora) return res.status(400).json({ ok: false, error: 'Administradora inválida. Use bb ou maggi.' })
 
     const result = await syncByRpa(administradora, body || {})
-    const status = result.status === 'not_configured' ? 409 : result.status === 'error' ? 500 : 200
+    const status = result.status === 'not_configured'
+      ? 409
+      : result.details?.worker_unavailable
+        ? 503
+        : result.status === 'error'
+          ? 500
+          : 200
     return res.status(status).json(result)
   } catch (err: any) {
     return res.status(500).json({

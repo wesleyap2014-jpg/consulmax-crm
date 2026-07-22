@@ -427,7 +427,7 @@ export default function CentralGrupos() {
               message:
                 item.message ||
                 (job.status === "pending"
-                  ? "Aguardando GitHub Actions"
+                  ? job.current_stage || "Aguardando GitHub Actions"
                   : "Aguardando"),
             } as SyncStep;
           }),
@@ -466,7 +466,7 @@ export default function CentralGrupos() {
         type: "warn",
         text:
           job.status === "pending"
-            ? "Solicitação registrada. Aguardando o GitHub Actions iniciar; isso normalmente leva até alguns minutos."
+            ? `${job.current_stage || "GitHub Actions acionado"}. A execução começará assim que o GitHub disponibilizar a máquina.`
             : `${job.current_stage || "Sincronização BB em andamento"}${job.current_item ? `: ${job.current_item}` : ""}.`,
       });
       return;
@@ -537,7 +537,7 @@ export default function CentralGrupos() {
             message:
               item.message ||
               (job.status === "pending"
-                ? "Aguardando GitHub Actions"
+                ? job.current_stage || "Aguardando GitHub Actions"
                 : "Aguardando"),
           } as SyncStep;
         }),
@@ -550,7 +550,7 @@ export default function CentralGrupos() {
         type: "warn",
         text:
           job.status === "pending"
-            ? "Sincronização Maggi registrada. Aguardando o GitHub Actions iniciar."
+            ? `${job.current_stage || "GitHub Actions acionado"}. A execução começará assim que o GitHub disponibilizar a máquina.`
             : `${job.current_stage || "Sincronização Maggi em andamento"}${job.current_item ? `: ${job.current_item}` : ""}.`,
       });
       return;
@@ -803,7 +803,9 @@ export default function CentralGrupos() {
             <p className="text-sm text-slate-600">
               As sincronizações BB e Maggi são executadas com Chrome e
               Playwright no GitHub Actions. Cada administradora possui sua fila
-              e seu acompanhamento independente.
+              e seu acompanhamento independente. A atualização automática ocorre
+              diariamente às 7h30, no horário de Rondônia; os comandos manuais
+              são enviados imediatamente pela API.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <div
@@ -829,7 +831,7 @@ export default function CentralGrupos() {
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   BB:{" "}
                   {activeBBJob.status === "pending"
-                    ? "aguardando GitHub Actions"
+                    ? activeBBJob.current_stage || "aguardando GitHub Actions"
                     : activeBBJob.current_stage || "em execução"}
                 </div>
               )}
@@ -839,7 +841,8 @@ export default function CentralGrupos() {
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Maggi:{" "}
                   {activeMaggiJob.status === "pending"
-                    ? "aguardando GitHub Actions"
+                    ? activeMaggiJob.current_stage ||
+                      "aguardando GitHub Actions"
                     : activeMaggiJob.current_stage || "em execução"}
                 </div>
               )}

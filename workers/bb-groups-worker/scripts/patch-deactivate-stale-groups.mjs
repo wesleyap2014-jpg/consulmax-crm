@@ -30,20 +30,20 @@ replaceOnce(
   "deactivated?: number;"
 );
 
-const newUpsertFunction = `async function deactivateMissingGroups(segmento: SegmentKey, activeGroupCodes: string[]) {
-  const activeSet = new Set(activeGroupCodes.map((grupo) => String(grupo || "").trim()).filter(Boolean));
+const newUpsertFunction = `async function deactivateMissingGroups(segmento: SegmentKey, activeIdentityKeys: string[]) {
+  const activeSet = new Set(activeIdentityKeys.map((key) => String(key || "").trim()).filter(Boolean));
 
   const { data: activeRows, error: listErr } = await supabase
     .from("sim_bb_groups")
-    .select("id, grupo")
+    .select("id, grupo, identity_key")
     .eq("segmento", segmento)
     .eq("is_active", true);
 
   if (listErr) throw listErr;
 
   const staleRows = (activeRows || []).filter((row: any) => {
-    const grupo = String(row?.grupo || "").trim();
-    return grupo && !activeSet.has(grupo);
+    const identityKey = String(row?.identity_key || "").trim();
+    return identityKey && !activeSet.has(identityKey);
   });
 
   if (!staleRows.length) {
@@ -64,6 +64,7 @@ const newUpsertFunction = `async function deactivateMissingGroups(segmento: Segm
     segmento,
     total: staleRows.length,
     grupos: staleRows.map((row: any) => row.grupo),
+    identityKeys: staleRows.map((row: any) => row.identity_key),
   });
 
   return staleRows.length;
@@ -81,8 +82,7 @@ async function upsertGroups(payloads: any[]) {
     const { data: existing, error: findErr } = await supabase
       .from("sim_bb_groups")
       .select("id, config")
-      .eq("grupo", payload.grupo)
-      .eq("segmento", payload.segmento)
+      .eq("identity_key", payload.identity_key)
       .maybeSingle();
 
     if (findErr) throw findErr;
@@ -116,12 +116,12 @@ async function upsertGroups(payloads: any[]) {
   }
 
   for (const segmento of segmentos) {
-    const activeGroupCodes = payloads
+    const activeIdentityKeys = payloads
       .filter((payload) => payload.segmento === segmento)
-      .map((payload) => String(payload.grupo || "").trim())
+      .map((payload) => String(payload.identity_key || "").trim())
       .filter(Boolean);
 
-    deactivated += await deactivateMissingGroups(segmento, activeGroupCodes);
+    deactivated += await deactivateMissingGroups(segmento, activeIdentityKeys);
   }
 
   log("gravação no Supabase concluída", {

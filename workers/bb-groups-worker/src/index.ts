@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { chromium, Page, Browser } from "playwright";
 import { createClient } from "@supabase/supabase-js";
+import { bbGroupIdentityKey } from "./groupIdentity.js";
 
 type SegmentKey =
   | "auto_ipca"
@@ -645,13 +646,15 @@ function buildGroupPayloads(rows: RawGroupRow[]) {
   const map = new Map<string, RawGroupRow[]>();
 
   for (const row of rows) {
-    const key = `${row.segmento}:${row.grupo}`;
+    const key = bbGroupIdentityKey(row);
     map.set(key, [...(map.get(key) || []), row]);
   }
 
-  return Array.from(map.entries()).map(([key, list]) => {
-    const [segmento, grupo] = key.split(":") as [SegmentKey, string];
+  return Array.from(map.entries()).map(([identityKey, list]) => {
     const first = list[0];
+    const segmento = first.segmento;
+    const grupo = String(first.grupo || "").trim();
+    const provisional = grupo === "000000";
 
     const credits = list.map((row) => row.credito).filter(Boolean);
     const prazos = list.map((row) => row.prazo).filter(Boolean);
@@ -712,10 +715,13 @@ function buildGroupPayloads(rows: RawGroupRow[]) {
     const minContemplacao = minCont.length ? Math.min(...minCont) : 0;
 
     return {
+      identity_key: identityKey,
       grupo,
       segmento,
-      nome_grupo: `Grupo ${grupo}`,
-      observacoes: `Importado pelo robô BB externo${
+      nome_grupo: provisional
+        ? `Em formação • ${Number(first?.prazo || 0)} meses`
+        : `Grupo ${grupo}`,
+      observacoes: `${provisional ? "Plano provisório" : "Grupo"} importado pelo robô BB externo${
         first?.assembleia ? ` • Assembleia: ${first.assembleia}` : ""
       }${first?.vencimento ? ` • Vencimento: ${first.vencimento}` : ""}`,
       credito_min: credits.length ? Math.min(...credits) : 0,
@@ -762,6 +768,17 @@ function buildGroupPayloads(rows: RawGroupRow[]) {
               .replace(".", ",")}%`
           : "",
         source: "bb-groups-worker",
+        groupIdentityKey: identityKey,
+        provisionalGroup: provisional,
+        provisionalPlan: provisional
+          ? {
+              venda: first?.venda || null,
+              prazo: Number(first?.prazo || 0),
+              taxaAdmPct: Number(first?.taxaAdmPct || 0),
+              fundoReservaPct: Number(first?.fundoReservaPct || 0),
+              seguroPct: Number(first?.seguroPct || 0),
+            }
+          : null,
         updatedAt: new Date().toISOString(),
       },
     };
@@ -862,7 +879,7 @@ async function processSegment(page: Page, segment: SegmentConfig) {
       segmento: segment.key,
       venda,
       linhas: result.rows.length,
-      grupos: new Set(result.rows.map((row) => row.grupo)).size,
+      grupos: new Set(result.rows.map(bbGroupIdentityKey)).size,
       paginas: result.pages,
     });
 
@@ -908,7 +925,7 @@ async function syncBBGroups(segmento: SegmentKey): Promise<SyncResult> {
     const { created, updated } = await upsertGroups(payloads);
 
     const pages = readDetails.reduce((sum, item) => sum + Number(item.paginas || 0), 0);
-    const uniqueGroups = new Set(rows.map((row) => row.grupo)).size;
+    const uniqueGroups = payloads.length;
 
     log("sincronização concluída", {
       segmento,

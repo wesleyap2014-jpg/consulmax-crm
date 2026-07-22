@@ -46,7 +46,6 @@ function detailText(step: SyncStep) {
 function toBBGroup(row: AnyRow): GrupoCentral { const credit = creditRangeFromConfig(row); const minCont = lanceLivreFromConfig(row); const maior = assemblyValue(row, "maiorPct"); const menor = assemblyValue(row, "menorPct") || minCont; const medianaFromRobot = assemblyValue(row, "medianaPct"); const mediana = medianaFromRobot || (maior && menor ? (maior + menor) / 2 : maior || menor || minCont || null); return { id: `bb-${row.id}`, origem: "bb", administradora: "BB Consórcios", grupo: String(row.grupo || "—"), nome: String(row.nome_grupo || `Grupo ${row.grupo || ""}`), segmento: normalizeSegmento(row.segmento), creditoMin: credit.min, creditoMax: credit.max, prazoMax: prazoMaxFrom(row), maiorPct: maior, menorPct: menor, medianaPct: mediana, lanceEmbutidoMaxPct: normalizePct(row.lance_embutido_max_pct || row.config?.maxLanceEmbutidoPct), ativo: row.is_active !== false }; }
 function toMaggiGroup(row: AnyRow): GrupoCentral { const credit = creditRangeFromConfig(row); const maior = normalizePct(row.maior_pct_contemplado || row.maior_pct_lance_livre || row.maior_lance_livre); const menor = normalizePct(row.menor_pct_contemplado || row.menor_pct_lance_livre || row.menor_lance_livre); const mediana = maior && menor ? (maior + menor) / 2 : maior || menor || lanceLivreFromConfig(row) || null; return { id: `maggi-${row.id}`, origem: "maggi", administradora: "Maggi", grupo: String(row.grupo || "—"), nome: String(row.nome_grupo || `Grupo ${row.grupo || ""}`), segmento: normalizeSegmento(row.segmento), creditoMin: credit.min, creditoMax: credit.max, prazoMax: prazoMaxFrom(row), maiorPct: maior, menorPct: menor, medianaPct: mediana, lanceEmbutidoMaxPct: normalizePct(row.lance_embutido_max_pct || row.config?.maxLanceEmbutidoPct), ativo: row.is_active !== false }; }
 function newSteps(): SyncStep[] { return BB_SEGMENTS.map((s) => ({ ...s, status: "pending" })); }
-function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 export default function CentralGrupos() {
   const navigate = useNavigate();
@@ -65,17 +64,20 @@ export default function CentralGrupos() {
   const [assemblyProgress, setAssemblyProgress] = useState<AssemblyProgress>({ total: 0, done: 0, success: 0, error: 0, currentGroup: "", running: false });
   const [assemblyErrors, setAssemblyErrors] = useState<string[]>([]);
   const [lastBBCronSuccess, setLastBBCronSuccess] = useState<string | null>(null);
+  const [activeBBJob, setActiveBBJob] = useState<AnyRow | null>(null);
 
   async function load() {
     setLoading(true);
-    const [bbRes, maggiRes, syncStatusRes] = await Promise.all([
+    const [bbRes, maggiRes, syncStatusRes, jobRes] = await Promise.all([
       supabase.from("sim_bb_groups").select("*").order("grupo", { ascending: true }),
       supabase.from("sim_maggi_groups").select("*").order("grupo", { ascending: true }),
       supabase.from("robot_sync_status").select("last_success_at").eq("key", "bb_groups_cron").maybeSingle(),
+      supabase.from("robot_sync_jobs").select("*").eq("administradora", "bb").order("requested_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
     setBb((bbRes.data || []) as AnyRow[]);
     setMaggi((maggiRes.data || []) as AnyRow[]);
     setLastBBCronSuccess(syncStatusRes.data?.last_success_at || null);
+    if (jobRes.data) applyBBJob(jobRes.data);
     setLoading(false);
   }
 
@@ -97,125 +99,107 @@ export default function CentralGrupos() {
     return { json, message };
   }
 
-  async function syncBBGroupsQueue() {
-    setSyncSteps(newSteps());
-    let total = 0;
-    const errors: string[] = [];
-    let workerUnavailable = false;
-    for (let index = 0; index < BB_SEGMENTS.length; index++) {
-      const item = BB_SEGMENTS[index];
-      setSyncSteps((steps) => steps.map((s) => s.key === item.key ? { ...s, status: "running", message: "Sincronizando grupos..." } : s));
-      try {
-        const { json, message } = await callRobot("bb", { segmento: item.key });
-        const found = Number(json?.found || 0);
-        const rawRows = Number(json?.details?.raw_rows || 0);
-        const readDetails = Array.isArray(json?.details?.readDetails) ? json.details.readDetails : [];
-        total += Number.isFinite(found) ? found : 0;
-        setSyncSteps((steps) => steps.map((s) => s.key === item.key ? { ...s, status: "done", found, rawRows, readDetails, message } : s));
-      }
-      catch (err: any) {
-        const text = err?.message || "Erro ao sincronizar grupos.";
-        errors.push(`${item.label}: ${text}`);
-        setSyncSteps((steps) => steps.map((s) => s.key === item.key ? { ...s, status: "error", message: text } : s));
-        if (text.toLowerCase().includes("serviço externo do robô bb não foi encontrado") || text.toLowerCase().includes("application not found")) {
-          workerUnavailable = true;
-          const skippedKeys = new Set(BB_SEGMENTS.slice(index + 1).map((segment) => segment.key));
-          setSyncSteps((steps) => steps.map((step) => skippedKeys.has(step.key) ? { ...step, status: "error", message: "Não executado: worker BB indisponível." } : step));
-          break;
-        }
-      }
+  function applyBBJob(job: AnyRow) {
+    setActiveBBJob(job);
+    const jobProgress = job.progress && typeof job.progress === "object" ? job.progress : {};
+    const segmentProgress = jobProgress.segments && typeof jobProgress.segments === "object" ? jobProgress.segments : {};
+    const relevantSegments = job.mode === "segment" ? new Set([job.segment]) : new Set(BB_SEGMENTS.map((item) => item.key));
+
+    if (job.mode === "assemblies") {
+      setSyncSteps([]);
+    } else {
+      setSyncSteps(newSteps().filter((step) => relevantSegments.has(step.key)).map((step) => {
+        const item = segmentProgress[step.key] || {};
+        return {
+          ...step,
+          status: item.status || "pending",
+          found: Number(item.found || 0),
+          rawRows: item.rawRows === undefined ? undefined : Number(item.rawRows || 0),
+          readDetails: Array.isArray(item.readDetails) ? item.readDetails : [],
+          message: item.message || (job.status === "pending" ? "Aguardando GitHub Actions" : "Aguardando"),
+        } as SyncStep;
+      }));
     }
-    return { total, errors, workerUnavailable };
-  }
 
-  async function syncBBAssembliesQueue() {
-    const { data, error } = await supabase.from("sim_bb_groups").select("grupo,is_active").eq("is_active", true).order("grupo", { ascending: true });
-    if (error) throw error;
-    const groups = Array.from(new Set((data || []).map((row: AnyRow) => String(row.grupo || "").trim()).filter((group: string) => group && group !== "000000")));
-    setAssemblyErrors([]);
-    setAssemblyProgress({ total: groups.length, done: 0, success: 0, error: 0, currentGroup: "", running: true });
-    let success = 0;
-    let failed = 0;
-    for (const group of groups) {
-      setAssemblyProgress((prev) => ({ ...prev, currentGroup: group, running: true }));
-      try { await callRobot("bb", { tipo: "assembleia", grupo: group }); success += 1; setAssemblyProgress((prev) => ({ ...prev, done: prev.done + 1, success: prev.success + 1 })); }
-      catch (err: any) { const text = err?.message || "Erro ao atualizar assembleia."; failed += 1; setAssemblyErrors((prev) => [`Grupo ${group}: ${text}`, ...prev].slice(0, 6)); setAssemblyProgress((prev) => ({ ...prev, done: prev.done + 1, error: prev.error + 1 })); }
-      await sleep(500);
-    }
-    setAssemblyProgress((prev) => ({ ...prev, currentGroup: "", running: false }));
-    return { total: groups.length, success, failed };
-  }
+    const assemblies = jobProgress.assemblies || {};
+    setAssemblyProgress({
+      total: Number(assemblies.total || 0),
+      done: Number(assemblies.done || 0),
+      success: Number(assemblies.success || 0),
+      error: Number(assemblies.error || 0),
+      currentGroup: String(assemblies.currentGroup || ""),
+      running: job.status === "running" && (job.mode === "full" || job.mode === "assemblies") && String(job.current_stage || "").toLowerCase().includes("assemble"),
+    });
+    setAssemblyErrors(Array.isArray(assemblies.errors) ? assemblies.errors.slice(0, 6) : []);
 
-  async function syncBBFullQueue() {
-    setSyncing("bb");
-    setSyncMessage(null);
-    setAssemblyErrors([]);
-    setAssemblyProgress({ total: 0, done: 0, success: 0, error: 0, currentGroup: "", running: false });
-    try {
-      const groupResult = await syncBBGroupsQueue();
-      await load();
-      if (groupResult.workerUnavailable) {
-        setSyncMessage({ type: "error", text: "Sincronização interrompida: o serviço do robô BB no Railway não foi encontrado. As assembleias não foram executadas. Atualize BB_GROUPS_WORKER_URL na Vercel com o domínio ativo do worker." });
-        return;
-      }
-      const assemblyResult = await syncBBAssembliesQueue();
-      await load();
-      const type = groupResult.errors.length || assemblyResult.failed ? "warn" : "ok";
-      setSyncMessage({ type, text: `Sincronização BB concluída: ${groupResult.total} grupo(s) processado(s) e ${assemblyResult.success}/${assemblyResult.total} assembleia(s) atualizada(s).` });
-    }
-    catch (err: any) { setSyncMessage({ type: "error", text: err?.message || "Erro ao sincronizar BB." }); }
-    finally { setSyncing(null); }
-  }
-
-
-  async function syncBBSegment(item: { key: string; label: string }) {
-    setSyncing("bb_segment");
-    setSyncingSegment(item.key);
-    setSyncMessage(null);
-    setAssemblyErrors([]);
-    setAssemblyProgress({ total: 0, done: 0, success: 0, error: 0, currentGroup: "", running: false });
-    setSyncSteps(newSteps().map((step) => step.key === item.key ? { ...step, status: "running", message: "Sincronizando apenas este segmento..." } : step));
-
-    try {
-      const { json, message } = await callRobot("bb", { segmento: item.key });
-      const found = Number(json?.found || 0);
-      const rawRows = Number(json?.details?.raw_rows || 0);
-      const readDetails = Array.isArray(json?.details?.readDetails) ? json.details.readDetails : [];
-
-      setSyncSteps((steps) => steps.map((step) => step.key === item.key ? { ...step, status: "done", found, rawRows, readDetails, message } : step));
-      await load();
-
-      const hasRobotErrors = Array.isArray(json?.details?.errors) && json.details.errors.length > 0;
+    const isActive = job.status === "pending" || job.status === "running";
+    if (isActive) {
+      const mode: SyncMode = job.mode === "segment" ? "bb_segment" : job.mode === "assemblies" ? "bb_assemblies" : "bb";
+      setSyncing(mode);
+      setSyncingSegment(job.mode === "segment" ? job.segment : null);
       setSyncMessage({
-        type: hasRobotErrors ? "warn" : "ok",
-        text: `${item.label}: ${found} grupo(s) processado(s). ${rawRows} linha(s) lida(s).`
+        type: "warn",
+        text: job.status === "pending"
+          ? "Solicitação registrada. Aguardando o GitHub Actions iniciar; isso normalmente leva até alguns minutos."
+          : `${job.current_stage || "Sincronização BB em andamento"}${job.current_item ? `: ${job.current_item}` : ""}.`,
       });
+      return;
+    }
+
+    setSyncing((current) => current === "maggi" ? current : null);
+    setSyncingSegment(null);
+    const summary = job.summary || {};
+    if (job.status === "success") {
+      setSyncMessage({
+        type: "ok",
+        text: `Sincronização BB concluída pelo GitHub Actions: ${Number(summary.groupsFound || 0)} grupo(s) processado(s) e ${Number(summary.assembliesSuccess || 0)}/${Number(summary.assembliesTotal || 0)} assembleia(s) atualizada(s).`,
+      });
+    } else if (job.status === "partial_error") {
+      setSyncMessage({ type: "warn", text: job.error_message || "Sincronização BB concluída com erros parciais." });
+    } else if (job.status === "error") {
+      setSyncMessage({ type: "error", text: job.error_message || "A sincronização BB falhou no GitHub Actions." });
+    }
+  }
+
+  async function refreshBBJob(jobId?: string) {
+    let query = supabase.from("robot_sync_jobs").select("*").eq("administradora", "bb");
+    query = jobId ? query.eq("id", jobId) : query.order("requested_at", { ascending: false }).limit(1);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    if (data) applyBBJob(data);
+    return data;
+  }
+
+  async function queueBB(payload: Record<string, any>, mode: Exclude<SyncMode, "maggi" | null>, segmentKey?: string) {
+    setSyncing(mode);
+    setSyncingSegment(segmentKey || null);
+    setSyncMessage(null);
+    setAssemblyErrors([]);
+    if (mode !== "bb_assemblies") setSyncSteps(mode === "bb_segment" ? newSteps().filter((step) => step.key === segmentKey) : newSteps());
+    else setSyncSteps([]);
+    setAssemblyProgress({ total: 0, done: 0, success: 0, error: 0, currentGroup: "", running: false });
+
+    try {
+      const { json, message } = await callRobot("bb", payload);
+      const job = json?.details?.job;
+      if (job) applyBBJob(job);
+      else if (json?.details?.job_id) await refreshBBJob(json.details.job_id);
+      setSyncMessage({ type: "warn", text: message });
     } catch (err: any) {
-      const text = err?.message || "Erro ao sincronizar segmento BB.";
-      setSyncSteps((steps) => steps.map((step) => step.key === item.key ? { ...step, status: "error", message: text } : step));
-      setSyncMessage({ type: "error", text: `${item.label}: ${text}` });
-    } finally {
       setSyncing(null);
       setSyncingSegment(null);
+      setSyncMessage({ type: "error", text: err?.message || "Erro ao adicionar a sincronização BB à fila." });
     }
+  }
+
+  async function syncBBFullQueue() { await queueBB({}, "bb"); }
+
+  async function syncBBSegment(item: { key: string; label: string }) {
+    await queueBB({ segmento: item.key }, "bb_segment", item.key);
   }
 
   async function syncBBAssembliesOnly() {
-    setSyncing("bb_assemblies");
-    setSyncMessage(null);
-    setSyncSteps([]);
-    setAssemblyErrors([]);
-    setAssemblyProgress({ total: 0, done: 0, success: 0, error: 0, currentGroup: "", running: false });
-    try {
-      const assemblyResult = await syncBBAssembliesQueue();
-      await load();
-      const type = assemblyResult.failed ? "warn" : "ok";
-      setSyncMessage({ type, text: `Resultado de assembleias BB concluído: ${assemblyResult.success}/${assemblyResult.total} assembleia(s) atualizada(s).` });
-    } catch (err: any) {
-      setSyncMessage({ type: "error", text: err?.message || "Erro ao sincronizar assembleias BB." });
-    } finally {
-      setSyncing(null);
-    }
+    await queueBB({ tipo: "assembleia" }, "bb_assemblies");
   }
 
   async function syncRobot(administradora: "bb" | "maggi") {
@@ -227,6 +211,18 @@ export default function CentralGrupos() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!activeBBJob || !["pending", "running"].includes(activeBBJob.status)) return;
+    const interval = window.setInterval(async () => {
+      try {
+        const job = await refreshBBJob(activeBBJob.id);
+        if (job && !["pending", "running"].includes(job.status)) await load();
+      } catch (error) {
+        console.error("Erro ao acompanhar sincronização BB:", error);
+      }
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [activeBBJob?.id, activeBBJob?.status]);
   const grupos = useMemo(() => [...bb.map(toBBGroup), ...maggi.map(toMaggiGroup)], [bb, maggi]);
   const segmentos = useMemo(() => Array.from(new Set(grupos.map((g) => g.segmento).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [grupos]);
   const filtered = useMemo(() => {
@@ -249,7 +245,7 @@ export default function CentralGrupos() {
     <div className="p-4 md:p-6 space-y-6">
       <section className="rounded-[30px] border p-6 md:p-8 text-white shadow-sm" style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}><div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium"><Database className="h-3.5 w-3.5" /> Central de Grupos</div><h1 className="text-2xl md:text-4xl font-black tracking-tight">Grupos ativos e disponíveis para o Radar de Ofertas</h1><p className="mt-3 max-w-3xl text-sm md:text-base text-white/80">Base consolidada dos grupos BB Consórcios e Maggi para uso no Radar de Ofertas.</p></section>
       <div className="grid gap-4 md:grid-cols-3"><Metric title="Total de grupos" value={String(grupos.length)} hint="BB + Maggi cadastrados" /><Metric title="Grupos ativos" value={String(ativos)} hint="Entram no Radar de Ofertas" /><Metric title="Com mediana/média" value={String(comMediana)} hint="Base para ranquear lance livre" /></div>
-      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur"><CardContent className="grid gap-4 p-5 md:grid-cols-[auto_1fr_auto] md:items-start"><div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ background: C.navy }}><Bot className="h-5 w-5" /></div><div><h2 className="font-black" style={{ color: C.navy }}>Robô das administradoras</h2><p className="text-sm text-slate-600">O botão BB sincroniza grupos por segmento e, em seguida, atualiza o resultado de assembleia dos grupos ativos. O botão temporário roda somente a fila de assembleias.</p><div className={`mt-3 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${lastBBCronSuccessLabel ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}><Clock3 className="h-3.5 w-3.5" />{lastBBCronSuccessLabel ? `Última sincronização automática BB com sucesso: ${lastBBCronSuccessLabel} (RO)` : "Nenhuma sincronização automática BB concluída com sucesso registrada"}</div>{syncSteps.length > 0 && <div className="mt-4 rounded-3xl border bg-white p-4"><div className="mb-3 flex justify-between text-sm font-semibold" style={{ color: C.navy }}><span>1. Grupos BB por segmento</span><span>{progress}%</span></div><div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: C.ruby }} /></div><div className="grid gap-2 md:grid-cols-2">{syncSteps.map((step) => <div key={step.key} className="flex items-start gap-2 rounded-2xl border bg-slate-50 px-3 py-2 text-xs">{step.status === "running" && <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-amber-600" />}{step.status === "done" && <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />}{step.status === "error" && <XCircle className="mt-0.5 h-4 w-4 text-red-600" />}{step.status === "pending" && <span className="mt-1 h-3 w-3 rounded-full border border-slate-300" />}<div className="min-w-0"><div className="font-bold text-slate-800">{step.label}</div><div className="text-slate-500">{step.status === "done" ? `${step.found || 0} grupo(s) processado(s)` : step.message || "Aguardando"}</div>{step.status === "done" && detailText(step) && <div className="mt-1 text-[11px] leading-snug text-slate-500">{detailText(step)}</div>}{step.status === "error" && <div className="mt-1 max-w-[420px] break-words text-[11px] leading-snug text-red-600">{step.message}</div>}</div></div>)}</div></div>}{assemblyProgress.total > 0 && <div className="mt-4 rounded-3xl border bg-white p-4"><div className="mb-3 flex justify-between text-sm font-semibold" style={{ color: C.navy }}><span>2. Resultado de assembleias BB</span><span>{assemblyProgress.done}/{assemblyProgress.total} • {assemblyPercent}%</span></div><div className="mb-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${assemblyPercent}%`, background: C.gold }} /></div><div className="text-xs text-slate-600">{assemblyProgress.running ? `Sincronizando grupo ${assemblyProgress.currentGroup}...` : "Fila de assembleias concluída."}</div><div className="mt-3 grid gap-2 md:grid-cols-3 text-xs"><div className="rounded-2xl border bg-slate-50 px-3 py-2">Total: <strong>{assemblyProgress.total}</strong></div><div className="rounded-2xl border bg-emerald-50 px-3 py-2 text-emerald-700">Sucesso: <strong>{assemblyProgress.success}</strong></div><div className="rounded-2xl border bg-red-50 px-3 py-2 text-red-700">Erros: <strong>{assemblyProgress.error}</strong></div></div>{assemblyErrors.length > 0 && <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs text-red-700"><div className="mb-1 font-bold">Últimos erros:</div>{assemblyErrors.map((error, index) => <div key={`${index}-${error}`} className="truncate">{error}</div>)}</div>}</div>}{syncMessage && <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm ${syncMessage.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : syncMessage.type === "warn" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>{syncMessage.text}</div>}</div><div className="flex flex-col gap-2 md:min-w-[220px]"><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("bb")}>{syncing === "bb" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Sincronizar BB completo</Button><div className="rounded-2xl border bg-slate-50 p-3"><div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Grupos BB 1 a 1</div><div className="grid grid-cols-2 gap-2">{BB_SEGMENTS.map((item) => <Button key={item.key} variant="outline" className="h-auto rounded-xl px-2 py-2 text-[11px] leading-tight" disabled={!!syncing} onClick={() => syncBBSegment(item)}>{syncing === "bb_segment" && syncingSegment === item.key ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}{item.label}</Button>)}</div></div><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={syncBBAssembliesOnly}>{syncing === "bb_assemblies" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Só Assembleias BB</Button><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("maggi")}>{syncing === "maggi" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Sincronizar Maggi</Button><Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => navigate("/radar-ofertas")}>Abrir Radar <ArrowRight className="ml-2 h-4 w-4" /></Button></div></CardContent></Card>
+      <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur"><CardContent className="grid gap-4 p-5 md:grid-cols-[auto_1fr_auto] md:items-start"><div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ background: C.navy }}><Bot className="h-5 w-5" /></div><div><h2 className="font-black" style={{ color: C.navy }}>Robô das administradoras</h2><p className="text-sm text-slate-600">As sincronizações BB são executadas com Chrome e Playwright no GitHub Actions. O modo completo atualiza os segmentos e depois as assembleias dos grupos ativos.</p><div className={`mt-3 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${lastBBCronSuccessLabel ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}><Clock3 className="h-3.5 w-3.5" />{lastBBCronSuccessLabel ? `Última sincronização automática BB com sucesso: ${lastBBCronSuccessLabel} (RO)` : "Nenhuma sincronização automática BB concluída com sucesso registrada"}</div>{activeBBJob && ["pending", "running"].includes(activeBBJob.status) && <div className="ml-2 mt-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700"><Loader2 className="h-3.5 w-3.5 animate-spin" />{activeBBJob.status === "pending" ? "Aguardando GitHub Actions" : activeBBJob.current_stage || "Em execução"}</div>}{syncSteps.length > 0 && <div className="mt-4 rounded-3xl border bg-white p-4"><div className="mb-3 flex justify-between text-sm font-semibold" style={{ color: C.navy }}><span>1. Grupos BB por segmento</span><span>{progress}%</span></div><div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: C.ruby }} /></div><div className="grid gap-2 md:grid-cols-2">{syncSteps.map((step) => <div key={step.key} className="flex items-start gap-2 rounded-2xl border bg-slate-50 px-3 py-2 text-xs">{step.status === "running" && <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-amber-600" />}{step.status === "done" && <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />}{step.status === "error" && <XCircle className="mt-0.5 h-4 w-4 text-red-600" />}{step.status === "pending" && <span className="mt-1 h-3 w-3 rounded-full border border-slate-300" />}<div className="min-w-0"><div className="font-bold text-slate-800">{step.label}</div><div className="text-slate-500">{step.status === "done" ? `${step.found || 0} grupo(s) processado(s)` : step.message || "Aguardando"}</div>{step.status === "done" && detailText(step) && <div className="mt-1 text-[11px] leading-snug text-slate-500">{detailText(step)}</div>}{step.status === "error" && <div className="mt-1 max-w-[420px] break-words text-[11px] leading-snug text-red-600">{step.message}</div>}</div></div>)}</div></div>}{assemblyProgress.total > 0 && <div className="mt-4 rounded-3xl border bg-white p-4"><div className="mb-3 flex justify-between text-sm font-semibold" style={{ color: C.navy }}><span>2. Resultado de assembleias BB</span><span>{assemblyProgress.done}/{assemblyProgress.total} • {assemblyPercent}%</span></div><div className="mb-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${assemblyPercent}%`, background: C.gold }} /></div><div className="text-xs text-slate-600">{assemblyProgress.running ? `Sincronizando grupo ${assemblyProgress.currentGroup}...` : "Fila de assembleias concluída."}</div><div className="mt-3 grid gap-2 md:grid-cols-3 text-xs"><div className="rounded-2xl border bg-slate-50 px-3 py-2">Total: <strong>{assemblyProgress.total}</strong></div><div className="rounded-2xl border bg-emerald-50 px-3 py-2 text-emerald-700">Sucesso: <strong>{assemblyProgress.success}</strong></div><div className="rounded-2xl border bg-red-50 px-3 py-2 text-red-700">Erros: <strong>{assemblyProgress.error}</strong></div></div>{assemblyErrors.length > 0 && <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs text-red-700"><div className="mb-1 font-bold">Últimos erros:</div>{assemblyErrors.map((error, index) => <div key={`${index}-${error}`} className="truncate">{error}</div>)}</div>}</div>}{syncMessage && <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm ${syncMessage.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : syncMessage.type === "warn" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>{syncMessage.text}</div>}</div><div className="flex flex-col gap-2 md:min-w-[220px]"><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("bb")}>{syncing === "bb" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Sincronizar BB completo</Button><div className="rounded-2xl border bg-slate-50 p-3"><div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Grupos BB 1 a 1</div><div className="grid grid-cols-2 gap-2">{BB_SEGMENTS.map((item) => <Button key={item.key} variant="outline" className="h-auto rounded-xl px-2 py-2 text-[11px] leading-tight" disabled={!!syncing} onClick={() => syncBBSegment(item)}>{syncing === "bb_segment" && syncingSegment === item.key ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}{item.label}</Button>)}</div></div><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={syncBBAssembliesOnly}>{syncing === "bb_assemblies" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Só Assembleias BB</Button><Button variant="outline" className="rounded-2xl" disabled={!!syncing} onClick={() => syncRobot("maggi")}>{syncing === "maggi" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}Sincronizar Maggi</Button><Button className="rounded-2xl text-white" style={{ background: C.ruby }} onClick={() => navigate("/radar-ofertas")}>Abrir Radar <ArrowRight className="ml-2 h-4 w-4" /></Button></div></CardContent></Card>
       <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur"><CardContent className="p-5 space-y-4"><div className="flex items-center gap-2"><SlidersHorizontal className="h-5 w-5" style={{ color: C.ruby }} /><h2 className="font-black" style={{ color: C.navy }}>Filtros</h2></div><div className="grid gap-3 md:grid-cols-[1.5fr_.8fr_.8fr_.8fr_auto]"><label className="relative block"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full rounded-2xl border py-2 pl-9 pr-3 text-sm" placeholder="Buscar por grupo, segmento ou administradora" /></label><select value={admin} onChange={(e) => setAdmin(e.target.value)} className="rounded-2xl border px-3 py-2 text-sm"><option value="todas">Todas</option><option value="bb">BB Consórcios</option><option value="maggi">Maggi</option></select><select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-2xl border px-3 py-2 text-sm"><option value="ativos">Ativos</option><option value="todos">Todos</option><option value="inativos">Inativos</option></select><select value={segmento} onChange={(e) => setSegmento(e.target.value)} className="rounded-2xl border px-3 py-2 text-sm"><option value="todos">Todos segmentos</option>{segmentos.map((s) => <option key={s} value={s}>{s}</option>)}</select><Button variant="outline" className="rounded-2xl" onClick={load}><RefreshCw className="mr-2 h-4 w-4" />Atualizar</Button></div></CardContent></Card>
       <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur"><CardContent className="p-0 overflow-x-auto"><table className="w-full min-w-[980px] text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Administradora</th><th className="px-4 py-3">Grupo</th><th className="px-4 py-3">Segmento</th><th className="px-4 py-3">Faixa de crédito</th><th className="px-4 py-3">Prazo máx.</th><th className="px-4 py-3">Maior %</th><th className="px-4 py-3">Menor %</th><th className="px-4 py-3"><button type="button" onClick={toggleMedianSort} className="font-bold underline-offset-2 hover:underline">Mediana {medianSort === "asc" ? "↑" : medianSort === "desc" ? "↓" : "↕"}</button></th><th className="px-4 py-3">Embutido máx.</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{filtered.map((g) => <tr key={g.id} className="border-t hover:bg-slate-50/70"><td className="px-4 py-3 font-semibold" style={{ color: C.navy }}>{g.administradora}</td><td className="px-4 py-3"><div className="font-bold">{g.grupo}</div><div className="max-w-[220px] truncate text-xs text-slate-500">{g.nome}</div></td><td className="px-4 py-3">{g.segmento}</td><td className="px-4 py-3">{brMoney(g.creditoMin)} até {brMoney(g.creditoMax)}</td><td className="px-4 py-3">{g.prazoMax || "—"} meses</td><td className="px-4 py-3">{brPct(g.maiorPct)}</td><td className="px-4 py-3">{brPct(g.menorPct)}</td><td className="px-4 py-3 font-bold" style={{ color: C.ruby }}>{brPct(g.medianaPct)}</td><td className="px-4 py-3">{brPct(g.lanceEmbutidoMaxPct)}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${g.ativo ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{g.ativo ? "Ativo" : "Inativo"}</span></td></tr>)}{filtered.length === 0 && <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">Nenhum grupo encontrado.</td></tr>}</tbody></table></CardContent></Card>
     </div>

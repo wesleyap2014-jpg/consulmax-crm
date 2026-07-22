@@ -26,6 +26,7 @@ const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SYNC_TRIGGER = String(process.env.SYNC_TRIGGER || "queue").toLowerCase();
 const SYNC_MODE = String(process.env.SYNC_MODE || "full").toLowerCase();
 const SYNC_SEGMENT = String(process.env.SYNC_SEGMENT || "").toLowerCase();
+const SYNC_JOB_ID = String(process.env.SYNC_JOB_ID || "").trim();
 const LOCAL_PORT = Number(process.env.LOCAL_WORKER_PORT || 3031);
 const LOCAL_SECRET = `github-maggi-${randomUUID()}`;
 const LOCAL_URL = `http://127.0.0.1:${LOCAL_PORT}`;
@@ -73,22 +74,25 @@ function emptyProgress(segments = SEGMENTS) {
   };
 }
 
-async function findActiveJob() {
-  const { data, error } = await supabase
+async function findActiveJob(jobId = "") {
+  let query = supabase
     .from("robot_sync_jobs")
     .select("*")
     .eq("administradora", "maggi")
-    .in("status", ["pending", "running"])
-    .order("requested_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .in("status", ["pending", "running"]);
+
+  query = jobId
+    ? query.eq("id", jobId)
+    : query.order("requested_at", { ascending: true }).limit(1);
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) throw error;
   return data || null;
 }
 
 async function claimQueuedJob() {
-  const candidate = await findActiveJob();
+  const candidate = await findActiveJob(SYNC_JOB_ID);
   if (!candidate || candidate.status !== "pending") return null;
 
   const startedAt = new Date().toISOString();

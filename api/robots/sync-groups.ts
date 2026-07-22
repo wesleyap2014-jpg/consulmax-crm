@@ -24,6 +24,16 @@ export const config = {
 const SUPABASE_URL =
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const GITHUB_ACTIONS_TOKEN = process.env.GITHUB_ACTIONS_TOKEN || "";
+const GITHUB_ACTIONS_REPOSITORY =
+  process.env.GITHUB_ACTIONS_REPOSITORY || "wesleyap2014-jpg/consulmax-crm";
+const GITHUB_ACTIONS_REF = process.env.GITHUB_ACTIONS_REF || "main";
+const GITHUB_API_VERSION = "2026-03-10";
+
+const ADMIN_WORKFLOWS: Record<AdminKey, string> = {
+  bb: "sync-bb-consorcios.yml",
+  maggi: "sync-maggi-consorcios.yml",
+};
 
 const admin =
   SUPABASE_URL && SERVICE_ROLE_KEY
@@ -206,6 +216,112 @@ async function enqueueJob(
   };
 }
 
+function githubDispatchUrl(administradora: AdminKey) {
+  const parts = GITHUB_ACTIONS_REPOSITORY.split("/");
+  if (parts.length !== 2 || parts.some((part) => !part.trim())) {
+    throw new Error(
+      "GITHUB_ACTIONS_REPOSITORY inválido. Use o formato proprietario/repositorio.",
+    );
+  }
+
+  const [owner, repository] = parts;
+  const workflow = ADMIN_WORKFLOWS[administradora];
+  return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`;
+}
+
+function githubErrorMessage(status: number, payload: any, raw: string) {
+  const message = String(payload?.message || raw || "resposta sem detalhes")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 600);
+  return `GitHub Actions recusou o disparo (HTTP ${status}): ${message}`;
+}
+
+async function dispatchGithubWorkflow(
+  administradora: AdminKey,
+  job: Record<string, any>,
+) {
+  const inputs: Record<string, string> = {
+    mode: String(job.mode || "full"),
+    job_id: String(job.id),
+  };
+  if (job.segment) inputs.segment = String(job.segment);
+
+  const response = await fetch(githubDispatchUrl(administradora), {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${GITHUB_ACTIONS_TOKEN}`,
+      "Content-Type": "application/json",
+      "User-Agent": "consulmax-crm",
+      "X-GitHub-Api-Version": GITHUB_API_VERSION,
+    },
+    body: JSON.stringify({ ref: GITHUB_ACTIONS_REF, inputs }),
+  });
+
+  const raw = await response.text();
+  let payload: any = {};
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(githubErrorMessage(response.status, payload, raw));
+  }
+
+  const runId = Number(payload?.workflow_run_id || 0) || null;
+  const runUrl = String(payload?.html_url || "") || null;
+  const dispatchedAt = new Date().toISOString();
+  const update: Record<string, any> = {
+    current_stage: "GitHub Actions acionado",
+    updated_at: dispatchedAt,
+  };
+  if (runId) update.github_run_id = runId;
+  if (runUrl) update.github_run_url = runUrl;
+
+  // O workflow pode assumir o trabalho antes desta atualização terminar.
+  // Nesse caso, preservamos o status mais novo gravado pelo próprio worker.
+  const { data: updatedJob, error: updateError } = await admin!
+    .from("robot_sync_jobs")
+    .update(update)
+    .eq("id", job.id)
+    .eq("status", "pending")
+    .select("*")
+    .maybeSingle();
+
+  if (updateError) {
+    console.error("Falha ao registrar metadados do disparo GitHub:", {
+      jobId: job.id,
+      message: updateError.message,
+    });
+  }
+
+  return {
+    job: updatedJob || { ...job, ...update },
+    run_id: runId,
+    run_url: runUrl,
+    dispatched_at: dispatchedAt,
+  };
+}
+
+async function markDispatchFailure(jobId: string, message: string) {
+  if (!admin) return;
+  const finishedAt = new Date().toISOString();
+  await admin
+    .from("robot_sync_jobs")
+    .update({
+      status: "error",
+      finished_at: finishedAt,
+      updated_at: finishedAt,
+      current_stage: "Falha ao acionar GitHub Actions",
+      error_message: message.slice(0, 1500),
+    })
+    .eq("id", jobId)
+    .eq("status", "pending");
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -223,18 +339,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const body = parseBody(req);
     const administradora = allowedAdmin(body?.administradora);
     if (!administradora)
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          error: "Administradora inválida. Use bb ou maggi.",
-        });
+      return res.status(400).json({
+        ok: false,
+        error: "Administradora inválida. Use bb ou maggi.",
+      });
+
+    if (!GITHUB_ACTIONS_TOKEN) {
+      return res.status(503).json({
+        ok: false,
+        status: "not_configured",
+        administradora,
+        error:
+          "Disparo imediato não configurado. Adicione GITHUB_ACTIONS_TOKEN às variáveis da Vercel.",
+      });
+    }
 
     const result = await enqueueJob(
       administradora,
       body || {},
       auth.user?.id || "",
     );
+
+    const job = result.details?.job;
+    if (result.status === "queued" && job?.status === "pending") {
+      try {
+        const dispatch = await dispatchGithubWorkflow(administradora, job);
+        result.message = `Sincronização ${administradora.toUpperCase()} acionada no GitHub Actions. A execução começará assim que o GitHub disponibilizar a máquina.`;
+        result.details = {
+          ...result.details,
+          job: dispatch.job,
+          github_dispatch: {
+            run_id: dispatch.run_id,
+            run_url: dispatch.run_url,
+            dispatched_at: dispatch.dispatched_at,
+          },
+        };
+      } catch (dispatchError: any) {
+        const message =
+          dispatchError?.message || "Falha ao acionar o GitHub Actions.";
+        await markDispatchFailure(String(job.id), message);
+        return res.status(502).json({
+          ok: false,
+          status: "error",
+          administradora,
+          error: message,
+          details: { job_id: job.id },
+        });
+      }
+    }
+
     const status =
       result.status === "queued" ? 202 : result.status === "error" ? 400 : 200;
     return res.status(status).json(result);

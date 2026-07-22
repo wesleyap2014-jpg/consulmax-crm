@@ -1,0 +1,91 @@
+name: Sincronização Maggi Consórcios
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Tipo de sincronização
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - segment
+      segment:
+        description: Segmento quando o tipo for segment
+        required: false
+        default: automoveis
+        type: choice
+        options:
+          - automoveis
+          - imoveis
+  schedule:
+    # GitHub usa UTC. Executa 30 minutos depois do cron BB para evitar concorrência.
+    - cron: "47 */4 * * *"
+    # Consome solicitações criadas pelo botão Maggi na Central de Grupos.
+    - cron: "2-59/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maggi-consorcios-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Executar robô Maggi
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Verificar configuração segura
+        id: config
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MAGGI_AVAILABLE_GROUPS_PORTAL_URL: ${{ secrets.MAGGI_AVAILABLE_GROUPS_PORTAL_URL }}
+          MAGGI_AVAILABLE_GROUPS_USERNAME: ${{ secrets.MAGGI_AVAILABLE_GROUPS_USERNAME }}
+          MAGGI_AVAILABLE_GROUPS_PASSWORD: ${{ secrets.MAGGI_AVAILABLE_GROUPS_PASSWORD }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$MAGGI_AVAILABLE_GROUPS_PORTAL_URL" ] && [ -n "$MAGGI_AVAILABLE_GROUPS_USERNAME" ] && [ -n "$MAGGI_AVAILABLE_GROUPS_PASSWORD" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Sincronização ignorada: adicione os três secrets obrigatórios do robô Maggi."
+          fi
+
+      - name: Instalar dependências do worker
+        if: steps.config.outputs.ready == 'true'
+        working-directory: workers/bb-groups-worker
+        run: npm ci
+
+      - name: Montar e compilar worker
+        if: steps.config.outputs.ready == 'true'
+        working-directory: workers/bb-groups-worker
+        run: npm run build
+
+      - name: Executar sincronização
+        if: steps.config.outputs.ready == 'true'
+        working-directory: workers/bb-groups-worker
+        env:
+          SYNC_TRIGGER: ${{ github.event_name == 'workflow_dispatch' && 'dispatch' || (github.event.schedule == '2-59/5 * * * *' && 'queue' || 'cron') }}
+          SYNC_MODE: ${{ inputs.mode || 'full' }}
+          SYNC_SEGMENT: ${{ inputs.segment || '' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MAGGI_AVAILABLE_GROUPS_PORTAL_URL: ${{ secrets.MAGGI_AVAILABLE_GROUPS_PORTAL_URL }}
+          MAGGI_AVAILABLE_GROUPS_USERNAME: ${{ secrets.MAGGI_AVAILABLE_GROUPS_USERNAME }}
+          MAGGI_AVAILABLE_GROUPS_PASSWORD: ${{ secrets.MAGGI_AVAILABLE_GROUPS_PASSWORD }}
+          MAGGI_AVAILABLE_GROUPS_USERNAME_SELECTOR: ${{ vars.MAGGI_AVAILABLE_GROUPS_USERNAME_SELECTOR }}
+          MAGGI_AVAILABLE_GROUPS_PASSWORD_SELECTOR: ${{ vars.MAGGI_AVAILABLE_GROUPS_PASSWORD_SELECTOR }}
+          MAGGI_AVAILABLE_GROUPS_LOGIN_BUTTON_SELECTOR: ${{ vars.MAGGI_AVAILABLE_GROUPS_LOGIN_BUTTON_SELECTOR }}
+          MAGGI_AVAILABLE_GROUPS_VENDEDOR_TEXT: ${{ vars.MAGGI_AVAILABLE_GROUPS_VENDEDOR_TEXT }}
+          MAGGI_AVAILABLE_GROUPS_AUTOMOVEIS_REVENDA: ${{ vars.MAGGI_AVAILABLE_GROUPS_AUTOMOVEIS_REVENDA }}
+          MAGGI_AVAILABLE_GROUPS_IMOVEIS_REVENDA: ${{ vars.MAGGI_AVAILABLE_GROUPS_IMOVEIS_REVENDA }}
+        run: node scripts/run-github-maggi-sync.mjs

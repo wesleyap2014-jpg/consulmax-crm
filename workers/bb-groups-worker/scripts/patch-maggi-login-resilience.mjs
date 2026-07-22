@@ -37,6 +37,19 @@ function maggiEntryUrls(deps: RegisterDeps) {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
+async function maggiEnableFlutterAccessibility(page: Page) {
+  const toggle = page.locator(
+    'flt-semantics-placeholder[aria-label="Enable accessibility"]'
+  );
+  const toggleCount = await toggle.count().catch(() => 0);
+  if (toggleCount !== 1) return;
+
+  await toggle.press("Enter").catch(async () => {
+    await toggle.click({ force: true }).catch(() => null);
+  });
+  await page.waitForTimeout(400);
+}
+
 async function maggiLooksLike404(page: Page) {
   const bodyText = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
   return /Server Error 404|File or directory not found|resource you are looking for/i.test(bodyText);
@@ -51,9 +64,16 @@ async function maggiGotoEntry(deps: RegisterDeps, page: Page) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => null);
     await waitSettled(deps, page, 15000);
     await page.waitForTimeout(1500);
+    await maggiEnableFlutterAccessibility(page);
 
     lastText = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
     if (await maggiHasLoginInputs(page)) return true;
+    const hasSellerEntry = await page
+      .getByRole("button", { name: "SOU VENDEDOR", exact: true })
+      .first()
+      .isVisible()
+      .catch(() => false);
+    if (hasSellerEntry && !(await maggiLooksLike404(page))) return true;
     if (/SOU\\s+VENDEDOR|CONS[ÓO]RCIO\\s+MAGGI|MAGGI/i.test(lastText) && !(await maggiLooksLike404(page))) return true;
   }
 
@@ -66,12 +86,32 @@ async function maggiGotoEntry(deps: RegisterDeps, page: Page) {
 }
 
 async function maggiHasLoginInputs(page: Page) {
-  const inputCount = await page.locator('input, ion-input input, textarea').count().catch(() => 0);
-  const hasLoginText = await page.getByText(/Bem-vindo|Código do vendedor|Codigo do vendedor|Senha/i).first().isVisible().catch(() => false);
-  return inputCount >= 2 && hasLoginText;
+  const hasUsername = await page
+    .locator(
+      'input[placeholder*="Código" i], input[placeholder*="Codigo" i], input[aria-label*="Código" i], input[aria-label*="Codigo" i], input[aria-label*="vendedor" i]'
+    )
+    .first()
+    .isVisible()
+    .catch(() => false);
+  const hasPassword = await page
+    .locator('input[type="password"], input[placeholder*="Senha" i], input[aria-label*="Senha" i]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  return hasUsername && hasPassword;
 }
 
 async function maggiClickSouVendedor(deps: RegisterDeps, page: Page) {
+  await maggiEnableFlutterAccessibility(page);
+
+  const flutterButton = page
+    .getByRole("button", { name: "SOU VENDEDOR", exact: true })
+    .first();
+  if (await flutterButton.isVisible().catch(() => false)) {
+    await flutterButton.click({ force: true });
+    return true;
+  }
+
   const clickedByText = await clickText(page, "SOU VENDEDOR", true).catch(() => false);
   if (clickedByText) return true;
 
@@ -136,6 +176,29 @@ replaceOnce(
   });`,
 `  await maggiGotoEntry(deps, page);`,
 "await maggiGotoEntry(deps, page);"
+);
+
+replaceOnce(
+`  await waitSettled(deps, page, 20000);
+  await page.getByText("Simulação").first().waitFor({ timeout: 30000 }).catch(() => null);`,
+`  await waitSettled(deps, page, 20000);
+  await maggiEnableFlutterAccessibility(page);
+  await page.getByText("Simulação").first().waitFor({ timeout: 30000 }).catch(() => null);`,
+`await maggiEnableFlutterAccessibility(page);
+  await page.getByText("Simulação")`
+);
+
+replaceOnce(
+`  await waitSettled(deps, page, 20000);
+
+  const clicked = await clickFirstVisibleSafe(deps, page, [`,
+`  await waitSettled(deps, page, 20000);
+  await maggiEnableFlutterAccessibility(page);
+
+  const clicked = await clickFirstVisibleSafe(deps, page, [`,
+`await maggiEnableFlutterAccessibility(page);
+
+  const clicked = await clickFirstVisibleSafe`
 );
 
 replaceOnce(

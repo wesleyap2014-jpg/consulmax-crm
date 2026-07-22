@@ -166,6 +166,61 @@ function maggiRouteUrl(
   return appUrl(requiredEnv, normalizedPath);
 }
 
+async function maggiNavigateInApp(
+  deps: RegisterDeps,
+  page: Page,
+  path: string,
+  destinationPattern: RegExp,
+  description: string
+) {
+  const normalizedPath = "/" + String(path || "").replace(/^\\/+/, "");
+  const navigationPattern = /estatisticas/i.test(normalizedPath)
+    ? /Estat[íi]sticas/i
+    : /Simula(?:ç|c)[aã]o/i;
+
+  await maggiEnableFlutterAccessibility(page);
+  const navigationControl = await maggiFindVisibleAppText(page, navigationPattern);
+  if (navigationControl) {
+    await navigationControl.click({ force: true }).catch(() => null);
+    await waitSettled(deps, page, 12000);
+    await page.waitForTimeout(750);
+  }
+
+  let destination = await maggiFindVisibleAppText(page, destinationPattern);
+  if (destination) return destination;
+
+  await page.evaluate((targetPath) => {
+    const current = new URL(window.location.href);
+
+    if (current.hash) {
+      current.hash = "#" + targetPath;
+      window.history.pushState({}, "", current.toString());
+    } else {
+      const appBasePath = current.pathname.replace(
+        /\\/vendedor\\/(?:login|simulacao|estatisticas)(?:\\/.*)?$/i,
+        ""
+      );
+      current.pathname = appBasePath.replace(/\\/+$/, "") + targetPath;
+      current.search = "";
+      current.hash = "";
+      window.history.pushState({}, "", current.toString());
+    }
+
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: window.history.state })
+    );
+  }, normalizedPath);
+
+  await waitSettled(deps, page, 15000);
+  destination = await maggiWaitForAppText(
+    page,
+    destinationPattern,
+    45000,
+    description
+  );
+  return destination;
+}
+
 async function maggiLooksLike404(page: Page) {
   const bodyText = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
   return /Server Error 404|File or directory not found|resource you are looking for/i.test(bodyText);
@@ -373,14 +428,14 @@ replaceOnce(
     waitUntil: "domcontentloaded",
     timeout: 60000,
   });`,
-`  await page.goto(
-    maggiRouteUrl(deps.requiredEnv, page, "/vendedor/simulacao"),
-    {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
-    }
+`  await maggiNavigateInApp(
+    deps,
+    page,
+    "/vendedor/simulacao",
+    MAGGI_SIMULATION_TEXT,
+    "Tela de simulação Maggi"
   );`,
-"maggiRouteUrl(deps.requiredEnv, page, \"/vendedor/simulacao\")"
+"await maggiNavigateInApp(\n    deps,\n    page,\n    \"/vendedor/simulacao\""
 );
 
 replaceOnce(
@@ -388,14 +443,14 @@ replaceOnce(
     waitUntil: "domcontentloaded",
     timeout: 60000,
   });`,
-`  await page.goto(
-    maggiRouteUrl(deps.requiredEnv, page, "/vendedor/estatisticas"),
-    {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
-    }
+`  await maggiNavigateInApp(
+    deps,
+    page,
+    "/vendedor/estatisticas",
+    /Sincronizar/i,
+    "Tela de estatísticas Maggi"
   );`,
-"maggiRouteUrl(deps.requiredEnv, page, \"/vendedor/estatisticas\")"
+"await maggiNavigateInApp(\n    deps,\n    page,\n    \"/vendedor/estatisticas\""
 );
 
 replaceOnce(

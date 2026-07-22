@@ -19,11 +19,14 @@ on:
         options:
           - automoveis
           - imoveis
+      job_id:
+        description: ID da solicitação já criada pela Central de Grupos
+        required: false
+        default: ""
+        type: string
   schedule:
-    # GitHub usa UTC. Executa 30 minutos depois do cron BB para evitar concorrência.
-    - cron: "47 */4 * * *"
-    # Consome solicitações criadas pelo botão Maggi na Central de Grupos.
-    - cron: "2-59/5 * * * *"
+    # GitHub usa UTC. 11:30 UTC equivale a 07:30 em Rondônia (UTC-4).
+    - cron: "30 11 * * *"
 
 permissions:
   contents: read
@@ -74,9 +77,10 @@ jobs:
         if: steps.config.outputs.ready == 'true'
         working-directory: workers/bb-groups-worker
         env:
-          SYNC_TRIGGER: ${{ github.event_name == 'workflow_dispatch' && 'dispatch' || (github.event.schedule == '2-59/5 * * * *' && 'queue' || 'cron') }}
+          SYNC_TRIGGER: ${{ github.event_name == 'schedule' && 'cron' || (inputs.job_id != '' && 'queue' || 'dispatch') }}
           SYNC_MODE: ${{ inputs.mode || 'full' }}
           SYNC_SEGMENT: ${{ inputs.segment || '' }}
+          SYNC_JOB_ID: ${{ inputs.job_id || '' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           MAGGI_AVAILABLE_GROUPS_PORTAL_URL: ${{ secrets.MAGGI_AVAILABLE_GROUPS_PORTAL_URL }}

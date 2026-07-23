@@ -17,6 +17,17 @@ function replaceOnce(needle, replacement, marker = replacement) {
   }
 }
 
+function replaceBlock(startMarker, endMarker, replacement, marker = replacement) {
+  if (src.includes(marker)) return;
+
+  const start = src.indexOf(startMarker);
+  const end = start >= 0 ? src.indexOf(endMarker, start) : -1;
+  if (start < 0 || end < 0) return;
+
+  src = src.slice(0, start) + replacement + src.slice(end);
+  changed = true;
+}
+
 const helperNeedle = `async function fillFirstVisibleSafe(deps: RegisterDeps, page: Page, selectors: string[], value: string) {
   const filtered = selectors.map((selector) => String(selector || "").trim()).filter(Boolean);
   await deps.fillFirstVisible(page, filtered, value);
@@ -547,6 +558,328 @@ replaceOnce(
       '.mat-mdc-input-element[type="password"]',
       'ion-input input[type="password"]',`,
 "input[formcontrolname*=\"password\" i]"
+);
+
+const loginAndSyncHelpers = String.raw`
+const MAGGI_LOGIN_MAX_ATTEMPTS = 2;
+
+function maggiUsernameSelectors() {
+  return [
+    optionalEnv("MAGGI_AVAILABLE_GROUPS_USERNAME_SELECTOR"),
+    'input[placeholder*="Código do vendedor" i]',
+    'input[placeholder*="Codigo do vendedor" i]',
+    'input[placeholder*="Código" i]',
+    'input[placeholder*="Codigo" i]',
+    'input[placeholder*="vendedor" i]',
+    'input[aria-label*="Código" i]',
+    'input[aria-label*="Codigo" i]',
+    'input[aria-label*="vendedor" i]',
+    'input[name*="codigo" i]',
+    'input[name*="vendedor" i]',
+    'input[formcontrolname*="codigo" i]',
+    'input[formcontrolname*="vendedor" i]',
+    '.mat-input-element[type="text"]',
+    '.mat-mdc-input-element[type="text"]',
+    'ion-input input',
+    'input[type="text"]',
+    'input:not([type])',
+  ];
+}
+
+function maggiPasswordSelectors() {
+  return [
+    optionalEnv("MAGGI_AVAILABLE_GROUPS_PASSWORD_SELECTOR"),
+    'input[type="password"]',
+    'input[placeholder*="Senha" i]',
+    'input[aria-label*="Senha" i]',
+    'input[name*="senha" i]',
+    'input[formcontrolname*="senha" i]',
+    'input[formcontrolname*="password" i]',
+    '.mat-input-element[type="password"]',
+    '.mat-mdc-input-element[type="password"]',
+    'ion-input input[type="password"]',
+  ];
+}
+
+async function maggiFindVisibleInput(page: Page, selectors: string[]) {
+  for (const selector of selectors.map((item) => item.trim()).filter(Boolean)) {
+    const fields = page.locator(selector);
+    const count = Math.min(await fields.count().catch(() => 0), 4);
+
+    for (let index = 0; index < count; index++) {
+      const field = fields.nth(index);
+      if (
+        (await field.isVisible().catch(() => false)) &&
+        (await field.isEnabled().catch(() => false))
+      ) {
+        return field;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function maggiTypeLoginField(
+  deps: RegisterDeps,
+  page: Page,
+  selectors: string[],
+  value: string,
+  fieldName: "usuario" | "senha"
+) {
+  const field = await maggiFindVisibleInput(page, selectors);
+  if (!field) throw new Error("Campo de " + fieldName + " da Maggi não encontrado.");
+
+  await field.click({ force: true });
+  await field.press("Control+A").catch(() => null);
+  await field.press("Backspace").catch(() => null);
+  await field.type(value, { delay: 35 });
+  await field.press("Tab").catch(() => null);
+
+  const receivedValue = await field.inputValue({ timeout: 3000 }).catch(() => "");
+  const confirmed = receivedValue === value;
+  deps.log("campo de login Maggi preenchido", {
+    campo: fieldName,
+    confirmado: confirmed,
+  });
+
+  if (!confirmed) {
+    throw new Error(
+      "O campo de " + fieldName + " da Maggi não confirmou o valor digitado."
+    );
+  }
+
+  return field;
+}
+
+function maggiStartLoginResponseCollector(page: Page) {
+  const responses: Array<{ status: number; path: string }> = [];
+  const listener = (response: any) => {
+    try {
+      const resourceType = response.request().resourceType();
+      if (!["document", "fetch", "xhr"].includes(resourceType)) return;
+
+      const url = new URL(response.url());
+      const path = url.pathname;
+      if (!/login|auth|token|session|vendedor/i.test(path)) return;
+
+      responses.push({ status: response.status(), path });
+      if (responses.length > 12) responses.shift();
+    } catch {
+      // A resposta serve apenas para diagnóstico e nunca bloqueia o login.
+    }
+  };
+
+  page.on("response", listener);
+  return () => {
+    page.off("response", listener);
+    return responses;
+  };
+}
+
+async function maggiWaitForLoginOutcome(page: Page, timeoutMs: number) {
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    await maggiEnableFlutterAccessibility(page);
+    if (await maggiFindVisibleAppText(page, MAGGI_SIMULATION_TEXT)) {
+      return { status: "success" as const, message: "" };
+    }
+
+    const visibleText = await page
+      .locator("body")
+      .innerText({ timeout: 3000 })
+      .catch(() => "");
+    const rejection = visibleText.match(
+      /(?:usu[aá]rio|c[oó]digo|senha|credenciais?|dados)[^\n.]{0,90}(?:inv[aá]lid|incorret|n[aã]o\s+confere|n[aã]o\s+encontrad)|acesso\s+negado|n[aã]o\s+autorizado/i
+    );
+    if (rejection) {
+      return {
+        status: "rejected" as const,
+        message: rejection[0].replace(/\s+/g, " ").trim().slice(0, 180),
+      };
+    }
+
+    await page.waitForTimeout(750);
+  }
+
+  return { status: "timeout" as const, message: "" };
+}
+`;
+
+replaceOnce(
+  "async function loginMaggi(deps: RegisterDeps, page: Page) {",
+  loginAndSyncHelpers + "\nasync function loginMaggi(deps: RegisterDeps, page: Page) {",
+  "async function maggiTypeLoginField("
+);
+
+const robustLoginFunction = String.raw`async function loginMaggi(deps: RegisterDeps, page: Page) {
+  deps.log("login Maggi iniciado");
+
+  await maggiGotoEntry(deps, page);
+  await ensureMaggiLoginForm(deps, page);
+
+  const username = deps.requiredEnv("MAGGI_AVAILABLE_GROUPS_USERNAME");
+  const password = deps.requiredEnv("MAGGI_AVAILABLE_GROUPS_PASSWORD");
+  let lastResponses: Array<{ status: number; path: string }> = [];
+
+  for (let attempt = 1; attempt <= MAGGI_LOGIN_MAX_ATTEMPTS; attempt++) {
+    await maggiEnableFlutterAccessibility(page);
+    await ensureMaggiLoginForm(deps, page);
+
+    const stopCollecting = maggiStartLoginResponseCollector(page);
+    let submitMethod = "click";
+    let outcome: Awaited<ReturnType<typeof maggiWaitForLoginOutcome>>;
+
+    try {
+      await maggiTypeLoginField(
+        deps,
+        page,
+        maggiUsernameSelectors(),
+        username,
+        "usuario"
+      );
+      const passwordField = await maggiTypeLoginField(
+        deps,
+        page,
+        maggiPasswordSelectors(),
+        password,
+        "senha"
+      );
+
+      const loginButton = await maggiWaitForAppText(
+        page,
+        /ACESSAR\s+MINHA\s+CONTA/i,
+        15000,
+        "Botão de acesso da Maggi"
+      );
+
+      const clicked = await loginButton
+        .click({ force: true })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!clicked) {
+        submitMethod = "enter";
+        await passwordField.click({ force: true }).catch(() => null);
+        await passwordField.press("Enter");
+      }
+
+      outcome = await maggiWaitForLoginOutcome(page, 30000);
+
+      if (outcome.status === "timeout" && clicked) {
+        submitMethod = "click+enter";
+        await passwordField.click({ force: true }).catch(() => null);
+        await passwordField.press("Enter").catch(() => page.keyboard.press("Enter"));
+        outcome = await maggiWaitForLoginOutcome(page, 30000);
+      }
+    } finally {
+      lastResponses = stopCollecting();
+    }
+
+    deps.log("tentativa de login Maggi concluída", {
+      tentativa: attempt,
+      metodo: submitMethod,
+      resultado: outcome.status,
+      respostas: lastResponses,
+    });
+
+    if (outcome.status === "success") {
+      deps.log("login Maggi autenticado após envio compatível", {
+        tentativa: attempt,
+        url: page.url(),
+      });
+      return;
+    }
+
+    if (outcome.status === "rejected") {
+      throw new Error("O portal Maggi recusou o login: " + outcome.message);
+    }
+
+    if (attempt < MAGGI_LOGIN_MAX_ATTEMPTS) {
+      await page.waitForTimeout(2000);
+      await maggiEnableFlutterAccessibility(page);
+    }
+  }
+
+  const snapshot = await maggiPageSnapshot(page);
+  throw new Error(
+    "O portal Maggi permaneceu no login após duas tentativas. URL atual: " +
+      snapshot.url +
+      ". Respostas observadas: " +
+      JSON.stringify(lastResponses) +
+      ". Texto visível: " +
+      snapshot.text
+  );
+}
+
+`;
+
+replaceBlock(
+  "async function loginMaggi(deps: RegisterDeps, page: Page) {",
+  "async function goToSimulationHome(deps: RegisterDeps, page: Page) {",
+  robustLoginFunction,
+  "login Maggi autenticado após envio compatível"
+);
+
+const robustInternalSyncFunction = String.raw`async function runInternalSync(deps: RegisterDeps, page: Page) {
+  deps.log("sincronização interna Maggi iniciada");
+
+  await maggiNavigateInApp(
+    deps,
+    page,
+    "/vendedor/estatisticas",
+    /(?:\+\s*)?Opções/i,
+    "Tela de estatísticas Maggi"
+  );
+  await waitSettled(deps, page, 20000);
+
+  const optionsControl = await maggiWaitForAppText(
+    page,
+    /(?:\+\s*)?Opções/i,
+    45000,
+    "Menu + Opções da Maggi"
+  );
+  await optionsControl.click({ force: true });
+  deps.log("menu + Opções da Maggi aberto");
+
+  let syncControl = await maggiFindVisibleAppText(page, /Sincronizar/i);
+  if (!syncControl) {
+    syncControl = await maggiWaitForAppText(
+      page,
+      /Sincronizar/i,
+      8000,
+      "Ação Sincronizar da Maggi"
+    ).catch(() => null);
+  }
+
+  if (!syncControl) {
+    await optionsControl.press("Enter").catch(() => null);
+    syncControl = await maggiWaitForAppText(
+      page,
+      /Sincronizar/i,
+      15000,
+      "Ação Sincronizar da Maggi"
+    );
+  }
+
+  await syncControl.click({ force: true }).catch(() => syncControl!.press("Enter"));
+
+  const waitMs = Number(process.env.MAGGI_AVAILABLE_GROUPS_INTERNAL_SYNC_WAIT_MS || 25000);
+  await waitSettled(deps, page, waitMs);
+  await page.waitForTimeout(Math.min(5000, Math.max(1000, waitMs / 5)));
+
+  deps.log("sincronização interna Maggi concluída");
+  await goToSimulationHome(deps, page);
+}
+
+`;
+
+replaceBlock(
+  "async function runInternalSync(deps: RegisterDeps, page: Page) {",
+  "async function openFormField(page: Page, label: string) {",
+  robustInternalSyncFunction,
+  "menu + Opções da Maggi aberto"
 );
 
 if (changed) {

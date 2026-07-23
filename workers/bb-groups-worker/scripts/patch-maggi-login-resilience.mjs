@@ -937,7 +937,7 @@ const robustFlutterFormFunctions = String.raw`async function openFormField(page:
 
       if (activated) {
         await page.waitForTimeout(700);
-        return;
+        return candidate;
       }
     }
 
@@ -956,9 +956,34 @@ const robustFlutterFormFunctions = String.raw`async function openFormField(page:
 }
 
 async function openSelect(page: Page, label: string) {
-  await openFormField(page, label);
+  const control = await openFormField(page, label);
   await maggiEnableFlutterAccessibility(page);
   await page.waitForTimeout(700);
+  return control;
+}
+
+async function maggiWaitForSelectedValue(page: Page, optionText: string, timeoutMs = 12000) {
+  const optionRegex = new RegExp("^\\s*" + escapeRegExp(optionText) + "\\s*$", "i");
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    await maggiEnableFlutterAccessibility(page);
+    const candidates = [
+      page.getByRole("combobox", { name: optionRegex }).first(),
+      page.getByRole("button", { name: optionRegex }).first(),
+      page.getByRole("textbox", { name: optionRegex }).first(),
+      page.getByLabel(optionRegex).first(),
+      page.getByText(optionRegex, { exact: true }).first(),
+    ];
+
+    for (const candidate of candidates) {
+      if (await candidate.isVisible().catch(() => false)) return true;
+    }
+
+    await page.waitForTimeout(400);
+  }
+
+  return false;
 }
 
 async function chooseOpenOption(deps: RegisterDeps, page: Page, optionText: string) {
@@ -1029,19 +1054,30 @@ async function chooseFirstOpenOption(deps: RegisterDeps, page: Page) {
 }
 
 async function selectByText(deps: RegisterDeps, page: Page, label: string, optionText: string) {
-  await openSelect(page, label);
-  const selected = await chooseOpenOption(deps, page, optionText);
-  if (!selected) {
-    const snapshot = await maggiPageSnapshot(page);
-    throw new Error(
-      "Opção não encontrada em " +
-        label +
-        ": " +
-        optionText +
-        ". Elementos acessíveis: " +
-        snapshot.ariaLabels.join(" | ").slice(0, 800)
-    );
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await openSelect(page, label);
+    const selected = await chooseOpenOption(deps, page, optionText);
+    if (selected && (await maggiWaitForSelectedValue(page, optionText))) {
+      deps.log("seleção Maggi confirmada", {
+        campo: label,
+        opcao: optionText,
+        tentativa: attempt,
+      });
+      return;
+    }
+
+    await page.keyboard.press("Escape").catch(() => null);
   }
+
+  const snapshot = await maggiPageSnapshot(page);
+  throw new Error(
+    "Opção não permaneceu selecionada em " +
+      label +
+      ": " +
+      optionText +
+      ". Elementos acessíveis: " +
+      snapshot.ariaLabels.join(" | ").slice(0, 800)
+  );
 }
 
 async function selectVendedorIfNeeded(deps: RegisterDeps, page: Page) {
@@ -1060,14 +1096,49 @@ async function selectVendedorIfNeeded(deps: RegisterDeps, page: Page) {
     return;
   }
 
-  await openSelect(page, "Vendedor").catch(() => null);
   const preferred = optionalEnv("MAGGI_AVAILABLE_GROUPS_VENDEDOR_TEXT");
-  if (preferred && (await chooseOpenOption(deps, page, preferred))) return;
-  await chooseFirstOpenOption(deps, page).catch(() => null);
+  if (preferred) {
+    await selectByText(deps, page, "Vendedor", preferred);
+    return;
+  }
+
+  await openSelect(page, "Vendedor");
+  const selected = await chooseFirstOpenOption(deps, page);
+  if (!selected) {
+    const snapshot = await maggiPageSnapshot(page);
+    throw new Error(
+      "Nenhum vendedor pôde ser selecionado. Elementos acessíveis: " +
+        snapshot.ariaLabels.join(" | ").slice(0, 800)
+    );
+  }
+
+  deps.log("vendedor Maggi confirmado", { origem: "primeira opção disponível" });
+}
+
+async function maggiFindVisibleGroupControl(page: Page) {
+  await maggiEnableFlutterAccessibility(page);
+  const groupRegex = /^Grupo(?:\s|$)/i;
+  const candidates = [
+    page.getByRole("combobox", { name: groupRegex }).first(),
+    page.getByRole("button", { name: groupRegex }).first(),
+    page.getByLabel(groupRegex).first(),
+    page.locator("mat-form-field").filter({ hasText: groupRegex }).first(),
+    page.locator("ion-item").filter({ hasText: groupRegex }).first(),
+    page.getByText(/^Grupo$/i, { exact: true }).first(),
+  ];
+
+  for (const candidate of candidates) {
+    if (await candidate.isVisible().catch(() => false)) return candidate;
+  }
+
+  return null;
 }
 
 async function clickContinue(deps: RegisterDeps, page: Page) {
-  for (let attempt = 0; attempt < 90; attempt++) {
+  const started = Date.now();
+  let submitAttempts = 0;
+
+  while (Date.now() - started < 70000 && submitAttempts < 2) {
     await maggiEnableFlutterAccessibility(page);
     const button = await maggiFindVisibleAppText(page, /^CONTINUAR$/i);
 
@@ -1080,13 +1151,18 @@ async function clickContinue(deps: RegisterDeps, page: Page) {
         ariaDisabled !== "true" &&
         !String(className || "").includes("disabled")
       ) {
+        submitAttempts += 1;
         const clicked = await button
           .click({ force: true })
           .then(() => true)
           .catch(() => button.press("Enter").then(() => true).catch(() => false));
         if (clicked) {
           await waitSettled(deps, page, 20000);
-          return;
+          const stageStarted = Date.now();
+          while (Date.now() - stageStarted < 25000) {
+            if (await maggiFindVisibleGroupControl(page)) return;
+            await page.waitForTimeout(500);
+          }
         }
       }
     }
@@ -1096,7 +1172,7 @@ async function clickContinue(deps: RegisterDeps, page: Page) {
 
   const snapshot = await maggiPageSnapshot(page);
   throw new Error(
-    "Botão CONTINUAR não habilitou na Maggi. Elementos acessíveis: " +
+    "CONTINUAR não abriu a etapa de grupos da Maggi. Elementos acessíveis: " +
       snapshot.ariaLabels.join(" | ").slice(0, 800)
   );
 }
@@ -1138,55 +1214,100 @@ async function selectRevendaAndContinue(deps: RegisterDeps, page: Page, segment:
   await selectByText(deps, page, "Revenda", segment.revendaText);
   await selectVendedorIfNeeded(deps, page);
   await clickContinue(deps, page);
-  await maggiWaitForAppText(page, /Grupo/i, 45000, "Campo Grupo da Maggi");
+  const groupControl = await maggiFindVisibleGroupControl(page);
+  if (!groupControl) {
+    const snapshot = await maggiPageSnapshot(page);
+    throw new Error(
+      "Etapa Grupo da Maggi não foi confirmada. Elementos acessíveis: " +
+        snapshot.ariaLabels.join(" | ").slice(0, 800)
+    );
+  }
+  deps.log("revenda e vendedor Maggi confirmados", {
+    segmento: segment.key,
+    revenda: segment.revendaText,
+  });
 }
 
 async function collectOpenGroupOptions(page: Page) {
   const groups = new Set<string>();
-  let stagnantRounds = 0;
 
-  for (let round = 0; round < 60; round++) {
-    const beforeSize = groups.size;
-    await maggiEnableFlutterAccessibility(page);
+  for (let openAttempt = 0; openAttempt < 4 && !groups.size; openAttempt++) {
+    if (openAttempt > 0) {
+      await page.keyboard.press("Escape").catch(() => null);
+      const control = await openSelect(page, "Grupo");
+      const box = await control.boundingBox().catch(() => null);
 
-    const texts = await page
-      .locator(
-        '[role="option"], mat-option, .mat-option, .mat-mdc-option, .cdk-overlay-pane .mdc-list-item, ion-select-popover ion-item, .popover-content ion-item, flt-semantics[aria-label]'
-      )
-      .evaluateAll((nodes) =>
-        nodes.map((node) =>
-          (
-            node.getAttribute("aria-label") ||
-            (node as HTMLElement).innerText ||
-            node.textContent ||
-            ""
-          )
-            .replace(/\s+/g, " ")
-            .trim()
+      if (openAttempt === 1 && box) {
+        await page.mouse.click(
+          box.x + Math.max(8, box.width - 22),
+          box.y + box.height / 2
+        );
+      } else if (openAttempt === 2) {
+        await control.press("Enter").catch(() => page.keyboard.press("Enter"));
+      } else if (openAttempt === 3) {
+        await control.press("Space").catch(() => page.keyboard.press("Space"));
+        await page.keyboard.press("ArrowDown").catch(() => null);
+      }
+
+      await page.waitForTimeout(800);
+      await maggiEnableFlutterAccessibility(page);
+    }
+
+    let stagnantRounds = 0;
+    for (let round = 0; round < 60; round++) {
+      const beforeSize = groups.size;
+      await maggiEnableFlutterAccessibility(page);
+
+      const texts = await page
+        .locator(
+          '[role="option"], mat-option, .mat-option, .mat-mdc-option, .cdk-overlay-pane .mdc-list-item, ion-select-popover ion-item, .popover-content ion-item, [aria-label]'
         )
-      )
-      .catch(() => [] as string[]);
+        .evaluateAll((nodes) =>
+          nodes.map((node) =>
+            (
+              node.getAttribute("aria-label") ||
+              (node as HTMLElement).innerText ||
+              node.textContent ||
+              ""
+            )
+              .replace(/\s+/g, " ")
+              .trim()
+          )
+        )
+        .catch(() => [] as string[]);
 
-    for (const text of texts) {
-      const group = normalizeGroupCode(text);
-      if (group) groups.add(group);
+      for (const text of texts) {
+        const group = normalizeGroupCode(text);
+        if (group) groups.add(group);
+      }
+
+      const listbox = page.getByRole("listbox").first();
+      const box = await listbox.boundingBox().catch(() => null);
+      if (box) {
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      }
+      await page.mouse.wheel(0, 700).catch(() => null);
+      await page.keyboard.press("PageDown").catch(() => null);
+      await page.waitForTimeout(500);
+
+      if (groups.size > beforeSize) stagnantRounds = 0;
+      else stagnantRounds += 1;
+      if (stagnantRounds >= 4) break;
     }
-
-    const listbox = page.getByRole("listbox").first();
-    const box = await listbox.boundingBox().catch(() => null);
-    if (box) {
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    }
-    await page.mouse.wheel(0, 700).catch(() => null);
-    await page.keyboard.press("PageDown").catch(() => null);
-    await page.waitForTimeout(500);
-
-    if (groups.size > beforeSize) stagnantRounds = 0;
-    else stagnantRounds += 1;
-    if (stagnantRounds >= 4) break;
   }
 
   await page.keyboard.press("Escape").catch(() => null);
+
+  if (!groups.size) {
+    const snapshot = await maggiPageSnapshot(page);
+    throw new Error(
+      "A lista Grupo abriu sem códigos reconhecíveis. Texto visível: " +
+        snapshot.text +
+        ". Elementos acessíveis: " +
+        snapshot.ariaLabels.join(" | ").slice(0, 800)
+    );
+  }
+
   return Array.from(groups).sort((a, b) => Number(a) - Number(b));
 }
 

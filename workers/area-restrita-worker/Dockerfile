@@ -10,6 +10,7 @@ RUN apt-get update \
     nginx \
     novnc \
     websockify \
+    x11-utils \
     x11vnc \
     xvfb \
   && rm -rf /var/lib/apt/lists/*

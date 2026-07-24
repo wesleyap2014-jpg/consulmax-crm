@@ -48,12 +48,13 @@ const loopNeedle = `      for (const text of texts) {
 const loopReplacement = `      for (const text of texts) {
         const normalized = String(text || "").replace(/\\s+/g, " ").trim();
         const exactGroup = /^\\d{3,6}$/.test(normalized) ? normalized : "";
-        const group = exactGroup || normalizeGroupCode(normalized);
+        const rawGroup = exactGroup || normalizeGroupCode(normalized);
+        const group = rawGroup.replace(/^0+(?=\\d)/, "");
         if (group) groups.add(group);
       }
 `;
 
-if (src.includes(loopNeedle) && !src.includes("const exactGroup = /^\\d{3,6}$/")) {
+if (src.includes(loopNeedle) && !src.includes("const rawGroup = exactGroup || normalizeGroupCode")) {
   src = src.replace(loopNeedle, loopReplacement);
   changed = true;
 }

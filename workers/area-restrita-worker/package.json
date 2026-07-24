@@ -1,11 +1,11 @@
 {
   "name": "consulmax-area-restrita-worker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node --check src/server.mjs && node --check src/diagnose-login.mjs",
-    "start": "node src/server.mjs",
+    "build": "node --check src/server.mjs && node --check src/diagnose-login.mjs && node --check src/remote-browser.mjs",
+    "start": "bash scripts/start-remote.sh",
     "diagnose": "node src/diagnose-login.mjs"
   },
   "dependencies": {

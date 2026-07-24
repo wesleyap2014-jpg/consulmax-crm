@@ -1,14 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium } from "playwright";
+import { spawn } from "node:child_process";
 
 const PORTAL_URL = requiredEnv("AREA_RESTRITA_PORTAL_URL");
-const USERNAME = requiredEnv("AREA_RESTRITA_USERNAME");
-const PASSWORD = requiredEnv("AREA_RESTRITA_PASSWORD");
 const DATA_DIR = path.resolve(process.env.AREA_RESTRITA_DATA_DIR || "/data");
 const PROFILE_DIR = path.join(DATA_DIR, "chrome-profile");
 const STATUS_FILE = path.join(DATA_DIR, "area-restrita-status.json");
+const CHROME_BIN = process.env.AREA_RESTRITA_CHROME_BIN || "/usr/bin/google-chrome-stable";
+const DEBUG_PORT = Number(process.env.AREA_RESTRITA_CHROME_DEBUG_PORT || 9222);
 const LOGIN_PATH_PATTERN = /\/NewLogin\/NewLoginCMC\.asp(?:$|[?#])/i;
+const PORTAL_ORIGIN = new URL(PORTAL_URL).origin;
 
 function requiredEnv(name) {
   const value = String(process.env[name] || "").trim();
@@ -22,176 +23,147 @@ async function setStatus(state, details = {}) {
     service: "consulmax-area-restrita-worker",
     state,
     updatedAt: new Date().toISOString(),
+    browser: "google-chrome-stable",
     ...details,
   };
+
   await fs.writeFile(STATUS_FILE, JSON.stringify(payload, null, 2));
   console.log(`[area-restrita] estado: ${state}`);
-}
-
-async function firstVisible(page, selectors) {
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if (await locator.isVisible().catch(() => false)) return locator;
-  }
-  return null;
 }
 
 function isLoginUrl(url) {
   return LOGIN_PATH_PATTERN.test(String(url || ""));
 }
 
-async function cloudflareState(page) {
-  return page.evaluate(() => {
-    const bodyText = String(document.body?.innerText || "").replace(/\s+/g, " ").trim();
-    const tokenElements = Array.from(document.querySelectorAll(
-      'input[name="cf-turnstile-response"], textarea[name="cf-turnstile-response"], input[name*="turnstile" i], textarea[name*="turnstile" i]'
-    ));
-    const tokenLength = tokenElements.reduce((max, element) => {
-      const value = String(element.value || element.getAttribute("value") || "");
-      return Math.max(max, value.length);
-    }, 0);
-    const iframeCount = document.querySelectorAll(
-      'iframe[src*="challenges.cloudflare.com"], iframe[title*="cloudflare" i], iframe[title*="challenge" i]'
-    ).length;
-    const widgetCount = document.querySelectorAll('.cf-turnstile, [data-sitekey], [class*="turnstile" i]').length;
-    const successText = /(^|\s)(sucesso!?|success!?)(\s|$)/i.test(bodyText);
-    return {
-      tokenLength,
-      iframeCount,
-      widgetCount,
-      successText,
-      detected: tokenElements.length > 0 || iframeCount > 0 || widgetCount > 0 || /cloudflare/i.test(bodyText),
-    };
-  }).catch(() => ({ tokenLength: 0, iframeCount: 0, widgetCount: 0, successText: false, detected: false }));
+async function getChromePages() {
+  const response = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`, {
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!response.ok) throw new Error(`Chrome DevTools respondeu HTTP ${response.status}`);
+  const targets = await response.json();
+  return Array.isArray(targets) ? targets.filter((target) => target?.type === "page") : [];
 }
 
-async function waitForHumanValidation(page) {
-  const startedAt = Date.now();
-  let announced = false;
+function choosePortalPage(pages) {
+  return pages.find((page) => String(page.url || "").startsWith(PORTAL_ORIGIN)) || pages[0] || null;
+}
 
-  while (!page.isClosed()) {
-    if (!isLoginUrl(page.url())) return "session_active";
+async function waitForChrome() {
+  for (let attempt = 1; attempt <= 60; attempt += 1) {
+    try {
+      const pages = await getChromePages();
+      if (pages.length > 0) return pages;
+    } catch {
+      // O Chrome ainda está inicializando.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error("O Google Chrome não disponibilizou a interface local de diagnóstico.");
+}
 
-    const state = await cloudflareState(page);
-    if (state.successText || state.tokenLength >= 20) return "validated";
+async function monitorSession(chrome) {
+  let previousState = null;
+  let previousUrl = null;
 
-    if (!state.detected && Date.now() - startedAt >= 5000) return "not_required";
+  while (chrome.exitCode === null) {
+    try {
+      const page = choosePortalPage(await getChromePages());
+      const currentUrl = String(page?.url || "");
+      let state = "browser_ready";
+      let message = "Google Chrome aberto e aguardando navegação.";
 
-    if (!announced) {
-      announced = true;
-      await setStatus("waiting_cloudflare", {
-        message: "Abra o navegador remoto e conclua a confirmação do Cloudflare.",
-        currentUrl: page.url(),
-      });
+      if (currentUrl.startsWith(PORTAL_ORIGIN) && isLoginUrl(currentUrl)) {
+        state = "waiting_manual_login";
+        message = "Conclua manualmente o Cloudflare e o primeiro login. A sessão será preservada no volume.";
+      } else if (currentUrl.startsWith(PORTAL_ORIGIN)) {
+        state = "authenticated";
+        message = "Sessão autenticada e preservada no perfil persistente.";
+      }
+
+      if (state !== previousState || currentUrl !== previousUrl) {
+        previousState = state;
+        previousUrl = currentUrl;
+        await setStatus(state, {
+          message,
+          currentUrl: currentUrl || null,
+          profileDirectory: PROFILE_DIR,
+        });
+      }
+    } catch (error) {
+      if (previousState !== "browser_monitor_warning") {
+        previousState = "browser_monitor_warning";
+        await setStatus("browser_monitor_warning", {
+          message: "O navegador está aberto, mas o monitor local não conseguiu consultar a guia atual.",
+          error: String(error?.message || error),
+        });
+      }
     }
 
-    await page.waitForTimeout(1000);
-  }
-
-  throw new Error("A página foi fechada durante a validação do Cloudflare.");
-}
-
-async function submitLogin(page) {
-  const usernameInput = await firstVisible(page, [
-    '#login',
-    'input[name="login"]',
-    'input[autocomplete="username"]',
-    'input[name*="usuario" i]',
-    'input[id*="usuario" i]',
-    'input[type="text"]',
-  ]);
-  const passwordInput = await firstVisible(page, [
-    '#senha',
-    'input[name="senha"]',
-    'input[type="password"]',
-    'input[autocomplete="current-password"]',
-  ]);
-
-  if (!usernameInput || !passwordInput) {
-    throw new Error("Campos de usuário e senha não foram encontrados.");
-  }
-
-  await usernameInput.fill(USERNAME);
-  await passwordInput.fill(PASSWORD);
-
-  const enterButton = await firstVisible(page, [
-    '#btnSubmit',
-    'button:has-text("Entrar")',
-    'input[type="submit"][value*="Entrar" i]',
-    'button[type="submit"]',
-    'input[type="submit"]',
-  ]);
-
-  await setStatus("submitting_login", { currentUrl: page.url() });
-
-  if (enterButton) await enterButton.click();
-  else await passwordInput.press("Enter");
-
-  await Promise.race([
-    page.waitForURL((url) => !isLoginUrl(url.href), { timeout: 60000 }),
-    page.waitForTimeout(60000),
-  ]).catch(() => null);
-
-  await page.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => null);
-  await page.waitForTimeout(2000);
-
-  const passwordStillVisible = await page.locator('input[type="password"]').first().isVisible().catch(() => false);
-  if (isLoginUrl(page.url()) || passwordStillVisible) {
-    throw new Error(`Login não confirmado. URL atual: ${page.url()}`);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 }
 
 async function main() {
   await fs.mkdir(PROFILE_DIR, { recursive: true });
-  await setStatus("starting_browser", { profileDirectory: PROFILE_DIR });
-
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless: false,
-    viewport: null,
-    locale: "pt-BR",
-    acceptDownloads: true,
-    args: [
-      "--no-sandbox",
-      "--disable-dev-shm-usage",
-      "--start-maximized",
-      "--disable-gpu",
-    ],
+  await setStatus("starting_browser", {
+    message: "Iniciando Google Chrome estável em modo visível.",
+    profileDirectory: PROFILE_DIR,
   });
 
-  const page = context.pages()[0] || await context.newPage();
-  page.on("dialog", (dialog) => dialog.dismiss().catch(() => null));
+  const chromeArgs = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--start-maximized",
+    "--window-size=1440,1000",
+    `--user-data-dir=${PROFILE_DIR}`,
+    "--remote-debugging-address=127.0.0.1",
+    `--remote-debugging-port=${DEBUG_PORT}`,
+    PORTAL_URL,
+  ];
 
-  try {
-    await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForTimeout(2000);
+  const chrome = spawn(CHROME_BIN, chromeArgs, {
+    env: process.env,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
 
-    if (!isLoginUrl(page.url())) {
-      await setStatus("authenticated", {
-        message: "Sessão persistente reutilizada.",
-        currentUrl: page.url(),
-      });
-    } else {
-      const validation = await waitForHumanValidation(page);
-      if (validation !== "session_active") await submitLogin(page);
-      await setStatus("authenticated", {
-        message: "Login confirmado. O perfil será preservado no volume.",
-        currentUrl: page.url(),
-      });
-    }
+  let stopping = false;
+  const stop = (signal) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`[area-restrita] encerrando Chrome por ${signal}`);
+    chrome.kill("SIGTERM");
+    setTimeout(() => chrome.kill("SIGKILL"), 10000).unref();
+  };
 
-    await new Promise((resolve) => context.on("close", resolve));
-  } catch (error) {
+  process.on("SIGTERM", () => stop("SIGTERM"));
+  process.on("SIGINT", () => stop("SIGINT"));
+
+  chrome.once("error", async (error) => {
     await setStatus("error", {
-      error: String(error?.message || error),
-      currentUrl: page.isClosed() ? null : page.url(),
+      error: `Não foi possível iniciar o Google Chrome: ${String(error?.message || error)}`,
     });
-    throw error;
-  } finally {
-    await context.close().catch(() => null);
+  });
+
+  await waitForChrome();
+  await monitorSession(chrome);
+
+  const exitCode = await new Promise((resolve) => {
+    if (chrome.exitCode !== null) return resolve(chrome.exitCode);
+    chrome.once("exit", (code) => resolve(code));
+  });
+
+  if (!stopping && exitCode !== 0) {
+    await setStatus("error", {
+      error: `Google Chrome encerrou inesperadamente com código ${exitCode}.`,
+    });
+    process.exitCode = 1;
   }
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
+  await setStatus("error", { error: String(error?.message || error) }).catch(() => null);
   console.error(`[area-restrita] falha no navegador: ${String(error?.message || error)}`);
   process.exit(1);
 });

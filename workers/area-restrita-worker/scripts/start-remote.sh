@@ -43,6 +43,10 @@ if ! xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Mantém o teclado remoto em Português (Brasil) ABNT2. O login automático
+# continua sendo usado para preservar caracteres exatamente como cadastrados.
+setxkbmap -display "${DISPLAY}" -layout br -variant abnt2 >/tmp/setxkbmap.log 2>&1 || true
+
 fluxbox -display "${DISPLAY}" >/tmp/fluxbox.log 2>&1 &
 FLUXBOX_PID=$!
 
@@ -54,6 +58,7 @@ x11vnc \
   -shared \
   -nopw \
   -noxdamage \
+  -xkb \
   -quiet >/tmp/x11vnc.log 2>&1 &
 VNC_PID=$!
 

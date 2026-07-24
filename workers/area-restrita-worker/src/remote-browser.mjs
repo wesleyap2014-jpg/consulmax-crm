@@ -1,8 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { chromium } from "playwright";
 
 const PORTAL_URL = requiredEnv("AREA_RESTRITA_PORTAL_URL");
+const USERNAME = requiredEnv("AREA_RESTRITA_USERNAME");
+const PASSWORD = requiredEnv("AREA_RESTRITA_PASSWORD");
 const DATA_DIR = path.resolve(process.env.AREA_RESTRITA_DATA_DIR || "/data");
 const PROFILE_DIR = path.join(DATA_DIR, "chrome-profile");
 const STATUS_FILE = path.join(DATA_DIR, "area-restrita-status.json");
@@ -44,15 +47,11 @@ async function getChromePages() {
   return Array.isArray(targets) ? targets.filter((target) => target?.type === "page") : [];
 }
 
-function choosePortalPage(pages) {
-  return pages.find((page) => String(page.url || "").startsWith(PORTAL_ORIGIN)) || pages[0] || null;
-}
-
 async function waitForChrome() {
   for (let attempt = 1; attempt <= 60; attempt += 1) {
     try {
       const pages = await getChromePages();
-      if (pages.length > 0) return pages;
+      if (pages.length > 0) return;
     } catch {
       // O Chrome ainda está inicializando.
     }
@@ -61,21 +60,105 @@ async function waitForChrome() {
   throw new Error("O Google Chrome não disponibilizou a interface local de diagnóstico.");
 }
 
-async function monitorSession(chrome) {
+function choosePortalPage(pages) {
+  return pages.find((page) => String(page.url() || "").startsWith(PORTAL_ORIGIN)) || pages[0] || null;
+}
+
+async function readLoginState(page) {
+  return page.evaluate(() => {
+    const bodyText = String(document.body?.innerText || "").replace(/\s+/g, " ").trim();
+    const tokenElements = Array.from(document.querySelectorAll(
+      'input[name="cf-turnstile-response"], textarea[name="cf-turnstile-response"], input[name*="turnstile" i], textarea[name*="turnstile" i]'
+    ));
+    const tokenLength = tokenElements.reduce((max, element) => {
+      const value = String(element.value || element.getAttribute("value") || "");
+      return Math.max(max, value.length);
+    }, 0);
+
+    return {
+      tokenLength,
+      usernameVisible: Boolean(document.querySelector('#login, input[name="login"]')),
+      passwordVisible: Boolean(document.querySelector('#senha, input[name="senha"], input[type="password"]')),
+      verificationFailed: /falha na verifica[cç][aã]o|verification failed|failure/i.test(bodyText),
+      loginRejected: /(usu[aá]rio|senha).{0,40}(inv[aá]lid|incorret)|acesso negado|falha no login/i.test(bodyText),
+    };
+  }).catch(() => ({
+    tokenLength: 0,
+    usernameVisible: false,
+    passwordVisible: false,
+    verificationFailed: false,
+    loginRejected: false,
+  }));
+}
+
+async function submitStoredCredentials(page) {
+  const usernameInput = page.locator('#login, input[name="login"]').first();
+  const passwordInput = page.locator('#senha, input[name="senha"], input[type="password"]').first();
+  const submitButton = page.locator('#btnSubmit, button:has-text("Entrar"), input[type="submit"]').first();
+
+  await usernameInput.waitFor({ state: "visible", timeout: 15000 });
+  await passwordInput.waitFor({ state: "visible", timeout: 15000 });
+
+  // O preenchimento ocorre somente depois de a pessoa concluir o Turnstile.
+  // fill() preserva exatamente maiúsculas, minúsculas e caracteres especiais.
+  await usernameInput.fill(USERNAME);
+  await passwordInput.fill(PASSWORD);
+
+  await setStatus("submitting_login", {
+    message: "Cloudflare validado. Enviando as credenciais armazenadas com a capitalização original.",
+    currentUrl: page.url(),
+    profileDirectory: PROFILE_DIR,
+  });
+
+  if (await submitButton.isVisible().catch(() => false)) {
+    await submitButton.click();
+  } else {
+    await passwordInput.press("Enter");
+  }
+}
+
+async function monitorSession(chrome, browser) {
   let previousState = null;
   let previousUrl = null;
+  let loginSubmitted = false;
+  let loginSubmittedAt = 0;
 
   while (chrome.exitCode === null) {
     try {
-      const page = choosePortalPage(await getChromePages());
-      const currentUrl = String(page?.url || "");
+      const context = browser.contexts()[0];
+      const page = context ? choosePortalPage(context.pages()) : null;
+      const currentUrl = String(page?.url() || "");
       let state = "browser_ready";
       let message = "Google Chrome aberto e aguardando navegação.";
 
-      if (currentUrl.startsWith(PORTAL_ORIGIN) && isLoginUrl(currentUrl)) {
-        state = "waiting_manual_login";
-        message = "Conclua manualmente o Cloudflare e o primeiro login. A sessão será preservada no volume.";
-      } else if (currentUrl.startsWith(PORTAL_ORIGIN)) {
+      if (page && currentUrl.startsWith(PORTAL_ORIGIN) && isLoginUrl(currentUrl)) {
+        const loginState = await readLoginState(page);
+
+        if (loginState.verificationFailed) {
+          state = "cloudflare_rejected";
+          message = "O Cloudflare recusou a tentativa. Atualize a página e valide novamente.";
+        } else if (loginState.tokenLength >= 20 && loginState.usernameVisible && loginState.passwordVisible) {
+          if (!loginSubmitted) {
+            loginSubmitted = true;
+            loginSubmittedAt = Date.now();
+            await submitStoredCredentials(page);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            continue;
+          }
+
+          state = "submitting_login";
+          message = "Cloudflare validado. Aguardando a confirmação do login.";
+
+          if (loginState.loginRejected || Date.now() - loginSubmittedAt > 60000) {
+            state = "login_not_confirmed";
+            message = "O login não foi confirmado. Confira as credenciais cadastradas no Railway.";
+          }
+        } else {
+          state = "waiting_cloudflare";
+          message = "Marque 'Verify you are human'. Depois disso, o robô preencherá o login automaticamente.";
+        }
+      } else if (page && currentUrl.startsWith(PORTAL_ORIGIN)) {
+        loginSubmitted = false;
         state = "authenticated";
         message = "Sessão autenticada e preservada no perfil persistente.";
       }
@@ -99,7 +182,7 @@ async function monitorSession(chrome) {
       }
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 }
 
@@ -115,6 +198,8 @@ async function main() {
     "--disable-dev-shm-usage",
     "--no-first-run",
     "--no-default-browser-check",
+    "--disable-session-crashed-bubble",
+    "--hide-crash-restore-bubble",
     "--start-maximized",
     "--window-size=1440,1000",
     `--user-data-dir=${PROFILE_DIR}`,
@@ -147,7 +232,8 @@ async function main() {
   });
 
   await waitForChrome();
-  await monitorSession(chrome);
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${DEBUG_PORT}`);
+  await monitorSession(chrome, browser);
 
   const exitCode = await new Promise((resolve) => {
     if (chrome.exitCode !== null) return resolve(chrome.exitCode);

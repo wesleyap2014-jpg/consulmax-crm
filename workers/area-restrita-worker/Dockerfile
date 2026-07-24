@@ -6,6 +6,7 @@ RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     apache2-utils \
     ca-certificates \
+    feh \
     fluxbox \
     gettext-base \
     gnupg \
@@ -14,6 +15,7 @@ RUN apt-get update \
     websockify \
     wget \
     x11-utils \
+    x11-xkb-utils \
     x11vnc \
     xvfb \
   && mkdir -p /usr/share/keyrings \

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "diagnose": "node src/diagnose.mjs"
+    "diagnose": "node src/diagnose-login.mjs"
   },
   "dependencies": {
     "playwright": "1.61.0"

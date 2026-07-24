@@ -1,0 +1,51 @@
+name: Diagnóstico Área Restrita
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostico:
+    name: Mapear login e portal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Verificar secrets
+        env:
+          AREA_RESTRITA_PORTAL_URL: ${{ secrets.AREA_RESTRITA_PORTAL_URL }}
+          AREA_RESTRITA_USERNAME: ${{ secrets.AREA_RESTRITA_USERNAME }}
+          AREA_RESTRITA_PASSWORD: ${{ secrets.AREA_RESTRITA_PASSWORD }}
+        run: |
+          test -n "$AREA_RESTRITA_PORTAL_URL" || (echo "Secret AREA_RESTRITA_PORTAL_URL ausente" && exit 1)
+          test -n "$AREA_RESTRITA_USERNAME" || (echo "Secret AREA_RESTRITA_USERNAME ausente" && exit 1)
+          test -n "$AREA_RESTRITA_PASSWORD" || (echo "Secret AREA_RESTRITA_PASSWORD ausente" && exit 1)
+          echo "Secrets obrigatórios encontrados."
+
+      - name: Instalar dependências
+        working-directory: workers/area-restrita-worker
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Executar diagnóstico seguro
+        working-directory: workers/area-restrita-worker
+        env:
+          AREA_RESTRITA_PORTAL_URL: ${{ secrets.AREA_RESTRITA_PORTAL_URL }}
+          AREA_RESTRITA_USERNAME: ${{ secrets.AREA_RESTRITA_USERNAME }}
+          AREA_RESTRITA_PASSWORD: ${{ secrets.AREA_RESTRITA_PASSWORD }}
+        run: npm run diagnose
+
+      - name: Publicar diagnóstico privado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: area-restrita-diagnostico
+          path: workers/area-restrita-worker/artifacts/area-restrita-diagnostico
+          if-no-files-found: warn
+          retention-days: 7

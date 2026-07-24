@@ -10,11 +10,16 @@ export DISPLAY="${DISPLAY:-:99}"
 export PORT="${PORT:-3000}"
 export AREA_RESTRITA_DATA_DIR="${AREA_RESTRITA_DATA_DIR:-/data}"
 
-mkdir -p "${AREA_RESTRITA_DATA_DIR}/chrome-profile" /run/area-restrita /var/log/nginx
+PROFILE_DIR="${AREA_RESTRITA_DATA_DIR}/chrome-profile"
+mkdir -p "${PROFILE_DIR}" /run/area-restrita /var/log/nginx
+
+# Locks podem permanecer no volume quando o contêiner anterior é interrompido.
+rm -f "${PROFILE_DIR}/SingletonLock" "${PROFILE_DIR}/SingletonSocket" "${PROFILE_DIR}/SingletonCookie"
 
 cleanup() {
   local code=$?
-  kill "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
+  kill "${NGINX_PID:-}" "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
+  wait 2>/dev/null || true
   exit "$code"
 }
 trap cleanup EXIT INT TERM
@@ -58,14 +63,20 @@ WEBSOCKIFY_PID=$!
 node /app/src/remote-browser.mjs &
 BROWSER_PID=$!
 
-sleep 2
+nginx -g 'daemon off;' &
+NGINX_PID=$!
 
-if ! kill -0 "${BROWSER_PID}" 2>/dev/null; then
-  echo "[area-restrita] navegador encerrou durante a inicialização."
-  wait "${BROWSER_PID}"
-fi
+sleep 2
+for pid in "${XVFB_PID}" "${VNC_PID}" "${WEBSOCKIFY_PID}" "${BROWSER_PID}" "${NGINX_PID}"; do
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    echo "[area-restrita] um processo essencial encerrou durante a inicialização."
+    exit 1
+  fi
+done
 
 echo "[area-restrita] navegador remoto protegido iniciado."
 echo "[area-restrita] usuário do acesso remoto: consulmax"
 
-exec nginx -g 'daemon off;'
+# Reinicia o serviço se qualquer processo essencial encerrar.
+wait -n "${XVFB_PID}" "${VNC_PID}" "${WEBSOCKIFY_PID}" "${BROWSER_PID}" "${NGINX_PID}"
+exit $?

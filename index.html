@@ -35,7 +35,7 @@
     <!-- (Opcional, mas ajuda no Android/Chrome) -->
     <meta name="mobile-web-app-capable" content="yes" />
 
-    <!-- Meta Pixel (recomendado pela Meta: no <head>) -->
+    <!-- Meta Pixel: mantém os dois conjuntos de dados ativos durante a unificação -->
     <script>
       !(function (f, b, e, v, n, t, s) {
         if (f.fbq) return;
@@ -53,15 +53,27 @@
         s = b.getElementsByTagName(e)[0];
         s.parentNode.insertBefore(t, s);
       })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+
+      // Pixel usado atualmente no site institucional (PixelYourSite).
+      fbq("init", "1814288479204266");
+
+      // Pixel anteriormente instalado no CRM; mantido para preservar campanhas e histórico.
       fbq("init", "844879181425424");
+
       fbq("track", "PageView");
     </script>
     <!-- Fim Meta Pixel -->
   </head>
 
   <body class="bg-consulmax-neutral">
-    <!-- Noscript fallback (recomendado pela Meta) -->
+    <!-- Noscript fallback dos dois pixels -->
     <noscript>
+      <img
+        height="1"
+        width="1"
+        style="display: none"
+        src="https://www.facebook.com/tr?id=1814288479204266&ev=PageView&noscript=1"
+      />
       <img
         height="1"
         width="1"

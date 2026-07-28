@@ -11,14 +11,14 @@ export PORT="${PORT:-3000}"
 export AREA_RESTRITA_DATA_DIR="${AREA_RESTRITA_DATA_DIR:-/data}"
 
 PROFILE_DIR="${AREA_RESTRITA_DATA_DIR}/chrome-profile"
-mkdir -p "${PROFILE_DIR}" /run/area-restrita /var/log/nginx
+mkdir -p "${PROFILE_DIR}" "${AREA_RESTRITA_DATA_DIR}/downloads" /run/area-restrita /var/log/nginx
 
 # Locks podem permanecer no volume quando o contêiner anterior é interrompido.
 rm -f "${PROFILE_DIR}/SingletonLock" "${PROFILE_DIR}/SingletonSocket" "${PROFILE_DIR}/SingletonCookie"
 
 cleanup() {
   local code=$?
-  kill "${NGINX_PID:-}" "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
+  kill "${SYNC_PID:-}" "${NGINX_PID:-}" "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
   wait 2>/dev/null || true
   exit "$code"
 }
@@ -67,6 +67,11 @@ WEBSOCKIFY_PID=$!
 
 node /app/src/remote-browser.mjs &
 BROWSER_PID=$!
+
+# Este processo aguarda a lista de Tabelas de Preços aparecer. Ele executa
+# uma vez por inicialização e pode encerrar sem derrubar o navegador remoto.
+node /app/src/price-table-runner.mjs >/tmp/price-table-runner.log 2>&1 &
+SYNC_PID=$!
 
 nginx -g 'daemon off;' &
 NGINX_PID=$!

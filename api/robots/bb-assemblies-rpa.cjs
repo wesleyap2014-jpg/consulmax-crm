@@ -45,6 +45,10 @@ function pctDecimal(value) {
   return parsed > 1 ? parsed / 100 : parsed
 }
 
+function isNoAssemblyResultError(error) {
+  return normalizeText(error?.message || error || '').includes('NENHUM RESULTADO DE ASSEMBLEIA')
+}
+
 function isTransientRobotError(error) {
   const text = normalizeText(error?.message || error || '')
 
@@ -52,7 +56,6 @@ function isTransientRobotError(error) {
     text.includes('EXECUTION CONTEXT WAS DESTROYED') ||
     text.includes('NAVIGATION') ||
     text.includes('TIMEOUT') ||
-    text.includes('NENHUM RESULTADO DE ASSEMBLEIA') ||
     text.includes('BOTAO PESQUISAR') ||
     text.includes('CAMPO DE GRUPO')
   )
@@ -377,6 +380,22 @@ async function syncBBAssemblyResultRpa(env, supabase, options = {}) {
         }
       } catch (error) {
         lastError = error
+
+        if (isNoAssemblyResultError(error)) {
+          return {
+            ok: true,
+            status: 'no_result',
+            administradora: 'bb',
+            message: `Grupo ${grupo}: nenhum resultado de assembleia disponível. Consulta concluída com sucesso.`,
+            found: 0,
+            updated: 0,
+            details: {
+              grupo,
+              attempts: attempt,
+              noResult: true,
+            },
+          }
+        }
 
         if (attempt >= 2 || !isTransientRobotError(error)) {
           throw error

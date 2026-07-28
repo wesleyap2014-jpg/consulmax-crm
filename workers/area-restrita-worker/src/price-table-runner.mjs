@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
+import { createPortalNavigation } from "./frame-navigation.mjs";
 import { syncActivePriceTables } from "./price-table-sync.mjs";
 
 const DATA_DIR = path.resolve(process.env.AREA_RESTRITA_DATA_DIR || "/data");
@@ -9,6 +10,7 @@ const DEBUG_PORT = Number(process.env.AREA_RESTRITA_CHROME_DEBUG_PORT || 9222);
 const PORTAL_URL = String(process.env.AREA_RESTRITA_PORTAL_URL || "").trim();
 const PORTAL_ORIGIN = PORTAL_URL ? new URL(PORTAL_URL).origin : "";
 const LOGIN_PATH_PATTERN = /\/NewLogin\/NewLoginCMC\.asp(?:$|[?#])/i;
+const navigation = createPortalNavigation(PORTAL_URL);
 
 async function writeStatus(state, message, details = {}) {
   let previous = {};
@@ -42,170 +44,102 @@ async function connectBrowser() {
   throw new Error("O runner não conseguiu conectar ao Google Chrome.");
 }
 
-async function priceEntryCount(page) {
-  return page.evaluate(() => {
-    const normalize = (value) => String(value || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-
-    const signatures = new Set();
-    for (const element of document.querySelectorAll('a, button, [onclick], [role="button"]')) {
-      const label = normalize(element.innerText || element.textContent || element.getAttribute("title") || "");
-      if (!label.includes("tabela") || !/\bgrupo\s*0*\d{3,5}\b/.test(label)) continue;
-      signatures.add(label);
-    }
-    return signatures.size;
-  }).catch(() => 0);
-}
-
-async function pageNavigationSnapshot(page) {
-  return page.evaluate(() => {
-    const normalize = (value) => String(value || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-
-    const visibleTexts = Array.from(document.querySelectorAll(
-      'a, button, [onclick], [role="button"], td, th, span, div, font'
-    )).filter((element) => {
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-    }).map((element) => normalize(
-      element.innerText || element.textContent || element.getAttribute("title") || ""
-    ));
-
-    const bodyText = normalize(document.body?.innerText || "");
-    return {
-      bodyText,
-      hasDocumentsMenu: visibleTexts.includes("documentos (pdf)"),
-      hasPriceTable: visibleTexts.includes("tabela de precos"),
-      hasLoginFields: Boolean(document.querySelector('#login, input[name="login"], #senha, input[name="senha"]')),
-    };
-  }).catch(() => ({
-    bodyText: "",
-    hasDocumentsMenu: false,
-    hasPriceTable: false,
-    hasLoginFields: false,
-  }));
-}
-
-async function clickExactPortalText(page, label) {
-  return page.evaluate((expectedLabel) => {
-    const normalize = (value) => String(value || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-
-    const expected = normalize(expectedLabel);
-    const elements = Array.from(document.querySelectorAll(
-      'a, button, [onclick], [role="button"], td, th, span, div, font'
-    ));
-
-    const candidates = elements.filter((element) => {
-      const label = normalize(element.innerText || element.textContent || element.getAttribute("title") || "");
-      if (label !== expected) return false;
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-    }).sort((a, b) => {
-      const clickable = (element) => element.matches('a, button, [onclick], [role="button"]') ? 0 : 1;
-      return clickable(a) - clickable(b) || a.querySelectorAll("*").length - b.querySelectorAll("*").length;
-    });
-
-    const original = candidates[0] || null;
-    if (!original) return { clicked: false, reason: "text_not_found" };
-
-    const target = original.closest('a, button, [onclick], [role="button"]') || original;
-    const result = {
-      clicked: true,
-      tagName: target.tagName,
-      href: target.getAttribute("href"),
-      onclick: target.getAttribute("onclick"),
-    };
-    target.click();
-    return result;
-  }, label).catch((error) => ({
-    clicked: false,
-    reason: "page_evaluation_failed",
-    error: String(error?.message || error),
-  }));
-}
-
-async function advanceAuthenticatedNavigation(page, actionHistory) {
+function rankPortalPage(page) {
   const url = String(page.url() || "");
-  const snapshot = await pageNavigationSnapshot(page);
+  if (/\/NewDocumentos\/DocumentoLista\.asp/i.test(url)) return 5;
+  if (/\/NewHome\/HomePrincipal\.asp/i.test(url)) return 4;
+  if (/\/NewHome\/Home\.asp/i.test(url)) return 3;
+  if (LOGIN_PATH_PATTERN.test(url)) return 0;
+  return 2;
+}
 
-  if (LOGIN_PATH_PATTERN.test(url) || snapshot.hasLoginFields) {
-    return { acted: false, reason: "login_page" };
+async function preparePriceTablePage(page, attemptHistory) {
+  const currentUrl = String(page.url() || "");
+  if (!currentUrl.startsWith(PORTAL_ORIGIN) || LOGIN_PATH_PATTERN.test(currentUrl)) {
+    return { ready: false, reason: "login_or_external_page" };
   }
 
-  const action = snapshot.hasPriceTable
-    ? { label: "Tabela de Preços", state: "opening_price_tables" }
-    : snapshot.hasDocumentsMenu
-      ? { label: "Documentos (PDF)", state: "opening_documents" }
-      : null;
-
-  if (!action) return { acted: false, reason: "navigation_target_not_visible" };
-
-  const key = `${url}|${action.label}`;
-  const lastAttempt = actionHistory.get(key) || 0;
+  const throttleKey = `${currentUrl}|prepare-price-tables`;
+  const lastAttempt = attemptHistory.get(throttleKey) || 0;
   if (Date.now() - lastAttempt < 5000) {
-    return { acted: false, reason: "navigation_throttled", target: action.label };
+    return { ready: false, reason: "navigation_throttled" };
   }
-  actionHistory.set(key, Date.now());
+  attemptHistory.set(throttleKey, Date.now());
+
+  const countBefore = await navigation.countVisiblePriceTables(page);
+  if (countBefore > 0) {
+    return { ready: true, count: countBefore, currentUrl };
+  }
+
+  const documentsResult = await navigation.openDocumentsDirectly(page);
+  if (!documentsResult.opened) {
+    return {
+      ready: false,
+      reason: documentsResult.reason || "documents_not_opened",
+      documentsResult,
+    };
+  }
 
   await writeStatus(
-    action.state,
-    action.label === "Documentos (PDF)"
-      ? "A tela diária de inadimplência não apareceu. Abrindo Documentos (PDF) diretamente."
-      : "Abrindo Tabela de Preços para listar os PDFs dos grupos.",
-    { currentUrl: url, navigationTarget: action.label }
+    "opening_documents",
+    "Sessão autenticada. Abrindo a página de Documentos (PDF) diretamente, sem depender do frameset.",
+    {
+      navigationMode: "direct_document_url",
+      documentsUrl: navigation.documentsUrl,
+      documentsResult,
+    }
   );
 
-  const result = await clickExactPortalText(page, action.label);
-  if (result.clicked) {
-    await page.waitForTimeout(1200);
-    await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => null);
+  const expandResult = await navigation.expandPriceTables(page);
+  if (!expandResult.expanded) {
+    return {
+      ready: false,
+      reason: expandResult.reason || "price_tables_not_expanded",
+      documentsResult,
+      expandResult,
+    };
   }
-  return { acted: result.clicked, target: action.label, result };
+
+  await writeStatus(
+    "opening_price_tables",
+    "Documentos (PDF) aberto. Expandindo Tabela de Preços pelo comando do próprio portal.",
+    {
+      navigationMode: "slideonlyone_4",
+      currentUrl: page.url(),
+      expandResult,
+    }
+  );
+
+  const countAfter = await navigation.countVisiblePriceTables(page);
+  return {
+    ready: countAfter > 0,
+    count: countAfter,
+    currentUrl: page.url(),
+    documentsResult,
+    expandResult,
+    reason: countAfter > 0 ? null : "price_entries_not_visible_after_expand",
+  };
 }
 
 async function waitForPriceList(browser) {
   const timeoutMs = Number(process.env.AREA_RESTRITA_PRICE_LIST_TIMEOUT_MS || 30 * 60 * 1000);
   const startedAt = Date.now();
-  const actionHistory = new Map();
+  const attemptHistory = new Map();
 
   while (Date.now() - startedAt < timeoutMs) {
     for (const context of browser.contexts()) {
       const portalPages = context.pages()
         .filter((page) => !PORTAL_ORIGIN || String(page.url() || "").startsWith(PORTAL_ORIGIN))
-        .sort((a, b) => {
-          const score = (page) => {
-            const url = String(page.url() || "");
-            if (/HomePrincipal\.asp/i.test(url)) return 3;
-            if (/Documento|Download/i.test(url)) return 4;
-            if (LOGIN_PATH_PATTERN.test(url)) return 0;
-            return 2;
-          };
-          return score(b) - score(a);
-        });
+        .sort((a, b) => rankPortalPage(b) - rankPortalPage(a));
 
       for (const page of portalPages) {
-        const count = await priceEntryCount(page);
+        const count = await navigation.countVisiblePriceTables(page);
         if (count > 0) return { context, page, count };
 
-        await advanceAuthenticatedNavigation(page, actionHistory);
-
-        const countAfterNavigation = await priceEntryCount(page);
-        if (countAfterNavigation > 0) return { context, page, count: countAfterNavigation };
+        const preparation = await preparePriceTablePage(page, attemptHistory);
+        if (preparation.ready && preparation.count > 0) {
+          return { context, page, count: preparation.count };
+        }
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -219,14 +153,18 @@ async function main() {
   try {
     await writeStatus(
       "waiting_price_tables",
-      "Aguardando o portal listar as Tabelas de Preços dos grupos."
+      "Aguardando a autenticação para abrir diretamente Documentos (PDF) e Tabela de Preços."
     );
 
     const { context, page, count } = await waitForPriceList(browser);
     await writeStatus(
       "price_tables_found",
       `${count} tabela(s) foram encontrada(s) no portal. Cruzando com os grupos ativos do Supabase.`,
-      { portalPriceTables: count, currentUrl: page.url() }
+      {
+        portalPriceTables: count,
+        currentUrl: page.url(),
+        navigationMode: "direct_document_url",
+      }
     );
 
     const result = await syncActivePriceTables({

@@ -657,24 +657,24 @@ export default function EstoqueContempladas() {
   const rows = useMemo<CotaCalc[]>(() => {
     return cotas
       .map((c) => {
-      const pct = clampPct(commissionPct);
-      const credito = Number(c.credito_disponivel || 0);
+        const pct = clampPct(commissionPct);
+        const credito = Number(c.credito_disponivel || 0);
 
-      const comissaoVendedor = credito * pct;
-      const comissaoConsulmax = credito * CONSULMAX_COMMISSION_PCT;
-      const comissaoTotal = comissaoVendedor + comissaoConsulmax;
-      const entrada = Number(c.valor_pago_ao_cliente || 0) + comissaoTotal;
+        const comissaoVendedor = credito * pct;
+        const comissaoConsulmax = credito * CONSULMAX_COMMISSION_PCT;
+        const comissaoTotal = comissaoVendedor + comissaoConsulmax;
+        const entrada = Number(c.valor_pago_ao_cliente || 0) + comissaoTotal;
 
-      return {
-        ...c,
-        _calc: {
-          pct,
-          comissaoVendedor,
-          comissaoConsulmax,
-          comissaoTotal,
-          entrada,
-        },
-      };
+        return {
+          ...c,
+          _calc: {
+            pct,
+            comissaoVendedor,
+            comissaoConsulmax,
+            comissaoTotal,
+            entrada,
+          },
+        };
       })
       .sort(
         (a, b) =>

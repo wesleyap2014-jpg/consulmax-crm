@@ -163,9 +163,8 @@ function pctDecimal(value: unknown) {
   const parsed = numericInput ? Number(value) : parseNumberBR(value);
   if (!Number.isFinite(parsed) || !parsed) return 0;
 
-  const hasPercentSign =
-    !numericInput && String(value ?? "").includes("%");
-  return hasPercentSign || parsed >= 1 ? parsed / 100 : parsed;
+  // Textos vêm das colunas percentuais do portal BB, com ou sem o símbolo %.
+  return numericInput && parsed < 1 ? parsed : parsed / 100;
 }
 
 function formatMoneyBR(value: number) {

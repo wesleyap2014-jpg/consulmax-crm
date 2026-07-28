@@ -655,7 +655,8 @@ export default function EstoqueContempladas() {
   }, [segFilter, statusFilter, adminFilter]);
 
   const rows = useMemo<CotaCalc[]>(() => {
-    return cotas.map((c) => {
+    return cotas
+      .map((c) => {
       const pct = clampPct(commissionPct);
       const credito = Number(c.credito_disponivel || 0);
 
@@ -674,7 +675,11 @@ export default function EstoqueContempladas() {
           entrada,
         },
       };
-    });
+      })
+      .sort(
+        (a, b) =>
+          Number(a.credito_disponivel || 0) - Number(b.credito_disponivel || 0)
+      );
   }, [cotas, commissionPct]);
 
   function seguroVidaLabel(c: any) {

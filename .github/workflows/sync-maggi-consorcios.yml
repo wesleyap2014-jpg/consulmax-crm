@@ -93,3 +93,14 @@ jobs:
           MAGGI_AVAILABLE_GROUPS_AUTOMOVEIS_REVENDA: ${{ vars.MAGGI_AVAILABLE_GROUPS_AUTOMOVEIS_REVENDA }}
           MAGGI_AVAILABLE_GROUPS_IMOVEIS_REVENDA: ${{ vars.MAGGI_AVAILABLE_GROUPS_IMOVEIS_REVENDA }}
         run: node scripts/run-github-maggi-sync.mjs
+
+      - name: Registrar falha da execução no CRM
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.job_id != '' }}
+        working-directory: workers/bb-groups-worker
+        env:
+          SYNC_JOB_ID: ${{ inputs.job_id }}
+          SYNC_ADMINISTRADORA: maggi
+          SYNC_FAILURE_STAGE: Falha ao montar ou executar o worker Maggi
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/mark-github-job-failed.mjs

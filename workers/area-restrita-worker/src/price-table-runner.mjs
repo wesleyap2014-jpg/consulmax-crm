@@ -150,39 +150,46 @@ async function waitForPriceList(browser) {
 
 async function main() {
   const browser = await connectBrowser();
-  try {
-    await writeStatus(
-      "waiting_price_tables",
-      "Aguardando a autenticação para abrir diretamente Documentos (PDF) e Tabela de Preços."
-    );
 
-    const { context, page, count } = await waitForPriceList(browser);
-    await writeStatus(
-      "price_tables_found",
-      `${count} tabela(s) foram encontrada(s) no portal. Cruzando com os grupos ativos do Supabase.`,
-      {
-        portalPriceTables: count,
-        currentUrl: page.url(),
-        navigationMode: "direct_document_url",
-      }
-    );
+  await writeStatus(
+    "waiting_price_tables",
+    "Aguardando a autenticação para abrir diretamente Documentos (PDF) e Tabela de Preços."
+  );
 
-    const result = await syncActivePriceTables({
-      page,
-      context,
-      onProgress: async ({ state, message, details }) => {
-        await writeStatus(state, message, { syncProgress: details || {} });
-      },
-    });
+  const { context, page, count } = await waitForPriceList(browser);
+  await writeStatus(
+    "price_tables_found",
+    `${count} tabela(s) foram encontrada(s) no portal. Cruzando com os grupos ativos do Supabase.`,
+    {
+      portalPriceTables: count,
+      currentUrl: page.url(),
+      navigationMode: "direct_document_url",
+    }
+  );
 
-    await writeStatus(
-      "price_tables_synced",
-      `${result.summary.updatedGroups} grupo(s) foram atualizados a partir das Tabelas de Preços.`,
-      { priceTableSync: result }
-    );
-  } finally {
-    await browser.close().catch(() => null);
-  }
+  const result = await syncActivePriceTables({
+    page,
+    context,
+    onProgress: async ({ state, message, details }) => {
+      await writeStatus(state, message, { syncProgress: details || {} });
+    },
+  });
+
+  await navigation.openDocumentsDirectly(page).catch(() => null);
+  await navigation.expandPriceTables(page).catch(() => null);
+
+  await writeStatus(
+    "price_tables_synced",
+    `${result.summary.updatedGroups} grupo(s) foram atualizados a partir das Tabelas de Preços.`,
+    {
+      priceTableSync: result,
+      browserKeptOpen: true,
+      currentUrl: page.url(),
+    }
+  );
+
+  // Não usar browser.close(): a conexão é via CDP e fechar o Browser também
+  // encerraria o Google Chrome visível, fazendo o supervisor reiniciá-lo na Home.
 }
 
 main().catch(async (error) => {

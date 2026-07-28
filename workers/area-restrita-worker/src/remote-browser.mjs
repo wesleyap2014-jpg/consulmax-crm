@@ -8,11 +8,13 @@ const USERNAME = requiredEnv("AREA_RESTRITA_USERNAME");
 const PASSWORD = requiredEnv("AREA_RESTRITA_PASSWORD");
 const DATA_DIR = path.resolve(process.env.AREA_RESTRITA_DATA_DIR || "/data");
 const PROFILE_DIR = path.join(DATA_DIR, "chrome-profile");
+const DOWNLOAD_DIR = path.join(DATA_DIR, "downloads");
 const STATUS_FILE = path.join(DATA_DIR, "area-restrita-status.json");
 const CHROME_BIN = process.env.AREA_RESTRITA_CHROME_BIN || "/usr/bin/google-chrome-stable";
 const DEBUG_PORT = Number(process.env.AREA_RESTRITA_CHROME_DEBUG_PORT || 9222);
 const LOGIN_PATH_PATTERN = /\/NewLogin\/NewLoginCMC\.asp(?:$|[?#])/i;
 const PORTAL_ORIGIN = new URL(PORTAL_URL).origin;
+const HOME_URL = new URL("/NewHome/HomePrincipal.asp", PORTAL_URL).href;
 
 function requiredEnv(name) {
   const value = String(process.env[name] || "").trim();
@@ -209,12 +211,200 @@ async function clickTotalMagnifier(page, context) {
   };
 }
 
+async function isHomeOrDocumentsPage(page) {
+  const url = String(page.url() || "");
+  if (/\/NewHome\/HomePrincipal\.asp/i.test(url)) return true;
+
+  return page.evaluate(() => {
+    const normalize = (value) => String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    const text = normalize(document.body?.innerText || "");
+    return text.includes("documentos (pdf)") || text.includes("documentos para download");
+  }).catch(() => false);
+}
+
+async function markExactTextTarget(page, label, marker) {
+  return page.evaluate(({ label, marker }) => {
+    const normalize = (value) => String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+
+    const expected = normalize(label);
+    const selectors = "a, button, input, td, th, div, span, font";
+    const candidates = Array.from(document.querySelectorAll(selectors))
+      .filter((element) => {
+        const value = element instanceof HTMLInputElement
+          ? (element.value || element.getAttribute("aria-label") || element.getAttribute("title") || "")
+          : (element.innerText || element.textContent || "");
+        if (normalize(value) !== expected) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+      })
+      .sort((a, b) => {
+        const clickable = (element) => element.matches('a, button, input, [onclick], [role="button"]') ? 0 : 1;
+        return clickable(a) - clickable(b) || a.querySelectorAll("*").length - b.querySelectorAll("*").length;
+      });
+
+    if (candidates.length === 0) return { found: false, reason: "text_not_found" };
+
+    const original = candidates[0];
+    const target = original.closest('a, button, [onclick], [role="button"]') || original;
+    target.setAttribute(marker, "true");
+
+    return {
+      found: true,
+      tagName: target.tagName,
+      text: String(original.innerText || original.textContent || "").replace(/\s+/g, " ").trim(),
+      href: target.getAttribute("href"),
+      onclick: target.getAttribute("onclick"),
+    };
+  }, { label, marker }).catch((error) => ({
+    found: false,
+    reason: "page_evaluation_failed",
+    error: String(error?.message || error),
+  }));
+}
+
+async function clickExactText(page, label, marker) {
+  const discovery = await markExactTextTarget(page, label, marker);
+  if (!discovery.found) return { clicked: false, ...discovery };
+
+  const target = page.locator(`[${marker}="true"]`).first();
+  await target.scrollIntoViewIfNeeded().catch(() => null);
+  await target.click({ force: true, timeout: 15000 });
+  return { clicked: true, ...discovery };
+}
+
+function safeDownloadName(name) {
+  const cleaned = String(name || "tabela-de-precos.pdf")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "tabela-de-precos.pdf";
+}
+
+async function navigateToPriceTable(page, context) {
+  await page.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => null);
+  await page.waitForTimeout(800);
+
+  let workingPage = page;
+  let documentsMenuVisible = await workingPage.getByText("Documentos (PDF)", { exact: true }).first()
+    .isVisible().catch(() => false);
+  let priceTableVisible = await workingPage.getByText("Tabela de Preços", { exact: true }).first()
+    .isVisible().catch(() => false);
+
+  if (!documentsMenuVisible && !priceTableVisible) {
+    await workingPage.goto(HOME_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await workingPage.waitForTimeout(1200);
+    documentsMenuVisible = await workingPage.getByText("Documentos (PDF)", { exact: true }).first()
+      .isVisible().catch(() => false);
+    priceTableVisible = await workingPage.getByText("Tabela de Preços", { exact: true }).first()
+      .isVisible().catch(() => false);
+  }
+
+  let documentsClick = null;
+  if (!priceTableVisible) {
+    documentsClick = await clickExactText(workingPage, "Documentos (PDF)", "data-consulmax-documents-pdf");
+    if (!documentsClick.clicked) {
+      return {
+        opened: false,
+        reason: "documents_pdf_not_found",
+        documentsClick,
+        currentUrl: workingPage.url(),
+      };
+    }
+
+    await workingPage.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => null);
+    await workingPage.waitForTimeout(1200);
+  }
+
+  const priceDiscovery = await markExactTextTarget(
+    workingPage,
+    "Tabela de Preços",
+    "data-consulmax-price-table"
+  );
+
+  if (!priceDiscovery.found) {
+    return {
+      opened: false,
+      reason: "price_table_not_found",
+      documentsClick,
+      priceDiscovery,
+      currentUrl: workingPage.url(),
+    };
+  }
+
+  await fs.mkdir(DOWNLOAD_DIR, { recursive: true });
+
+  const pagesBefore = new Set(context.pages());
+  const beforeUrl = workingPage.url();
+  const popupPromise = workingPage.waitForEvent("popup", { timeout: 8000 }).catch(() => null);
+  const downloadPromise = workingPage.waitForEvent("download", { timeout: 8000 }).catch(() => null);
+  const target = workingPage.locator('[data-consulmax-price-table="true"]').first();
+
+  await target.scrollIntoViewIfNeeded().catch(() => null);
+  await target.click({ force: true, timeout: 15000 });
+
+  const [popupEvent, download] = await Promise.all([popupPromise, downloadPromise]);
+  let popup = popupEvent;
+
+  if (!popup) {
+    popup = context.pages().find((candidate) => !pagesBefore.has(candidate)) || null;
+  }
+
+  let downloadedPath = null;
+  let suggestedFilename = null;
+  if (download) {
+    suggestedFilename = safeDownloadName(download.suggestedFilename());
+    downloadedPath = path.join(DOWNLOAD_DIR, suggestedFilename);
+    await download.saveAs(downloadedPath);
+  }
+
+  if (popup) {
+    await popup.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => null);
+    workingPage = popup;
+  } else {
+    await workingPage.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => null);
+  }
+
+  await workingPage.waitForTimeout(1200);
+
+  const pageSummary = await workingPage.evaluate(() => ({
+    title: document.title || null,
+    bodyText: String(document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 1800),
+  })).catch(() => ({ title: null, bodyText: null }));
+
+  return {
+    opened: true,
+    documentsClick,
+    priceDiscovery,
+    popupOpened: Boolean(popup),
+    beforeUrl,
+    resultUrl: workingPage.url() || null,
+    urlChanged: beforeUrl !== workingPage.url(),
+    downloadStarted: Boolean(download),
+    suggestedFilename,
+    downloadedPath,
+    pageTitle: pageSummary.title,
+    pageTextPreview: pageSummary.bodyText,
+  };
+}
+
 async function monitorSession(chrome, browser) {
   let previousState = null;
   let previousUrl = null;
   let loginSubmitted = false;
   let loginSubmittedAt = 0;
   let totalMagnifierHandled = false;
+  let priceTableHandled = false;
 
   while (chrome.exitCode === null) {
     try {
@@ -227,6 +417,7 @@ async function monitorSession(chrome, browser) {
 
       if (page && currentUrl.startsWith(PORTAL_ORIGIN) && isLoginUrl(currentUrl)) {
         totalMagnifierHandled = false;
+        priceTableHandled = false;
         const loginState = await readLoginState(page);
 
         if (loginState.verificationFailed) {
@@ -254,28 +445,56 @@ async function monitorSession(chrome, browser) {
         }
       } else if (page && currentUrl.startsWith(PORTAL_ORIGIN)) {
         loginSubmitted = false;
+        let canContinueToDocuments = totalMagnifierHandled;
 
         if (!totalMagnifierHandled) {
-          const clickResult = await clickTotalMagnifier(page, context);
-          if (clickResult.clicked) {
+          if (await isHomeOrDocumentsPage(page)) {
             totalMagnifierHandled = true;
-            state = "attention_total_opened";
-            message = "Login confirmado. A lupa da linha Total foi acionada e a guia auxiliar foi fechada.";
+            canContinueToDocuments = true;
+            statusDetails.totalStep = "skipped_session_already_past_attention";
+          } else {
+            const clickResult = await clickTotalMagnifier(page, context);
+            if (clickResult.clicked) {
+              totalMagnifierHandled = true;
+              canContinueToDocuments = true;
+              statusDetails = {
+                popupOpened: clickResult.popupOpened,
+                popupUrl: clickResult.popupUrl,
+                totalRow: clickResult.rowText,
+              };
+            } else {
+              state = "authenticated_waiting_total";
+              message = "Sessão autenticada. Aguardando a tabela de inadimplência e a linha Total ficarem disponíveis.";
+              statusDetails = {
+                lookupReason: clickResult.reason,
+              };
+            }
+          }
+        }
+
+        if (canContinueToDocuments && !priceTableHandled) {
+          const navigationResult = await navigateToPriceTable(page, context);
+          if (navigationResult.opened) {
+            priceTableHandled = true;
+            state = "price_table_opened";
+            message = navigationResult.downloadStarted
+              ? "Documentos (PDF) > Tabela de Preços acessado e arquivo salvo no volume."
+              : "Documentos (PDF) > Tabela de Preços acessado. A tela resultante ficou aberta para o próximo mapeamento.";
             statusDetails = {
-              popupOpened: clickResult.popupOpened,
-              popupUrl: clickResult.popupUrl,
-              totalRow: clickResult.rowText,
+              ...statusDetails,
+              priceTable: navigationResult,
             };
           } else {
-            state = "authenticated_waiting_total";
-            message = "Sessão autenticada. Aguardando a tabela de inadimplência e a linha Total ficarem disponíveis.";
+            state = "authenticated_waiting_price_table";
+            message = "Sessão autenticada. Tentando abrir Documentos (PDF) e Tabela de Preços.";
             statusDetails = {
-              lookupReason: clickResult.reason,
+              ...statusDetails,
+              priceTableLookup: navigationResult,
             };
           }
-        } else {
-          state = "attention_total_opened";
-          message = "Sessão autenticada. A lupa da linha Total já foi acionada nesta execução.";
+        } else if (priceTableHandled) {
+          state = "price_table_opened";
+          message = "Tabela de Preços já foi acessada nesta execução.";
         }
       }
 
@@ -305,6 +524,7 @@ async function monitorSession(chrome, browser) {
 
 async function main() {
   await fs.mkdir(PROFILE_DIR, { recursive: true });
+  await fs.mkdir(DOWNLOAD_DIR, { recursive: true });
   await setStatus("starting_browser", {
     message: "Iniciando Google Chrome estável em modo visível.",
     profileDirectory: PROFILE_DIR,

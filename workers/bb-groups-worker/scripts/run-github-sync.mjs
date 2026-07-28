@@ -282,6 +282,55 @@ async function activeGroups() {
     .filter((group) => group && group !== "000000")));
 }
 
+function isNoAssemblyResultError(error) {
+  return errorText(error).toUpperCase().includes("NENHUM RESULTADO DE ASSEMBLEIA");
+}
+
+function isDestroyedExecutionContextError(error) {
+  const text = errorText(error).toUpperCase();
+  return text.includes("EXECUTION CONTEXT WAS DESTROYED") ||
+    text.includes("MOST LIKELY BECAUSE OF A NAVIGATION");
+}
+
+async function runAssemblyGroup(group) {
+  try {
+    return await callWorker("/sync/bb/assembly-result", { grupo: group });
+  } catch (error) {
+    if (isNoAssemblyResultError(error)) {
+      return {
+        ok: true,
+        status: "no_result",
+        found: 0,
+        updated: 0,
+        message: `Grupo ${group}: nenhum resultado de assembleia disponível. Consulta concluída com sucesso.`,
+      };
+    }
+
+    if (!isDestroyedExecutionContextError(error)) throw error;
+
+    log("contexto de navegação perdido; repetindo somente a assembleia do grupo", {
+      grupo: group,
+      error: errorText(error),
+    });
+    await delay(1500);
+
+    try {
+      return await callWorker("/sync/bb/assembly-result", { grupo: group });
+    } catch (retryError) {
+      if (isNoAssemblyResultError(retryError)) {
+        return {
+          ok: true,
+          status: "no_result",
+          found: 0,
+          updated: 0,
+          message: `Grupo ${group}: nenhum resultado de assembleia disponível. Consulta concluída com sucesso após nova tentativa.`,
+        };
+      }
+      throw retryError;
+    }
+  }
+}
+
 async function runAssemblies(job, progress) {
   const groups = await activeGroups();
   progress.assemblies = {
@@ -303,7 +352,7 @@ async function runAssemblies(job, progress) {
     await updateJob(job.id, { current_item: group, progress });
 
     try {
-      await callWorker("/sync/bb/assembly-result", { grupo: group });
+      await runAssemblyGroup(group);
       progress.assemblies.success += 1;
     } catch (error) {
       const message = `Grupo ${group}: ${errorText(error)}`;

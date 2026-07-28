@@ -12,6 +12,7 @@ RUN apt-get update \
     gnupg \
     nginx \
     novnc \
+    poppler-utils \
     websockify \
     wget \
     x11-utils \

@@ -31,8 +31,18 @@ http {
 
     location = /health {
       auth_basic off;
-      default_type application/json;
-      return 200 '{"ok":true,"service":"consulmax-area-restrita-worker"}';
+      proxy_pass http://127.0.0.1:3100/health;
+      proxy_set_header Host $host;
+      proxy_read_timeout 15s;
+    }
+
+    location /api/worker/ {
+      auth_basic off;
+      proxy_pass http://127.0.0.1:3100/;
+      proxy_set_header Host $host;
+      proxy_set_header Authorization $http_authorization;
+      proxy_read_timeout 70s;
+      proxy_send_timeout 70s;
     }
 
     location = /status {

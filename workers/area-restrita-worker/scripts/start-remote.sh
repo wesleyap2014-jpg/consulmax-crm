@@ -8,6 +8,7 @@ set -Eeuo pipefail
 
 export DISPLAY="${DISPLAY:-:99}"
 export PORT="${PORT:-3000}"
+export AREA_RESTRITA_CONTROL_PORT="${AREA_RESTRITA_CONTROL_PORT:-3100}"
 export AREA_RESTRITA_DATA_DIR="${AREA_RESTRITA_DATA_DIR:-/data}"
 
 PROFILE_DIR="${AREA_RESTRITA_DATA_DIR}/chrome-profile"
@@ -18,7 +19,7 @@ rm -f "${PROFILE_DIR}/SingletonLock" "${PROFILE_DIR}/SingletonSocket" "${PROFILE
 
 cleanup() {
   local code=$?
-  kill "${SYNC_PID:-}" "${NGINX_PID:-}" "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
+  kill "${CONTROL_PID:-}" "${NGINX_PID:-}" "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
   wait 2>/dev/null || true
   exit "$code"
 }
@@ -68,16 +69,16 @@ WEBSOCKIFY_PID=$!
 node /app/src/remote-browser.mjs &
 BROWSER_PID=$!
 
-# Este processo aguarda a lista de Tabelas de Preços aparecer. Ele executa
-# uma vez por inicialização e pode encerrar sem derrubar o navegador remoto.
-node /app/src/price-table-runner.mjs >/tmp/price-table-runner.log 2>&1 &
-SYNC_PID=$!
+# A API de controle dispara a sincronização inicial, os comandos manuais do CRM
+# e a rotina semanal de sexta-feira. Ela também consolida o status do worker.
+node /app/src/server.mjs >/tmp/area-restrita-control.log 2>&1 &
+CONTROL_PID=$!
 
 nginx -g 'daemon off;' &
 NGINX_PID=$!
 
 sleep 2
-for pid in "${XVFB_PID}" "${VNC_PID}" "${WEBSOCKIFY_PID}" "${BROWSER_PID}" "${NGINX_PID}"; do
+for pid in "${XVFB_PID}" "${VNC_PID}" "${WEBSOCKIFY_PID}" "${BROWSER_PID}" "${CONTROL_PID}" "${NGINX_PID}"; do
   if ! kill -0 "${pid}" 2>/dev/null; then
     echo "[area-restrita] um processo essencial encerrou durante a inicialização."
     exit 1
@@ -86,7 +87,8 @@ done
 
 echo "[area-restrita] navegador remoto protegido iniciado."
 echo "[area-restrita] usuário do acesso remoto: consulmax"
+echo "[area-restrita] API de controle disponível internamente na porta ${AREA_RESTRITA_CONTROL_PORT}."
 
 # Reinicia o serviço se qualquer processo essencial encerrar.
-wait -n "${XVFB_PID}" "${VNC_PID}" "${WEBSOCKIFY_PID}" "${BROWSER_PID}" "${NGINX_PID}"
+wait -n "${XVFB_PID}" "${VNC_PID}" "${WEBSOCKIFY_PID}" "${BROWSER_PID}" "${CONTROL_PID}" "${NGINX_PID}"
 exit $?

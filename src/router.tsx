@@ -16,6 +16,7 @@ const AgendaSala = React.lazy(() => import("./pages/AgendaSala"));
 const Simuladores = React.lazy(() => import("./pages/SimuladoresHub"));
 const RadarOfertas = React.lazy(() => import("./pages/RadarOfertas"));
 const CentralGrupos = React.lazy(() => import("./pages/CentralGrupos"));
+const AreaRestritaMaggi = React.lazy(() => import("./pages/AreaRestritaMaggi"));
 const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdministradora"));
 const EmbraconSimulator = React.lazy(() => import("./pages/simuladores/EmbraconSimulator"));
 const MaggiSimulator = React.lazy(() => import("./pages/simuladores/MaggiSimulator"));
@@ -134,6 +135,8 @@ export const router = createBrowserRouter([
           { path: "buscar-ofertas", element: <Navigate to="/radar-ofertas" replace /> },
           { path: "central-grupos", element: withSuspense(<CentralGrupos />) },
           { path: "grupos-disponiveis", element: <Navigate to="/central-grupos" replace /> },
+          { path: "robos/area-restrita-maggi", element: withSuspense(<AreaRestritaMaggi />) },
+          { path: "area-restrita-maggi", element: <Navigate to="/robos/area-restrita-maggi" replace /> },
 
           {
             path: "simuladores",

@@ -159,9 +159,13 @@ function parseNumberBR(value: unknown) {
 }
 
 function pctDecimal(value: unknown) {
-  const parsed = parseNumberBR(value);
-  if (!parsed) return 0;
-  return parsed > 1 ? parsed / 100 : parsed;
+  const numericInput = typeof value === "number";
+  const parsed = numericInput ? Number(value) : parseNumberBR(value);
+  if (!Number.isFinite(parsed) || !parsed) return 0;
+
+  const hasPercentSign =
+    !numericInput && String(value ?? "").includes("%");
+  return hasPercentSign || parsed >= 1 ? parsed / 100 : parsed;
 }
 
 function formatMoneyBR(value: number) {

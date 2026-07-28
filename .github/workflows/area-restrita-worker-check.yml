@@ -1,0 +1,21 @@
+name: Area Restrita Worker Check
+
+on:
+  pull_request:
+    paths:
+      - "workers/area-restrita-worker/**"
+      - ".github/workflows/area-restrita-worker-check.yml"
+  workflow_dispatch:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/area-restrita-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run build

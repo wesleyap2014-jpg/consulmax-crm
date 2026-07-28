@@ -53,6 +53,8 @@ type GrupoCentral = {
   segmento: string;
   creditoMin: number;
   creditoMax: number;
+  taxaAdmPct: number | null;
+  fundoReservaPct: number | null;
   prazoMax: number;
   maiorPct: number | null;
   menorPct: number | null;
@@ -149,6 +151,37 @@ function prazoMaxFrom(row: AnyRow) {
     row.prazo_max || row.prazo_restante || row.prazo_original || row.prazo_min,
   );
 }
+function normalizeFeeDecimal(value: unknown) {
+  const parsed = n(value);
+  if (!parsed) return null;
+  return parsed >= 1 ? parsed / 100 : parsed;
+}
+function groupFeeDecimal(
+  row: AnyRow,
+  topLevelKeys: string[],
+  configKey: "taxaAdmPct" | "fundoReservaPct",
+) {
+  const direct = topLevelKeys
+    .map((key) => row?.[key])
+    .find((value) => n(value) > 0);
+  if (direct !== undefined) return normalizeFeeDecimal(direct);
+
+  const rules = Array.isArray(row?.config?.prazoRules)
+    ? row.config.prazoRules
+    : [];
+  const ruleValue = rules
+    .map((rule: AnyRow) => rule?.[configKey])
+    .find((value: unknown) => n(value) > 0);
+  if (ruleValue !== undefined) return normalizeFeeDecimal(ruleValue);
+
+  const ranges = Array.isArray(row?.config?.creditRanges)
+    ? row.config.creditRanges
+    : [];
+  const rangeValue = ranges
+    .map((range: AnyRow) => range?.[configKey])
+    .find((value: unknown) => n(value) > 0);
+  return rangeValue !== undefined ? normalizeFeeDecimal(rangeValue) : null;
+}
 function lanceLivreFromConfig(row: AnyRow) {
   const opts = Array.isArray(row?.config?.lanceOptions)
     ? row.config.lanceOptions
@@ -212,6 +245,16 @@ function toBBGroup(row: AnyRow): GrupoCentral {
     segmento: normalizeSegmento(row.segmento),
     creditoMin: credit.min,
     creditoMax: credit.max,
+    taxaAdmPct: groupFeeDecimal(
+      row,
+      ["taxa_adm_pct", "taxa_administracao_pct", "adm_tax_pct"],
+      "taxaAdmPct",
+    ),
+    fundoReservaPct: groupFeeDecimal(
+      row,
+      ["fundo_reserva_pct", "fr_tax_pct"],
+      "fundoReservaPct",
+    ),
     prazoMax: prazoMaxFrom(row),
     maiorPct: maior,
     menorPct: menor,
@@ -247,6 +290,16 @@ function toMaggiGroup(row: AnyRow): GrupoCentral {
     segmento: normalizeSegmento(row.segmento),
     creditoMin: credit.min,
     creditoMax: credit.max,
+    taxaAdmPct: groupFeeDecimal(
+      row,
+      ["taxa_adm_pct", "taxa_administracao_pct", "adm_tax_pct"],
+      "taxaAdmPct",
+    ),
+    fundoReservaPct: groupFeeDecimal(
+      row,
+      ["fundo_reserva_pct", "fr_tax_pct"],
+      "fundoReservaPct",
+    ),
     prazoMax: prazoMaxFrom(row),
     maiorPct: maior,
     menorPct: menor,
@@ -1140,13 +1193,15 @@ export default function CentralGrupos() {
       </Card>
       <Card className="rounded-[28px] border bg-white/80 shadow-sm backdrop-blur">
         <CardContent className="p-0 overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
+          <table className="w-full min-w-[1120px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Administradora</th>
                 <th className="px-4 py-3">Grupo</th>
                 <th className="px-4 py-3">Segmento</th>
                 <th className="px-4 py-3">Faixa de crédito</th>
+                <th className="px-4 py-3">Taxa Adm.</th>
+                <th className="px-4 py-3">FR</th>
                 <th className="px-4 py-3">Prazo máx.</th>
                 <th className="px-4 py-3">Maior %</th>
                 <th className="px-4 py-3">Menor %</th>
@@ -1187,6 +1242,8 @@ export default function CentralGrupos() {
                   <td className="px-4 py-3">
                     {brMoney(g.creditoMin)} até {brMoney(g.creditoMax)}
                   </td>
+                  <td className="px-4 py-3">{brPct(g.taxaAdmPct)}</td>
+                  <td className="px-4 py-3">{brPct(g.fundoReservaPct)}</td>
                   <td className="px-4 py-3">{g.prazoMax || "—"} meses</td>
                   <td className="px-4 py-3">{brPct(g.maiorPct)}</td>
                   <td className="px-4 py-3">{brPct(g.menorPct)}</td>
@@ -1206,7 +1263,7 @@ export default function CentralGrupos() {
               {filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={12}
                     className="px-4 py-8 text-center text-slate-500"
                   >
                     Nenhum grupo encontrado.

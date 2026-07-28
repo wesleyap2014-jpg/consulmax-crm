@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 import { createPortalNavigation } from "./frame-navigation.mjs";
-import { syncActivePriceTables } from "./price-table-sync.mjs";
+import { syncActivePriceTablesDirect } from "./price-table-sync-direct.mjs";
 
 const DATA_DIR = path.resolve(process.env.AREA_RESTRITA_DATA_DIR || "/data");
 const STATUS_FILE = path.join(DATA_DIR, "area-restrita-status.json");
 const DEBUG_PORT = Number(process.env.AREA_RESTRITA_CHROME_DEBUG_PORT || 9222);
 const PORTAL_URL = String(process.env.AREA_RESTRITA_PORTAL_URL || "").trim();
-const PORTAL_ORIGIN = PORTAL_URL ? new URL(PORTAL_URL).origin : "";
+const PORTAL_ORIGIN = new URL(PORTAL_URL).origin;
 const LOGIN_PATH_PATTERN = /\/NewLogin\/NewLoginCMC\.asp(?:$|[?#])/i;
 const navigation = createPortalNavigation(PORTAL_URL);
 
@@ -44,108 +44,46 @@ async function connectBrowser() {
   throw new Error("O runner não conseguiu conectar ao Google Chrome.");
 }
 
-function rankPortalPage(page) {
-  const url = String(page.url() || "");
-  if (/\/NewDocumentos\/DocumentoLista\.asp/i.test(url)) return 5;
-  if (/\/NewHome\/HomePrincipal\.asp/i.test(url)) return 4;
-  if (/\/NewHome\/Home\.asp/i.test(url)) return 3;
-  if (LOGIN_PATH_PATTERN.test(url)) return 0;
-  return 2;
-}
-
-async function preparePriceTablePage(page, attemptHistory) {
-  const currentUrl = String(page.url() || "");
-  if (!currentUrl.startsWith(PORTAL_ORIGIN) || LOGIN_PATH_PATTERN.test(currentUrl)) {
-    return { ready: false, reason: "login_or_external_page" };
-  }
-
-  const throttleKey = `${currentUrl}|prepare-price-tables`;
-  const lastAttempt = attemptHistory.get(throttleKey) || 0;
-  if (Date.now() - lastAttempt < 5000) {
-    return { ready: false, reason: "navigation_throttled" };
-  }
-  attemptHistory.set(throttleKey, Date.now());
-
-  const countBefore = await navigation.countVisiblePriceTables(page);
-  if (countBefore > 0) {
-    return { ready: true, count: countBefore, currentUrl };
-  }
-
-  const documentsResult = await navigation.openDocumentsDirectly(page);
-  if (!documentsResult.opened) {
-    return {
-      ready: false,
-      reason: documentsResult.reason || "documents_not_opened",
-      documentsResult,
-    };
-  }
-
-  await writeStatus(
-    "opening_documents",
-    "Sessão autenticada. Abrindo a página de Documentos (PDF) diretamente, sem depender do frameset.",
-    {
-      navigationMode: "direct_document_url",
-      documentsUrl: navigation.documentsUrl,
-      documentsResult,
-    }
-  );
-
-  const expandResult = await navigation.expandPriceTables(page);
-  if (!expandResult.expanded) {
-    return {
-      ready: false,
-      reason: expandResult.reason || "price_tables_not_expanded",
-      documentsResult,
-      expandResult,
-    };
-  }
-
-  await writeStatus(
-    "opening_price_tables",
-    "Documentos (PDF) aberto. Expandindo Tabela de Preços pelo comando do próprio portal.",
-    {
-      navigationMode: "slideonlyone_4",
-      currentUrl: page.url(),
-      expandResult,
-    }
-  );
-
-  const countAfter = await navigation.countVisiblePriceTables(page);
-  return {
-    ready: countAfter > 0,
-    count: countAfter,
-    currentUrl: page.url(),
-    documentsResult,
-    expandResult,
-    reason: countAfter > 0 ? null : "price_entries_not_visible_after_expand",
-  };
-}
-
-async function waitForPriceList(browser) {
+async function waitForAuthenticatedContext(browser) {
   const timeoutMs = Number(process.env.AREA_RESTRITA_PRICE_LIST_TIMEOUT_MS || 30 * 60 * 1000);
   const startedAt = Date.now();
-  const attemptHistory = new Map();
 
   while (Date.now() - startedAt < timeoutMs) {
     for (const context of browser.contexts()) {
-      const portalPages = context.pages()
-        .filter((page) => !PORTAL_ORIGIN || String(page.url() || "").startsWith(PORTAL_ORIGIN))
-        .sort((a, b) => rankPortalPage(b) - rankPortalPage(a));
+      for (const page of context.pages()) {
+        const url = String(page.url() || "");
+        if (!url.startsWith(PORTAL_ORIGIN) || LOGIN_PATH_PATTERN.test(url)) continue;
 
-      for (const page of portalPages) {
-        const count = await navigation.countVisiblePriceTables(page);
-        if (count > 0) return { context, page, count };
+        const hasLoginFields = await page.evaluate(() => Boolean(
+          document.querySelector('#login, input[name="login"], #senha, input[name="senha"]')
+        )).catch(() => true);
+        if (hasLoginFields) continue;
 
-        const preparation = await preparePriceTablePage(page, attemptHistory);
-        if (preparation.ready && preparation.count > 0) {
-          return { context, page, count: preparation.count };
-        }
+        const readyRoute = /\/NewHome\/HomePrincipal\.asp|\/NewHome\/Home\.asp|\/NewDocumentos\//i.test(url);
+        if (readyRoute) return { context, mainPage: page };
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
-  throw new Error("A lista de Tabelas de Preços não apareceu dentro do tempo limite.");
+  throw new Error("A sessão autenticada da Área Restrita não ficou disponível dentro do tempo limite.");
+}
+
+async function openDedicatedPricePage(context) {
+  const existing = context.pages().find((page) => /\/NewDocumentos\/DocumentoLista\.asp/i.test(String(page.url() || "")));
+  const page = existing || await context.newPage();
+
+  if (!/\/NewDocumentos\/DocumentoLista\.asp/i.test(String(page.url() || ""))) {
+    await page.goto(navigation.documentsUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+  }
+
+  const expandResult = await navigation.expandPriceTables(page);
+  const count = await navigation.countVisiblePriceTables(page);
+  if (!expandResult.expanded || count <= 0) {
+    throw new Error(`A lista de Tabelas de Preços não foi expandida. Motivo: ${expandResult.reason || "sem entradas visíveis"}.`);
+  }
+
+  return { page, count, expandResult };
 }
 
 async function main() {
@@ -153,30 +91,37 @@ async function main() {
 
   await writeStatus(
     "waiting_price_tables",
-    "Aguardando a autenticação para abrir diretamente Documentos (PDF) e Tabela de Preços."
+    "Aguardando o login para iniciar a leitura direta dos PDFs em uma guia separada."
   );
 
-  const { context, page, count } = await waitForPriceList(browser);
+  const { context, mainPage } = await waitForAuthenticatedContext(browser);
+  const { page: workerPage, count, expandResult } = await openDedicatedPricePage(context);
+
   await writeStatus(
     "price_tables_found",
-    `${count} tabela(s) foram encontrada(s) no portal. Cruzando com os grupos ativos do Supabase.`,
+    `${count} tabela(s) foram encontrada(s). A leitura ocorrerá em uma guia dedicada, sem interferir na página principal.`,
     {
       portalPriceTables: count,
-      currentUrl: page.url(),
-      navigationMode: "direct_document_url",
+      mainPageUrl: mainPage.url(),
+      workerPageUrl: workerPage.url(),
+      navigationMode: "dedicated_direct_document_page",
+      expandResult,
     }
   );
 
-  const result = await syncActivePriceTables({
-    page,
+  const result = await syncActivePriceTablesDirect({
+    page: workerPage,
     context,
     onProgress: async ({ state, message, details }) => {
-      await writeStatus(state, message, { syncProgress: details || {} });
+      await writeStatus(state, message, {
+        syncProgress: details || {},
+        workerPageUrl: workerPage.url(),
+      });
     },
   });
 
-  await navigation.openDocumentsDirectly(page).catch(() => null);
-  await navigation.expandPriceTables(page).catch(() => null);
+  await workerPage.goto(navigation.documentsUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+  await navigation.expandPriceTables(workerPage).catch(() => null);
 
   await writeStatus(
     "price_tables_synced",
@@ -184,12 +129,13 @@ async function main() {
     {
       priceTableSync: result,
       browserKeptOpen: true,
-      currentUrl: page.url(),
+      mainPageUrl: mainPage.url(),
+      workerPageUrl: workerPage.url(),
     }
   );
 
-  // Não usar browser.close(): a conexão é via CDP e fechar o Browser também
-  // encerraria o Google Chrome visível, fazendo o supervisor reiniciá-lo na Home.
+  // A conexão CDP e as guias permanecem abertas. O runner encerra apenas a sua
+  // própria execução; o Chrome visível continua sob responsabilidade do worker.
 }
 
 main().catch(async (error) => {

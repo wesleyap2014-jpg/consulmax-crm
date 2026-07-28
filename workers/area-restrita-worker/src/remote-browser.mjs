@@ -117,11 +117,104 @@ async function submitStoredCredentials(page) {
   }
 }
 
+async function clickTotalMagnifier(page, context) {
+  await page.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => null);
+  await page.waitForTimeout(1200);
+
+  const discovery = await page.evaluate(() => {
+    const normalize = (value) => String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+
+    const rows = Array.from(document.querySelectorAll("tr"));
+    const totalRow = rows.find((row) => {
+      const cells = Array.from(row.querySelectorAll("td, th"));
+      return cells.some((cell) => normalize(cell.textContent) === "total");
+    });
+
+    if (!totalRow) {
+      return { found: false, reason: "total_row_not_found" };
+    }
+
+    const candidates = Array.from(totalRow.querySelectorAll(
+      'a, button, input[type="image"], img'
+    ));
+
+    let target = candidates.find((element) => {
+      const attributes = [
+        element.getAttribute("alt"),
+        element.getAttribute("title"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("src"),
+        element.getAttribute("href"),
+        element.getAttribute("onclick"),
+      ].filter(Boolean).join(" ");
+      return /(lupa|zoom|search|consulta|detalhe|relatorio|inadimpl)/i.test(attributes);
+    });
+
+    if (!target && candidates.length > 0) {
+      target = candidates[candidates.length - 1];
+    }
+
+    if (!target) {
+      return { found: false, reason: "magnifier_not_found" };
+    }
+
+    if (target.tagName === "IMG") {
+      target = target.closest("a, button") || target;
+    }
+
+    target.setAttribute("data-consulmax-total-magnifier", "true");
+    return {
+      found: true,
+      tagName: target.tagName,
+      rowText: String(totalRow.innerText || totalRow.textContent || "").replace(/\s+/g, " ").trim(),
+    };
+  }).catch((error) => ({
+    found: false,
+    reason: "page_evaluation_failed",
+    error: String(error?.message || error),
+  }));
+
+  if (!discovery.found) return { clicked: false, ...discovery };
+
+  const target = page.locator('[data-consulmax-total-magnifier="true"]').first();
+  const pagesBefore = new Set(context.pages());
+  const popupPromise = page.waitForEvent("popup", { timeout: 10000 }).catch(() => null);
+
+  await target.scrollIntoViewIfNeeded().catch(() => null);
+  await target.click({ force: true, timeout: 15000 });
+
+  let popup = await popupPromise;
+  if (!popup) {
+    await page.waitForTimeout(1500);
+    popup = context.pages().find((candidate) => !pagesBefore.has(candidate)) || null;
+  }
+
+  let popupUrl = null;
+  if (popup) {
+    await popup.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => null);
+    popupUrl = popup.url() || null;
+    await popup.close().catch(() => null);
+  }
+
+  return {
+    clicked: true,
+    popupOpened: Boolean(popup),
+    popupUrl,
+    rowText: discovery.rowText,
+  };
+}
+
 async function monitorSession(chrome, browser) {
   let previousState = null;
   let previousUrl = null;
   let loginSubmitted = false;
   let loginSubmittedAt = 0;
+  let totalMagnifierHandled = false;
 
   while (chrome.exitCode === null) {
     try {
@@ -130,8 +223,10 @@ async function monitorSession(chrome, browser) {
       const currentUrl = String(page?.url() || "");
       let state = "browser_ready";
       let message = "Google Chrome aberto e aguardando navegação.";
+      let statusDetails = {};
 
       if (page && currentUrl.startsWith(PORTAL_ORIGIN) && isLoginUrl(currentUrl)) {
+        totalMagnifierHandled = false;
         const loginState = await readLoginState(page);
 
         if (loginState.verificationFailed) {
@@ -159,8 +254,29 @@ async function monitorSession(chrome, browser) {
         }
       } else if (page && currentUrl.startsWith(PORTAL_ORIGIN)) {
         loginSubmitted = false;
-        state = "authenticated";
-        message = "Sessão autenticada e preservada no perfil persistente.";
+
+        if (!totalMagnifierHandled) {
+          const clickResult = await clickTotalMagnifier(page, context);
+          if (clickResult.clicked) {
+            totalMagnifierHandled = true;
+            state = "attention_total_opened";
+            message = "Login confirmado. A lupa da linha Total foi acionada e a guia auxiliar foi fechada.";
+            statusDetails = {
+              popupOpened: clickResult.popupOpened,
+              popupUrl: clickResult.popupUrl,
+              totalRow: clickResult.rowText,
+            };
+          } else {
+            state = "authenticated_waiting_total";
+            message = "Sessão autenticada. Aguardando a tabela de inadimplência e a linha Total ficarem disponíveis.";
+            statusDetails = {
+              lookupReason: clickResult.reason,
+            };
+          }
+        } else {
+          state = "attention_total_opened";
+          message = "Sessão autenticada. A lupa da linha Total já foi acionada nesta execução.";
+        }
       }
 
       if (state !== previousState || currentUrl !== previousUrl) {
@@ -170,13 +286,14 @@ async function monitorSession(chrome, browser) {
           message,
           currentUrl: currentUrl || null,
           profileDirectory: PROFILE_DIR,
+          ...statusDetails,
         });
       }
     } catch (error) {
       if (previousState !== "browser_monitor_warning") {
         previousState = "browser_monitor_warning";
         await setStatus("browser_monitor_warning", {
-          message: "O navegador está aberto, mas o monitor local não conseguiu consultar a guia atual.",
+          message: "O navegador está aberto, mas o monitor local não conseguiu consultar ou operar a guia atual.",
           error: String(error?.message || error),
         });
       }

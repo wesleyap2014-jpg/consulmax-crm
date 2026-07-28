@@ -1,0 +1,30 @@
+name: Validar worker compartilhado BB e Maggi
+
+on:
+  pull_request:
+    paths:
+      - "workers/bb-groups-worker/**"
+      - ".github/workflows/validate-shared-robot-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Compilar worker compartilhado
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar dependências
+        working-directory: workers/bb-groups-worker
+        run: npm ci
+
+      - name: Montar e compilar worker
+        working-directory: workers/bb-groups-worker
+        run: npm run build

@@ -75,8 +75,14 @@ const allFailedGuard = `  const updatedCount = summaries.filter((item) => item.u
 
 ${finalNavigation}`;
 
-if (!syncSource.includes("Nenhum grupo foi atualizado") && syncSource.includes(finalNavigation)) {
-  syncSource = syncSource.replace(finalNavigation, allFailedGuard);
+if (!syncSource.includes("Nenhum grupo foi atualizado")) {
+  const finalNavigationIndex = syncSource.lastIndexOf(finalNavigation);
+  if (finalNavigationIndex < 0) {
+    throw new Error("Não foi possível localizar o encerramento final do sincronizador.");
+  }
+  syncSource = syncSource.slice(0, finalNavigationIndex)
+    + allFailedGuard
+    + syncSource.slice(finalNavigationIndex + finalNavigation.length);
 }
 fs.writeFileSync(syncFile, syncSource);
 

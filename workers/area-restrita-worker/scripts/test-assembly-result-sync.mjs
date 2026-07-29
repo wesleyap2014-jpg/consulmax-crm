@@ -10,6 +10,7 @@ assert.match(parserSource, /select#data/);
 assert.match(parserSource, /form#FrmAssembleia #Pesquisar/);
 assert.match(parserSource, /labels\.length === 4/);
 assert.match(parserSource, /labels\[1\] === "tipo de contemplacao"/);
+assert.match(parserSource, /imovei\|imovel\|residencial/);
 
 const group = {
   grupo: "0634",
@@ -59,4 +60,4 @@ assert.equal(malformedStats.menorPct, null);
 assert.equal(malformedStats.medianaPct, null);
 assert.equal(malformedStats.maiorPct, null);
 
-console.log("Resultado de assembleias validado com o mapa real do portal, exclusão de sorteio/fixos e proteção contra cotas como percentuais.");
+console.log("Resultado de assembleias validado com segmentos automoveis/imoveis, mapa real do portal, exclusão de sorteio/fixos e proteção contra cotas como percentuais.");

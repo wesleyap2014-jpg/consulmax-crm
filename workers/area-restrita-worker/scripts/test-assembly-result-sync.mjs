@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { calculateAssemblyStats, canonicalGroupNumber, fixedBidPercentages } from "../src/assembly-result-sync.mjs";
+
+const parserSource = fs.readFileSync(new URL("../src/assembly-result-sync.mjs", import.meta.url), "utf8");
+assert.match(parserSource, /new Set\(headerIndexes\)\.size === 4/);
+assert.match(parserSource, /labels\.length >= 4/);
 
 const group = {
   grupo: "0634",
@@ -49,4 +54,4 @@ assert.equal(malformedStats.menorPct, null);
 assert.equal(malformedStats.medianaPct, null);
 assert.equal(malformedStats.maiorPct, null);
 
-console.log("Resultado de assembleias validado: sorteio e fixos são descartados, e cotas nunca são aceitas como percentuais.");
+console.log("Resultado de assembleias validado: cabeçalho interno, sorteio e fixos são tratados, e cotas nunca são aceitas como percentuais.");

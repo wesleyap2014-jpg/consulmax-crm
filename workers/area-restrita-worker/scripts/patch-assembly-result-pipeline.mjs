@@ -1,6 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
 
+const assemblyFile = path.resolve("src/assembly-result-sync.mjs");
+let assemblySource = fs.readFileSync(assemblyFile, "utf8");
+const strictPortalConstants = `const PORTAL_URL = String(process.env.AREA_RESTRITA_PORTAL_URL || "").trim();
+const PORTAL_ORIGIN = new URL(PORTAL_URL).origin;
+const HOME_URL = new URL("/NewHome/HomePrincipal.asp", PORTAL_URL).href;`;
+const safePortalConstants = `const PORTAL_URL = String(process.env.AREA_RESTRITA_PORTAL_URL || "").trim();
+const PORTAL_ORIGIN = PORTAL_URL ? new URL(PORTAL_URL).origin : "";
+const HOME_URL = PORTAL_URL ? new URL("/NewHome/HomePrincipal.asp", PORTAL_URL).href : "";`;
+if (assemblySource.includes(strictPortalConstants)) {
+  assemblySource = assemblySource.replace(strictPortalConstants, safePortalConstants);
+}
+if (!assemblySource.includes('const PORTAL_ORIGIN = PORTAL_URL ?')) {
+  throw new Error("Não foi possível tornar a URL do portal opcional durante os testes unitários.");
+}
+fs.writeFileSync(assemblyFile, assemblySource);
+
 const serverFile = path.resolve("src/server.mjs");
 let source = fs.readFileSync(serverFile, "utf8");
 

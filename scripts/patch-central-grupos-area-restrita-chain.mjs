@@ -45,3 +45,5 @@ if (changed) {
 } else {
   console.log("patch central grupos area restrita chain: no changes");
 }
+
+await import("./patch-area-restrita-reliable-status.mjs");

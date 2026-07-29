@@ -13,6 +13,9 @@ RUN apt-get update \
     nginx \
     novnc \
     poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-por \
     websockify \
     wget \
     x11-utils \
@@ -35,7 +38,8 @@ COPY src ./src
 COPY scripts ./scripts
 COPY config ./config
 
-RUN chmod +x scripts/start-remote.sh
+RUN chmod +x scripts/start-remote.sh \
+  && npm run build
 
 ENV NODE_ENV=production
 ENV AREA_RESTRITA_DATA_DIR=/data

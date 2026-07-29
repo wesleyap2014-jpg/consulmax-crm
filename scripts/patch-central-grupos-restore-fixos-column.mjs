@@ -89,11 +89,12 @@ if (!source.includes("fixosLabel: fixedLancesLabel(row),")) {
   changed = true;
 }
 
-replaceRequired(
-  '<table className="w-full min-w-[1120px] text-sm">',
-  '<table className="w-full min-w-[1220px] text-sm">',
-  'min-w-[1220px]',
-);
+if (source.includes('min-w-[1120px]')) {
+  source = source.replace('min-w-[1120px]', 'min-w-[1220px]');
+  changed = true;
+} else if (!/min-w-\[(?:1220|1260)px\]/.test(source)) {
+  throw new Error("Largura mínima da tabela da Central de Grupos não reconhecida.");
+}
 
 replaceRequired(
   '                <th className="px-4 py-3">Embutido máx.</th>',
@@ -107,7 +108,15 @@ replaceRequired(
   '{g.fixosLabel}</td>',
 );
 
-replaceRequired("colSpan={12}", "colSpan={13}", "colSpan={13}");
+if (source.includes("colSpan={12}")) {
+  source = source.replace("colSpan={12}", "colSpan={13}");
+  changed = true;
+} else if (source.includes("colSpan={14}")) {
+  source = source.replace("colSpan={14}", "colSpan={13}");
+  changed = true;
+} else if (!source.includes("colSpan={13}")) {
+  throw new Error("Colspan da Central de Grupos não reconhecido.");
+}
 
 if (!source.includes(">FIXOS</th>") || !source.includes("{g.fixosLabel}</td>")) {
   throw new Error("A coluna FIXOS não ficou completa após o patch.");

@@ -22,11 +22,37 @@ source = replaceRequired(
 
 source = replaceRequired(
   source,
+  `            if (typeIndex >= 0 && bidIndex >= 0) {
+              headerIndex = index;
+              indexes = { typeIndex, bidIndex, quotaIndex, dateIndex };
+              break;
+            }`,
+  `            const headerIndexes = [quotaIndex, typeIndex, bidIndex, dateIndex];
+            const hasDistinctColumns = labels.length >= 4
+              && headerIndexes.every((columnIndex) => columnIndex >= 0)
+              && new Set(headerIndexes).size === 4;
+            if (hasDistinctColumns) {
+              headerIndex = index;
+              indexes = { typeIndex, bidIndex, quotaIndex, dateIndex };
+              break;
+            }`,
+  "a exigência de quatro colunas distintas no cabeçalho",
+);
+
+source = replaceRequired(
+  source,
   `const cells = Array.from(row.querySelectorAll("td")).map((cell) => String(cell.textContent || "").replace(/\\s+/g, " ").trim());`,
   `const cells = Array.from(row.children)
               .filter((cell) => cell.tagName === "TD")
               .map((cell) => String(cell.textContent || "").replace(/\\s+/g, " ").trim());`,
   "a leitura direta das células de dados",
+);
+
+source = replaceRequired(
+  source,
+  `            if (cells.length <= Math.max(indexes.typeIndex, indexes.bidIndex)) continue;`,
+  `            if (cells.length <= Math.max(indexes.quotaIndex, indexes.typeIndex, indexes.bidIndex, indexes.dateIndex)) continue;`,
+  "a validação da quantidade de colunas da linha",
 );
 
 source = replaceRequired(
@@ -61,9 +87,13 @@ source = replaceRequired(
   "a validação final antes da gravação",
 );
 
-if (!source.includes("Array.from(rows[index].children)") || !source.includes("row.lancePct <= 100")) {
+if (
+  !source.includes("Array.from(rows[index].children)")
+  || !source.includes("new Set(headerIndexes).size === 4")
+  || !source.includes("row.lancePct <= 100")
+) {
   throw new Error("As proteções do parser de assembleias não foram aplicadas.");
 }
 
 fs.writeFileSync(file, source);
-console.log("Parser de assembleias corrigido: tabelas aninhadas e percentuais inválidos são rejeitados.");
+console.log("Parser de assembleias corrigido: cabeçalho interno, tabelas aninhadas e percentuais inválidos são tratados com segurança.");

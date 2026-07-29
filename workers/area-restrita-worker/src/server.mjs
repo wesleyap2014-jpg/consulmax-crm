@@ -10,6 +10,7 @@ const PROFILE_DIR = path.join(DATA_DIR, "chrome-profile");
 const STATUS_FILE = path.join(DATA_DIR, "area-restrita-status.json");
 const MANIFEST_FILE = path.join(DATA_DIR, "area-restrita-price-tables.json");
 const SCHEDULE_FILE = path.join(DATA_DIR, "area-restrita-schedule.json");
+const CHAIN_FILE = path.join(DATA_DIR, "area-restrita-maggi-chain.json");
 const SYNC_LOG_FILE = path.join(DATA_DIR, "price-table-runner.log");
 const RUNNER_FILE = "/app/src/price-table-runner.mjs";
 const startedAt = new Date().toISOString();
@@ -19,9 +20,21 @@ const robotSecret = String(
 const weeklyEnabled = String(process.env.AREA_RESTRITA_WEEKLY_SYNC_ENABLED || "true") !== "false";
 const weeklyHour = Math.min(23, Math.max(0, Number(process.env.AREA_RESTRITA_WEEKLY_SYNC_HOUR || 8)));
 const timeZone = process.env.AREA_RESTRITA_TIME_ZONE || "America/Porto_Velho";
+const maggiChainEnabled = String(process.env.AREA_RESTRITA_CHAIN_MAGGI_GROUPS || "true") !== "false";
+const chainPollMs = Math.max(10_000, Number(process.env.AREA_RESTRITA_CHAIN_POLL_MS || 15_000));
+const chainMaxAgeHours = Math.max(1, Number(process.env.AREA_RESTRITA_CHAIN_MAX_AGE_HOURS || 48));
+const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
 let activeSync = null;
 let lastWeeklyKey = null;
+let chainState = {
+  lastJobId: null,
+  lastGithubRunId: null,
+  lastTriggeredAt: null,
+  lastFinishedAt: null,
+  lastSource: null,
+};
 
 await fs.mkdir(PROFILE_DIR, { recursive: true });
 
@@ -141,6 +154,91 @@ async function loadScheduleState() {
   lastWeeklyKey = state?.lastWeeklyKey || null;
 }
 
+async function loadChainState() {
+  const state = await readJson(CHAIN_FILE, {});
+  chainState = {
+    ...chainState,
+    ...(state && typeof state === "object" ? state : {}),
+  };
+}
+
+async function latestSuccessfulMaggiFullJob() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  const params = new URLSearchParams({
+    select: "id,requested_at,finished_at,status,mode,source,github_run_id,summary",
+    administradora: "eq.maggi",
+    status: "eq.success",
+    mode: "eq.full",
+    finished_at: "not.is.null",
+    order: "finished_at.desc",
+    limit: "1",
+  });
+  const response = await fetch(`${supabaseUrl}/rest/v1/robot_sync_jobs?${params.toString()}`, {
+    headers: {
+      apikey: supabaseServiceRoleKey,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Supabase retornou HTTP ${response.status} ao consultar a última sincronização Maggi.`);
+  }
+  const rows = await response.json();
+  return Array.isArray(rows) ? rows[0] || null : null;
+}
+
+async function acknowledgeChainJob(job, extra = {}) {
+  chainState = {
+    ...chainState,
+    lastJobId: job.id,
+    lastGithubRunId: job.github_run_id || null,
+    lastFinishedAt: job.finished_at || null,
+    ...extra,
+  };
+  await writeJson(CHAIN_FILE, chainState);
+}
+
+async function checkMaggiCompletionChain() {
+  if (!maggiChainEnabled || !supabaseUrl || !supabaseServiceRoleKey) return;
+  const job = await latestSuccessfulMaggiFullJob();
+  if (!job?.id || job.id === chainState.lastJobId) return;
+
+  const finishedAt = new Date(job.finished_at || job.requested_at || 0).getTime();
+  const ageHours = Number.isFinite(finishedAt) ? (Date.now() - finishedAt) / 3_600_000 : Infinity;
+  if (ageHours > chainMaxAgeHours) {
+    await acknowledgeChainJob(job, {
+      lastSource: "historical_checkpoint",
+      lastTriggeredAt: null,
+    });
+    return;
+  }
+
+  if (activeSync && activeSync.exitCode === null) return;
+
+  const previous = await readJson(STATUS_FILE, {});
+  await writeJson(STATUS_FILE, {
+    ...previous,
+    ok: true,
+    state: "queued_after_groups",
+    message: "Grupos Maggi sincronizados. Iniciando automaticamente a leitura de crédito, prazo, taxa de administração, fundo de reserva e lance embutido.",
+    updatedAt: new Date().toISOString(),
+    sourceMaggiJobId: job.id,
+    sourceGithubRunId: job.github_run_id || null,
+  });
+
+  const result = await startSync("maggi_groups_success");
+  if (!result.started) return;
+
+  await acknowledgeChainJob(job, {
+    lastSource: "maggi_groups_success",
+    lastTriggeredAt: new Date().toISOString(),
+    lastPid: result.pid || null,
+  });
+  console.log(`[area-restrita] leitura detalhada encadeada após job Maggi ${job.id}.`);
+}
+
 async function checkWeeklySchedule() {
   if (!weeklyEnabled) return;
   const parts = localParts();
@@ -158,10 +256,13 @@ async function checkWeeklySchedule() {
   }).catch(() => null);
 }
 
-await loadScheduleState();
+await Promise.all([loadScheduleState(), loadChainState()]);
 setInterval(() => checkWeeklySchedule().catch((error) => {
   console.error(`[area-restrita] falha no agendamento: ${String(error?.message || error)}`);
 }), 60_000).unref();
+setInterval(() => checkMaggiCompletionChain().catch((error) => {
+  console.error(`[area-restrita] falha no encadeamento Maggi: ${String(error?.message || error)}`);
+}), chainPollMs).unref();
 
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
@@ -199,6 +300,13 @@ const server = http.createServer(async (request, response) => {
       usernameConfigured: Boolean(process.env.AREA_RESTRITA_USERNAME),
       passwordConfigured: Boolean(process.env.AREA_RESTRITA_PASSWORD),
       remoteAccessConfigured: Boolean(process.env.AREA_RESTRITA_VNC_PASSWORD),
+      autoChain: {
+        enabled: maggiChainEnabled,
+        supabaseConfigured: Boolean(supabaseUrl && supabaseServiceRoleKey),
+        pollMs: chainPollMs,
+        maxAgeHours: chainMaxAgeHours,
+        ...chainState,
+      },
       weeklySchedule: {
         enabled: weeklyEnabled,
         hour: weeklyHour,
@@ -229,7 +337,11 @@ server.listen(PORT, HOST, () => {
   console.log(`[area-restrita] controle ativo em ${HOST}:${PORT}`);
   console.log(`[area-restrita] perfil persistente em ${PROFILE_DIR}`);
 
-  if (String(process.env.AREA_RESTRITA_RUN_ON_START || "true") !== "false") {
+  setTimeout(() => checkMaggiCompletionChain().catch((error) => {
+    console.error(`[area-restrita] falha no primeiro encadeamento Maggi: ${String(error?.message || error)}`);
+  }), 8_000).unref();
+
+  if (String(process.env.AREA_RESTRITA_RUN_ON_START || "false") === "true") {
     setTimeout(() => startSync("startup").catch((error) => {
       console.error(`[area-restrita] falha ao iniciar sincronização automática: ${String(error?.message || error)}`);
     }), 5000).unref();

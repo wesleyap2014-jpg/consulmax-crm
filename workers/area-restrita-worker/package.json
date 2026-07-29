@@ -1,10 +1,10 @@
 {
   "name": "consulmax-area-restrita-worker",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/patch-reader-owns-documents.mjs && node scripts/patch-price-table-intelligence.mjs && node scripts/patch-term-ai-pipeline.mjs && node scripts/patch-ai-runtime-safety.mjs && node scripts/patch-stale-execution-status.mjs && node --check src/server.mjs && node --check src/diagnose-login.mjs && node --check src/remote-browser.mjs && node --check src/frame-navigation.mjs && node --check src/price-table-intelligence.mjs && node --check src/group-document-ai.mjs && node --check src/price-table-sync.mjs && node --check src/price-table-sync-direct.mjs && node --check src/price-table-runner.mjs && node scripts/test-price-table-intelligence.mjs && node scripts/test-ai-runtime-safety.mjs",
+    "build": "node scripts/patch-reader-owns-documents.mjs && node scripts/patch-price-table-intelligence.mjs && node scripts/patch-term-ai-pipeline.mjs && node scripts/patch-include-all-database-groups.mjs && node scripts/patch-ai-runtime-safety.mjs && node scripts/patch-stale-execution-status.mjs && node --check src/server.mjs && node --check src/diagnose-login.mjs && node --check src/remote-browser.mjs && node --check src/frame-navigation.mjs && node --check src/price-table-intelligence.mjs && node --check src/group-document-ai.mjs && node --check src/price-table-sync.mjs && node --check src/price-table-sync-direct.mjs && node --check src/price-table-runner.mjs && node scripts/test-price-table-intelligence.mjs && node scripts/test-ai-runtime-safety.mjs",
     "start": "bash scripts/start-remote.sh",
     "diagnose": "node src/diagnose-login.mjs"
   },

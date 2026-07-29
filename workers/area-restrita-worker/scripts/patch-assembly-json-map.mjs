@@ -35,10 +35,12 @@ function replaceFunction(input, functionName, replacement) {
   throw new Error(`Fechamento da função ${functionName} não localizado.`);
 }
 
-if (!source.includes("const ASSEMBLY_SEARCH_URL")) {
+if (!source.includes("const ASSEMBLY_SEARCH_URL =")) {
+  const homeLine = source.match(/const HOME_URL = [^\n]+;/)?.[0];
+  if (!homeLine) throw new Error("Constante HOME_URL não localizada.");
   source = source.replace(
-    `const HOME_URL = new URL("/NewHome/HomePrincipal.asp", PORTAL_URL).href;`,
-    `const HOME_URL = new URL("/NewHome/HomePrincipal.asp", PORTAL_URL).href;\nconst ASSEMBLY_SEARCH_URL = new URL("/NewResultadoAssembleia/AssembleiaPesquisa.asp", PORTAL_URL).href;`,
+    homeLine,
+    `${homeLine}\nconst ASSEMBLY_SEARCH_URL = PORTAL_URL ? new URL("/NewResultadoAssembleia/AssembleiaPesquisa.asp", PORTAL_URL).href : "";`,
   );
 }
 
@@ -164,7 +166,7 @@ source = replaceFunction(source, "readResultTable", `async function readResultTa
 }`);
 
 if (
-  !source.includes("ASSEMBLY_SEARCH_URL")
+  !source.includes("const ASSEMBLY_SEARCH_URL =")
   || !source.includes('select#segmento')
   || !source.includes('form#FrmAssembleia #Pesquisar')
   || !source.includes('labels.length === 4')

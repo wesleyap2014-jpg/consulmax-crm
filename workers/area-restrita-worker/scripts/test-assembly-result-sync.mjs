@@ -3,8 +3,13 @@ import fs from "node:fs";
 import { calculateAssemblyStats, canonicalGroupNumber, fixedBidPercentages } from "../src/assembly-result-sync.mjs";
 
 const parserSource = fs.readFileSync(new URL("../src/assembly-result-sync.mjs", import.meta.url), "utf8");
-assert.match(parserSource, /new Set\(headerIndexes\)\.size === 4/);
-assert.match(parserSource, /labels\.length >= 4/);
+assert.match(parserSource, /const ASSEMBLY_SEARCH_URL =/);
+assert.match(parserSource, /select#segmento/);
+assert.match(parserSource, /select#grupo/);
+assert.match(parserSource, /select#data/);
+assert.match(parserSource, /form#FrmAssembleia #Pesquisar/);
+assert.match(parserSource, /labels\.length === 4/);
+assert.match(parserSource, /labels\[1\] === "tipo de contemplacao"/);
 
 const group = {
   grupo: "0634",
@@ -54,4 +59,4 @@ assert.equal(malformedStats.menorPct, null);
 assert.equal(malformedStats.medianaPct, null);
 assert.equal(malformedStats.maiorPct, null);
 
-console.log("Resultado de assembleias validado: cabeçalho interno, sorteio e fixos são tratados, e cotas nunca são aceitas como percentuais.");
+console.log("Resultado de assembleias validado com o mapa real do portal, exclusão de sorteio/fixos e proteção contra cotas como percentuais.");

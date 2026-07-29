@@ -38,4 +38,15 @@ assert.equal(stats.quantidadeLancesLivres, 4);
 assert.equal(stats.quantidadeFixosDescartados, 6);
 assert.equal(stats.quantidadeContemplados, 10);
 
-console.log("Resultado de assembleias: sorteio e fixos descartados; menor, mediana e maior calculados corretamente.");
+const malformedNestedTableRows = [
+  { cota: "Grupo: 0634", tipo: "Grupo: 0634", lancePct: "634", data: "Grupo: 0634" },
+  { cota: "446", tipo: "446", lancePct: "446", data: "446" },
+  { cota: "577", tipo: "577", lancePct: "577", data: "577" },
+];
+const malformedStats = calculateAssemblyStats(malformedNestedTableRows, [25, 35]);
+assert.equal(malformedStats.quantidadeLancesLivres, 0);
+assert.equal(malformedStats.menorPct, null);
+assert.equal(malformedStats.medianaPct, null);
+assert.equal(malformedStats.maiorPct, null);
+
+console.log("Resultado de assembleias validado: sorteio e fixos são descartados, e cotas nunca são aceitas como percentuais.");

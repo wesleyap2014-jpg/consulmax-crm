@@ -4,6 +4,15 @@ import path from "node:path";
 const file = path.resolve("src/pages/CentralGrupos.tsx");
 let source = fs.readFileSync(file, "utf8");
 
+const functionStart = source.indexOf("function toMaggiGroup(row: AnyRow): GrupoCentral {");
+const functionEnd = source.indexOf("\nfunction newSteps()", functionStart);
+
+if (functionStart < 0 || functionEnd < 0) {
+  throw new Error("Não foi possível localizar a função toMaggiGroup na Central de Grupos.");
+}
+
+let maggiBlock = source.slice(functionStart, functionEnd);
+
 const oldBlock = `  const maior = normalizePct(
     row.maior_pct_contemplado ||
       row.maior_pct_lance_livre ||
@@ -28,24 +37,34 @@ const newBlock = `  const maior = assemblyValue(row, "maiorPct");
       ? (maior + menor) / 2
       : maior || menor || lanceLivreFromConfig(row) || null);`;
 
-if (source.includes('const medianaFromRobot = assemblyValue(row, "medianaPct");')) {
-  console.log("Leitura dos resultados de assembleia Maggi já aplicada na Central de Grupos.");
+const alreadyPatched =
+  maggiBlock.includes('const maior = assemblyValue(row, "maiorPct");') &&
+  maggiBlock.includes('const menor = assemblyValue(row, "menorPct");') &&
+  maggiBlock.includes('const medianaFromRobot = assemblyValue(row, "medianaPct");');
+
+if (alreadyPatched) {
+  console.log("Leitura Maggi de config.assemblyResult já aplicada especificamente em toMaggiGroup.");
   process.exit(0);
 }
 
-if (!source.includes(oldBlock)) {
-  throw new Error("Não foi possível localizar o leitor legado de assembleias Maggi na Central de Grupos.");
+if (!maggiBlock.includes(oldBlock)) {
+  throw new Error("Não foi possível localizar o leitor legado dentro de toMaggiGroup.");
 }
 
-source = source.replace(oldBlock, newBlock);
+maggiBlock = maggiBlock.replace(oldBlock, newBlock);
+source = source.slice(0, functionStart) + maggiBlock + source.slice(functionEnd);
+
+const updatedFunctionStart = source.indexOf("function toMaggiGroup(row: AnyRow): GrupoCentral {");
+const updatedFunctionEnd = source.indexOf("\nfunction newSteps()", updatedFunctionStart);
+const updatedMaggiBlock = source.slice(updatedFunctionStart, updatedFunctionEnd);
 
 if (
-  !source.includes('const maior = assemblyValue(row, "maiorPct");') ||
-  !source.includes('const menor = assemblyValue(row, "menorPct");') ||
-  !source.includes('const medianaFromRobot = assemblyValue(row, "medianaPct");')
+  !updatedMaggiBlock.includes('const maior = assemblyValue(row, "maiorPct");') ||
+  !updatedMaggiBlock.includes('const menor = assemblyValue(row, "menorPct");') ||
+  !updatedMaggiBlock.includes('const medianaFromRobot = assemblyValue(row, "medianaPct");')
 ) {
-  throw new Error("A leitura de config.assemblyResult não foi aplicada integralmente à Maggi.");
+  throw new Error("A leitura de config.assemblyResult não foi aplicada integralmente dentro de toMaggiGroup.");
 }
 
 fs.writeFileSync(file, source);
-console.log("Central de Grupos agora lê maior, menor e mediana gravados pelo robô Maggi.");
+console.log("Central de Grupos agora lê maior, menor e mediana da Maggi dentro da função correta.");

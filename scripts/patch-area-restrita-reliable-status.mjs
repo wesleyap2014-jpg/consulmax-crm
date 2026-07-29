@@ -88,7 +88,7 @@ replaceOnce(
   );
   const info = stateInfo(effectiveState, syncRunning);
   const effectiveMessage = recoveredFinishedState
-    ? \`${Number(worker?.manifest?.summary?.updatedGroups || 0)} grupo(s) foram atualizados.\`
+    ? \`\${Number(worker?.manifest?.summary?.updatedGroups || 0)} grupo(s) foram atualizados.\`
     : status?.message;`,
   "const recoveredFinishedState = status?.state",
 );

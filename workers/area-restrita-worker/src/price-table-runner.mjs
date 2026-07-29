@@ -3,6 +3,7 @@ import path from "node:path";
 import { chromium } from "playwright";
 import { createPortalNavigation } from "./frame-navigation.mjs";
 import { syncActivePriceTablesDirect } from "./price-table-sync-direct.mjs";
+import { syncLatestAssemblyResults } from "./assembly-result-sync.mjs";
 
 const DATA_DIR = path.resolve(process.env.AREA_RESTRITA_DATA_DIR || "/data");
 const STATUS_FILE = path.join(DATA_DIR, "area-restrita-status.json");
@@ -120,17 +121,35 @@ async function main() {
     },
   });
 
+  const assemblyResult = await syncLatestAssemblyResults({
+    page: workerPage,
+    onProgress: async ({ state, message, details }) => {
+      await writeStatus(state, message, {
+        syncProgress: details || {},
+        workerPageUrl: workerPage.url(),
+      });
+    },
+  });
+
   await workerPage.goto(navigation.documentsUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
   await navigation.expandPriceTables(workerPage).catch(() => null);
 
   await writeStatus(
     "price_tables_synced",
-    `${result.summary.updatedGroups} grupo(s) foram atualizados a partir das Tabelas de Preços.`,
+    `${result.summary.updatedGroups} grupo(s) foram atualizados pelos PDFs e ${assemblyResult.summary.updatedGroups} tiveram a assembleia mais recente analisada.`,
     {
       priceTableSync: result,
+      assemblyResultSync: assemblyResult,
       browserKeptOpen: true,
       mainPageUrl: mainPage.url(),
       workerPageUrl: workerPage.url(),
+      syncProgress: {
+        position: Number(result?.summary?.selectedEntries || 0),
+        total: Number(result?.summary?.selectedEntries || 0),
+        assemblyPosition: Number(assemblyResult?.summary?.totalGroups || 0),
+        assemblyTotal: Number(assemblyResult?.summary?.totalGroups || 0),
+        running: false,
+      },
     }
   );
 

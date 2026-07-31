@@ -83,18 +83,18 @@ if (!source.includes(helperMarker)) {
   source = source.replace(validationAnchor, `${helper}${validationAnchor}`);
 }
 
-const oldPrompt = `- Use "custom" quando houver divisão personalizada entre redução de prazo e redução de parcela; preencha customRule em frações de 0 a 1.\n- Lance embutido é distinto de lance fixo. Liste lance livre, lances fixos, limitado e fidelidade separadamente.`;
-const newPrompt = `- Use "custom" quando houver divisão personalizada entre redução de prazo e redução de parcela; preencha customRule em frações de 0 a 1.\n- Em customRule, LE significa Lance Embutido e LL significa Lance Livre/Próprio.\n- Expressões como "recurso próprio", "recursos próprios" ou "lance próprio" pertencem exclusivamente aos campos llPrazoPct e llParcelaPct, salvo quando o texto mencionar expressamente também o Lance Embutido.\n- Nunca transfira para o Lance Embutido uma regra que o documento limite ao recurso próprio do consorciado.\n- Lance embutido é distinto de lance fixo. Liste lance livre, lances fixos, limitado e fidelidade separadamente.`;
+const promptAnchor = `- Lance embutido é distinto de lance fixo. Liste lance livre, lances fixos, limitado e fidelidade separadamente.`;
+const promptReplacement = `- Em customRule, LE significa Lance Embutido e LL significa Lance Livre/Próprio.\n- Expressões como "recurso próprio", "recursos próprios" ou "lance próprio" pertencem exclusivamente aos campos llPrazoPct e llParcelaPct, salvo quando o texto mencionar expressamente também o Lance Embutido.\n- Nunca transfira para o Lance Embutido uma regra que o documento limite ao recurso próprio do consorciado.\n${promptAnchor}`;
 if (!source.includes("Expressões como \"recurso próprio\"")) {
-  if (!source.includes(oldPrompt)) throw new Error("Âncora do prompt de customRule não encontrada.");
-  source = source.replace(oldPrompt, newPrompt);
+  if (!source.includes(promptAnchor)) throw new Error("Âncora do prompt de customRule não encontrada.");
+  source = source.replace(promptAnchor, promptReplacement);
 }
 
-const returnAnchor = `  if (!fieldIsSupported(result, "regraPosContemplacao")) result.regraPosContemplacao = "nao_informado";\n  return result;`;
-const normalizedReturn = `  if (!fieldIsSupported(result, "regraPosContemplacao")) result.regraPosContemplacao = "nao_informado";\n  normalizeCustomAmortizationRule(result);\n  return result;`;
+const validationReturnAnchor = `\n\n  return result;\n}\n\nfunction lanceOptionsFromAi`;
+const normalizedReturn = `\n\n  normalizeCustomAmortizationRule(result);\n  return result;\n}\n\nfunction lanceOptionsFromAi`;
 if (!source.includes("normalizeCustomAmortizationRule(result);")) {
-  if (!source.includes(returnAnchor)) throw new Error("Retorno da validação da IA não encontrado.");
-  source = source.replace(returnAnchor, normalizedReturn);
+  if (!source.includes(validationReturnAnchor)) throw new Error("Retorno final da validação da IA não encontrado.");
+  source = source.replace(validationReturnAnchor, normalizedReturn);
 }
 
 fs.writeFileSync(filePath, source);

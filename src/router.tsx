@@ -11,6 +11,7 @@ const Login = React.lazy(() => import("./pages/Login"));
 const Inicio = React.lazy(() => import("./pages/Inicio"));
 const Clientes = React.lazy(() => import("./pages/Clientes"));
 const Oportunidades = React.lazy(() => import("./pages/OportunidadesPipelineV7"));
+const MeusParceiros = React.lazy(() => import("./pages/MeusParceiros"));
 const Agenda = React.lazy(() => import("./pages/AgendaLiveKit"));
 const AgendaSala = React.lazy(() => import("./pages/AgendaSala"));
 const Simuladores = React.lazy(() => import("./pages/SimuladoresHub"));
@@ -107,6 +108,7 @@ export const router = createBrowserRouter([
 
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
           { path: "oportunidades", element: withSuspense(<Oportunidades />) },
+          { path: "meus-parceiros", element: withSuspense(<MeusParceiros />) },
 
           { path: "clientes", element: withSuspense(<Clientes />) },
           { path: "agenda", element: withSuspense(<Agenda />) },

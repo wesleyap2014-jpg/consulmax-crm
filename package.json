@@ -42,6 +42,7 @@
 "jspdf": "^2.5.2",
 "jspdf-autotable": "^3.8.2",
 "lamejs": "^1.2.1",
+"libphonenumber-js": "1.13.10",
 "livekit-client": "^2.15.10",
 "lucide-react": "^0.452.0",
 "react": "^18.3.1",

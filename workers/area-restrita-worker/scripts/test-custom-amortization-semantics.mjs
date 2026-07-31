@@ -82,8 +82,8 @@ assert.deepEqual(noContraryProvision.customRule, {
   llParcelaPct: 1,
 });
 
-const percentualIdealMisclassified = {
-  regraPosContemplacao: "saldo_devedor_prazo_restante",
+const percentualIdealInterpreted = {
+  regraPosContemplacao: "mantem_parcela_reduz_prazo",
   regraPosContemplacaoDescricao: `Da Amortização das parcelas:
     O consorciado irá amortizar o percentual ideal referente ao prazo de
     sua cota do início ao fim até a quitação do saldo devedor.`,
@@ -96,12 +96,37 @@ const percentualIdealMisclassified = {
   evidencias: [],
   alertas: [],
 };
-normalizeCustomAmortizationRule(percentualIdealMisclassified);
+normalizeCustomAmortizationRule(percentualIdealInterpreted);
 assert.equal(
-  percentualIdealMisclassified.regraPosContemplacao,
+  percentualIdealInterpreted.regraPosContemplacao,
   "mantem_parcela_reduz_prazo",
-  "A cláusula de percentual ideal deve manter a parcela e reduzir o prazo.",
+  "A interpretação da IA para a cláusula de percentual ideal deve ser preservada.",
 );
+
+const percentualIdealWithCustomContext = {
+  regraPosContemplacao: "custom",
+  regraPosContemplacaoDescricao: `O percentual ideal do plano será mantido do início ao fim. Porém, o recurso próprio ofertado como lance será dividido em 50% para reduzir o prazo e 50% para reduzir o valor das parcelas.`,
+  customRule: {
+    lePrazoPct: null,
+    leParcelaPct: null,
+    llPrazoPct: 0.5,
+    llParcelaPct: 0.5,
+  },
+  evidencias: [],
+  alertas: [],
+};
+normalizeCustomAmortizationRule(percentualIdealWithCustomContext);
+assert.equal(
+  percentualIdealWithCustomContext.regraPosContemplacao,
+  "custom",
+  "O contexto personalizado do grupo não pode ser sobrescrito por uma frase isolada.",
+);
+assert.deepEqual(percentualIdealWithCustomContext.customRule, {
+  lePrazoPct: 1,
+  leParcelaPct: 0,
+  llPrazoPct: 0.5,
+  llParcelaPct: 0.5,
+});
 
 const explicitRemainingTermRecalculation = {
   regraPosContemplacao: "saldo_devedor_prazo_restante",
@@ -122,4 +147,4 @@ assert.equal(
   "Uma regra expressa de recálculo pelo prazo remanescente deve ser preservada.",
 );
 
-console.log("Regra de amortização validada: percentual ideal mantém a parcela; recurso próprio fica em LL; Lance Embutido reduz o prazo por padrão.");
+console.log("Regra de amortização validada por grupo: padrão, saldo/prazo e customização preservados.");

@@ -46,17 +46,6 @@ export function normalizeCustomAmortizationRule(result) {
   const mentionsOwnResources = /\\brecurso(?:s)? proprio(?:s)?\\b|\\blance proprio\\b|\\brecursos? do consorciado\\b/.test(contractualEvidence);
   const explicitlyRegulatesEmbeddedBid = /\\blance embutido\\b|\\brecurso(?:s)? embutido(?:s)?\\b|\\bparte embutida\\b|\\bvalor embutido\\b/.test(contractualEvidence)
     && /amort|abat|redu|prazo|parcela|prestac/.test(contractualEvidence);
-  const keepsInstallmentByContractualPercentage = /\\bpercentual ideal\\b/.test(contractualEvidence)
-    && /\\breferente ao prazo\\b/.test(contractualEvidence)
-    && (/\\bdo inicio ao fim\\b/.test(contractualEvidence)
-      || /\\bate a quitacao do saldo devedor\\b/.test(contractualEvidence));
-
-  // Na redação da Maggi, "percentual ideal referente ao prazo ... do início ao
-  // fim" preserva o percentual mensal do plano original. Portanto, eventual
-  // amortização mantém a parcela-base e antecipa as parcelas finais.
-  if (keepsInstallmentByContractualPercentage) {
-    result.regraPosContemplacao = "mantem_parcela_reduz_prazo";
-  }
 
   const originalLeIsValid = validDistribution(lePrazoPct, leParcelaPct);
   const llIsValid = validDistribution(llPrazoPct, llParcelaPct);
@@ -101,11 +90,11 @@ if (!source.includes("Expressões como \"recurso próprio\"")) {
   source = source.replace(promptAnchor, promptReplacement);
 }
 
-const postContemplationPromptAnchor = `- "mantem_parcela_reduz_prazo" significa manter a parcela e reduzir o prazo.`;
-const postContemplationPromptReplacement = `${postContemplationPromptAnchor}\n- Na redação da Maggi, a cláusula "amortizar o percentual ideal referente ao prazo de sua cota do início ao fim até a quitação do saldo devedor" significa preservar o percentual mensal do prazo original: classifique obrigatoriamente como "mantem_parcela_reduz_prazo". Não a classifique como "saldo_devedor_prazo_restante".`;
-if (!source.includes("a cláusula \"amortizar o percentual ideal referente ao prazo")) {
+const postContemplationPromptAnchor = `- "saldo_devedor_prazo_restante" significa manter o prazo e recalcular/reduzir a parcela.\n- "mantem_parcela_reduz_prazo" significa manter a parcela e reduzir o prazo.\n- Use "custom" quando houver divisão personalizada entre redução de prazo e redução de parcela; preencha customRule em frações de 0 a 1.`;
+const postContemplationPromptReplacement = `- Para regraPosContemplacao, leia a seção de amortização do Termo de Aditamento deste grupo e escolha exatamente uma opção: "saldo_devedor_prazo_restante", "mantem_parcela_reduz_prazo", "custom" ou "nao_informado". Classifique cada grupo individualmente; não aplique a regra de outro grupo Maggi.\n- Use "saldo_devedor_prazo_restante" quando o lance/amortização reduzir o saldo devedor e esse saldo for redistribuído pelo prazo remanescente, mantendo a quantidade de parcelas e reduzindo o valor da parcela.\n- Use "mantem_parcela_reduz_prazo" quando o percentual ou a parcela contratual do plano for preservado e a amortização antecipar parcelas finais, mantendo a parcela-base e reduzindo a quantidade de parcelas. A menção ao percentual mensal correspondente ao prazo original, aplicado do início ao fim, é indício dessa regra, mas deve ser interpretada no contexto integral da cláusula.\n- Use "custom" quando a cláusula misturar redução de prazo e redução de parcela, definir percentuais próprios ou tratar Lance Embutido e Lance Livre/Próprio de formas diferentes.\n- Quando a regra for "custom", explique obrigatoriamente em regraPosContemplacaoDescricao como a customização funciona e preencha customRule em frações de 0 a 1: lePrazoPct + leParcelaPct = 1 para Lance Embutido e llPrazoPct + llParcelaPct = 1 para Lance Livre/Próprio, sempre que o documento disciplinar esses tipos.\n- Em regraPosContemplacaoDescricao, interprete a regra em linguagem objetiva: informe o que acontece com o saldo devedor, o valor da parcela e o prazo. Não apenas repita o nome da classificação.\n- Se a cláusula estiver em branco, incompleta ou não permitir distinguir as opções com segurança, use "nao_informado" e registre um alerta; não presuma uma regra.`;
+if (!source.includes("Classifique cada grupo individualmente")) {
   if (!source.includes(postContemplationPromptAnchor)) {
-    throw new Error("Âncora da regra pós-contemplação não encontrada.");
+    throw new Error("Âncora das opções de regra pós-contemplação não encontrada.");
   }
   source = source.replace(postContemplationPromptAnchor, postContemplationPromptReplacement);
 }
@@ -118,4 +107,4 @@ if (!source.includes("normalizeCustomAmortizationRule(result);")) {
 }
 
 fs.writeFileSync(filePath, source);
-console.log("Semântica de amortização corrigida: recurso próprio em LL e Lance Embutido 100% no prazo por padrão.");
+console.log("Semântica de amortização corrigida: a IA interpreta a regra de cada grupo e detalha as customizações.");

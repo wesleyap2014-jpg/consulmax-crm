@@ -46,6 +46,17 @@ export function normalizeCustomAmortizationRule(result) {
   const mentionsOwnResources = /\\brecurso(?:s)? proprio(?:s)?\\b|\\blance proprio\\b|\\brecursos? do consorciado\\b/.test(contractualEvidence);
   const explicitlyRegulatesEmbeddedBid = /\\blance embutido\\b|\\brecurso(?:s)? embutido(?:s)?\\b|\\bparte embutida\\b|\\bvalor embutido\\b/.test(contractualEvidence)
     && /amort|abat|redu|prazo|parcela|prestac/.test(contractualEvidence);
+  const keepsInstallmentByContractualPercentage = /\\bpercentual ideal\\b/.test(contractualEvidence)
+    && /\\breferente ao prazo\\b/.test(contractualEvidence)
+    && (/\\bdo inicio ao fim\\b/.test(contractualEvidence)
+      || /\\bate a quitacao do saldo devedor\\b/.test(contractualEvidence));
+
+  // Na redação da Maggi, "percentual ideal referente ao prazo ... do início ao
+  // fim" preserva o percentual mensal do plano original. Portanto, eventual
+  // amortização mantém a parcela-base e antecipa as parcelas finais.
+  if (keepsInstallmentByContractualPercentage) {
+    result.regraPosContemplacao = "mantem_parcela_reduz_prazo";
+  }
 
   const originalLeIsValid = validDistribution(lePrazoPct, leParcelaPct);
   const llIsValid = validDistribution(llPrazoPct, llParcelaPct);
@@ -88,6 +99,15 @@ const promptReplacement = `- Em customRule, LE significa Lance Embutido e LL sig
 if (!source.includes("Expressões como \"recurso próprio\"")) {
   if (!source.includes(promptAnchor)) throw new Error("Âncora do prompt de customRule não encontrada.");
   source = source.replace(promptAnchor, promptReplacement);
+}
+
+const postContemplationPromptAnchor = `- "mantem_parcela_reduz_prazo" significa manter a parcela e reduzir o prazo.`;
+const postContemplationPromptReplacement = `${postContemplationPromptAnchor}\n- Na redação da Maggi, a cláusula "amortizar o percentual ideal referente ao prazo de sua cota do início ao fim até a quitação do saldo devedor" significa preservar o percentual mensal do prazo original: classifique obrigatoriamente como "mantem_parcela_reduz_prazo". Não a classifique como "saldo_devedor_prazo_restante".`;
+if (!source.includes("a cláusula \"amortizar o percentual ideal referente ao prazo")) {
+  if (!source.includes(postContemplationPromptAnchor)) {
+    throw new Error("Âncora da regra pós-contemplação não encontrada.");
+  }
+  source = source.replace(postContemplationPromptAnchor, postContemplationPromptReplacement);
 }
 
 const validationReturnAnchor = `\n\n  return result;\n}\n\nfunction lanceOptionsFromAi`;

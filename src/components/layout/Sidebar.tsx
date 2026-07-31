@@ -18,6 +18,7 @@ import {
   Database,
   FileText,
   FolderKanban,
+  Handshake,
   Layers,
   LineChart,
   Link as LinkIcon,
@@ -282,6 +283,10 @@ function groupForPath(pathname: string): GroupKey {
     return "marketing";
   }
 
+  if (isAnyPathActive(pathname, ["/meus-parceiros"])) {
+    return "admin";
+  }
+
   if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes", "/processos", "/rh"])) {
     return "admin";
   }
@@ -489,6 +494,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
           { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
           { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
+          { to: "/meus-parceiros", label: "Meus Parceiros", icon: Handshake, end: true },
           { to: "/processos", label: "Processos", icon: ClipboardList, end: true },
           { to: "/rh", label: "RH", icon: ClipboardList, end: true },
         ],

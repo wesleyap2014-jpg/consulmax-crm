@@ -3,12 +3,14 @@ import { cpf, cnpj } from "cpf-cnpj-validator";
 import {
   Building2,
   CircleDollarSign,
+  Copy,
   Edit3,
   Handshake,
   Loader2,
   Mail,
   Phone,
   Plus,
+  QrCode,
   RefreshCcw,
   Search,
   Trash2,
@@ -28,8 +30,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type PartnerType = "amigo" | "institucional";
+type PixKeyType = "cpf_cnpj" | "email" | "telefone" | "aleatoria";
 
 type Partner = {
   id: string;
@@ -40,6 +50,8 @@ type Partner = {
   cpf_cnpj: string;
   data_nascimento_constituicao: string;
   comissao_pct: number;
+  pix_tipo: PixKeyType | null;
+  pix_chave: string | null;
   created_by: string;
   unit_id: string | null;
   created_at: string;
@@ -54,6 +66,8 @@ type PartnerForm = {
   cpf_cnpj: string;
   data_nascimento_constituicao: string;
   comissao_pct: string;
+  pix_tipo: PixKeyType | "";
+  pix_chave: string;
 };
 
 const EMPTY_FORM: PartnerForm = {
@@ -64,7 +78,19 @@ const EMPTY_FORM: PartnerForm = {
   cpf_cnpj: "",
   data_nascimento_constituicao: "",
   comissao_pct: "",
+  pix_tipo: "cpf_cnpj",
+  pix_chave: "",
 };
+
+const PIX_KEY_LABELS: Record<PixKeyType, string> = {
+  cpf_cnpj: "CPF/CNPJ",
+  email: "E-mail",
+  telefone: "Telefone",
+  aleatoria: "Chave aleatória",
+};
+
+const RANDOM_PIX_KEY_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const COMMISSION_RULES: Record<
   PartnerType,
@@ -101,6 +127,46 @@ function maskDocument(value: string, type: PartnerType) {
     .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
     .replace(/\.(\d{3})(\d)/, ".$1/$2")
     .replace(/(\d{4})(\d)/, "$1-$2");
+}
+
+function normalizePixPhone(value: string) {
+  const digits = onlyDigits(value);
+  const countryDigits =
+    digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+  return countryDigits ? `+${countryDigits}` : "";
+}
+
+function normalizePixKey(type: PixKeyType, value: string, document: string) {
+  if (type === "cpf_cnpj") return onlyDigits(document);
+  if (type === "email") return value.trim().toLowerCase();
+  if (type === "telefone") return normalizePixPhone(value);
+  return value.trim().toLowerCase();
+}
+
+function pixKeyForInput(partner: Partner) {
+  if (!partner.pix_tipo || !partner.pix_chave) return "";
+  if (partner.pix_tipo === "cpf_cnpj") {
+    return maskDocument(partner.pix_chave, partner.tipo);
+  }
+  if (partner.pix_tipo === "telefone") {
+    const digits = onlyDigits(partner.pix_chave);
+    const localDigits = digits.startsWith("55") ? digits.slice(2) : digits;
+    return maskPhone(localDigits);
+  }
+  return partner.pix_chave;
+}
+
+function formatPixKey(partner: Partner) {
+  if (!partner.pix_tipo || !partner.pix_chave) return "Não informada";
+  if (partner.pix_tipo === "cpf_cnpj") {
+    return maskDocument(partner.pix_chave, partner.tipo);
+  }
+  if (partner.pix_tipo === "telefone") {
+    const digits = onlyDigits(partner.pix_chave);
+    const localDigits = digits.startsWith("55") ? digits.slice(2) : digits;
+    return `+55 ${maskPhone(localDigits)}`;
+  }
+  return partner.pix_chave;
 }
 
 function parseCommission(value: string) {
@@ -160,7 +226,7 @@ export default function MeusParceiros() {
       const { data, error: queryError } = await supabase
         .from("partners")
         .select(
-          "id,nome,telefone,email,tipo,cpf_cnpj,data_nascimento_constituicao,comissao_pct,created_by,unit_id,created_at,updated_at",
+          "id,nome,telefone,email,tipo,cpf_cnpj,data_nascimento_constituicao,comissao_pct,pix_tipo,pix_chave,created_by,unit_id,created_at,updated_at",
         )
         .order("nome", { ascending: true });
 
@@ -186,6 +252,8 @@ export default function MeusParceiros() {
           partner.nome,
           partner.telefone,
           partner.email,
+          partner.pix_chave ?? "",
+          partner.pix_tipo ? PIX_KEY_LABELS[partner.pix_tipo] : "PIX pendente",
           typeLabel(partner.tipo),
         ].join(" "),
       ).includes(term),
@@ -220,6 +288,8 @@ export default function MeusParceiros() {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       }).format(Number(partner.comissao_pct)),
+      pix_tipo: partner.pix_tipo ?? "",
+      pix_chave: pixKeyForInput(partner),
     });
     setError(null);
     setNotice(null);
@@ -233,6 +303,23 @@ export default function MeusParceiros() {
       cpf_cnpj: "",
       data_nascimento_constituicao: "",
       comissao_pct: "",
+      pix_tipo: "cpf_cnpj",
+      pix_chave: "",
+    }));
+  }
+
+  function changePixType(type: PixKeyType) {
+    setForm((current) => ({
+      ...current,
+      pix_tipo: type,
+      pix_chave:
+        type === "cpf_cnpj"
+          ? current.cpf_cnpj
+          : type === "email"
+            ? current.email
+            : type === "telefone"
+              ? current.telefone
+              : "",
     }));
   }
 
@@ -259,6 +346,21 @@ export default function MeusParceiros() {
     if (form.data_nascimento_constituicao > todayLocalDate()) {
       return "A data informada não pode estar no futuro.";
     }
+    if (!form.pix_tipo) return "Selecione o tipo da chave PIX.";
+    const pixKey = normalizePixKey(
+      form.pix_tipo,
+      form.pix_chave,
+      form.cpf_cnpj,
+    );
+    if (form.pix_tipo === "email" && !/^\S+@\S+\.\S+$/.test(pixKey)) {
+      return "Informe um e-mail válido como chave PIX.";
+    }
+    if (form.pix_tipo === "telefone" && !/^\+55\d{10,11}$/.test(pixKey)) {
+      return "Informe um telefone brasileiro válido com DDD como chave PIX.";
+    }
+    if (form.pix_tipo === "aleatoria" && !RANDOM_PIX_KEY_PATTERN.test(pixKey)) {
+      return "Informe uma chave PIX aleatória válida.";
+    }
     if (
       !Number.isFinite(commission) ||
       commission < rule.min ||
@@ -280,6 +382,18 @@ export default function MeusParceiros() {
     setError(null);
     setNotice(null);
 
+    if (!form.pix_tipo) {
+      setSaving(false);
+      setError("Selecione o tipo da chave PIX.");
+      return;
+    }
+
+    const pixKey = normalizePixKey(
+      form.pix_tipo,
+      form.pix_chave,
+      form.cpf_cnpj,
+    );
+
     const payload = {
       nome: form.nome.trim(),
       telefone: onlyDigits(form.telefone),
@@ -288,6 +402,8 @@ export default function MeusParceiros() {
       cpf_cnpj: onlyDigits(form.cpf_cnpj),
       data_nascimento_constituicao: form.data_nascimento_constituicao,
       comissao_pct: parseCommission(form.comissao_pct),
+      pix_tipo: form.pix_tipo,
+      pix_chave: pixKey,
     };
 
     try {
@@ -297,8 +413,11 @@ export default function MeusParceiros() {
       const { error: saveError } = await operation;
       if (saveError) {
         if (saveError.code === "23505") {
+          const duplicateTarget = `${saveError.message} ${saveError.details}`;
           throw new Error(
-            "Este CPF/CNPJ já está cadastrado entre os seus parceiros.",
+            duplicateTarget.includes("pix")
+              ? "Esta chave PIX já está vinculada a outro parceiro seu."
+              : "Este CPF/CNPJ já está cadastrado entre os seus parceiros.",
           );
         }
         throw saveError;
@@ -339,6 +458,20 @@ export default function MeusParceiros() {
       setError(caught?.message || "Não foi possível excluir o parceiro.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function copyPixKey(partner: Partner) {
+    setError(null);
+    if (!partner.pix_chave) {
+      setError(`Cadastre a chave PIX de ${partner.nome} antes de copiá-la.`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(partner.pix_chave);
+      setNotice(`Chave PIX de ${partner.nome} copiada.`);
+    } catch {
+      setError("Não foi possível copiar a chave PIX automaticamente.");
     }
   }
 
@@ -476,13 +609,14 @@ export default function MeusParceiros() {
           ) : (
             <>
               <div className="hidden overflow-x-auto lg:block">
-                <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
+                <table className="w-full min-w-[1360px] border-collapse text-left text-sm">
                   <thead className="bg-slate-50/80 text-[11px] uppercase tracking-wider text-slate-500">
                     <tr>
                       <th className="px-5 py-3 font-bold">Nome</th>
                       <th className="px-4 py-3 font-bold">Telefone</th>
                       <th className="px-4 py-3 font-bold">E-mail</th>
                       <th className="px-4 py-3 font-bold">Tipo</th>
+                      <th className="px-4 py-3 font-bold">Chave PIX</th>
                       <th className="px-4 py-3 text-right font-bold">
                         Comissão pactuada
                       </th>
@@ -504,6 +638,7 @@ export default function MeusParceiros() {
                         key={partner.id}
                         partner={partner}
                         deleting={deletingId === partner.id}
+                        onCopyPix={() => copyPixKey(partner)}
                         onEdit={() => openEdit(partner)}
                         onDelete={() => deletePartner(partner)}
                       />
@@ -518,6 +653,7 @@ export default function MeusParceiros() {
                     key={partner.id}
                     partner={partner}
                     deleting={deletingId === partner.id}
+                    onCopyPix={() => copyPixKey(partner)}
                     onEdit={() => openEdit(partner)}
                     onDelete={() => deletePartner(partner)}
                   />
@@ -679,6 +815,96 @@ export default function MeusParceiros() {
                   crédito vendido.
                 </p>
               </Field>
+
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 md:col-span-2">
+                <div className="flex items-center gap-2">
+                  <div className="rounded-xl bg-[#A11C27]/10 p-2 text-[#A11C27]">
+                    <QrCode className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-[#1E293F]">
+                      Dados para pagamento
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      A chave PIX será usada no pagamento das comissões.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600">
+                      Tipo da chave PIX
+                      <span className="ml-1 text-[#A11C27]">*</span>
+                    </span>
+                    <Select
+                      value={form.pix_tipo || undefined}
+                      onValueChange={(value) =>
+                        changePixType(value as PixKeyType)
+                      }
+                    >
+                      <SelectTrigger className="h-10 border-slate-200 bg-white">
+                        <SelectValue placeholder="Selecione o tipo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cpf_cnpj">
+                          {form.tipo === "amigo" ? "CPF" : "CNPJ"}
+                        </SelectItem>
+                        <SelectItem value="email">E-mail</SelectItem>
+                        <SelectItem value="telefone">Telefone</SelectItem>
+                        <SelectItem value="aleatoria">
+                          Chave aleatória
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Field label="Chave PIX" required>
+                    <Input
+                      value={
+                        form.pix_tipo === "cpf_cnpj"
+                          ? maskDocument(form.cpf_cnpj, form.tipo)
+                          : form.pix_chave
+                      }
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          pix_chave: event.target.value,
+                        }))
+                      }
+                      placeholder={
+                        form.pix_tipo === "email"
+                          ? "pix@email.com"
+                          : form.pix_tipo === "telefone"
+                            ? "(69) 9 9999-9999"
+                            : form.pix_tipo === "aleatoria"
+                              ? "00000000-0000-0000-0000-000000000000"
+                              : form.tipo === "amigo"
+                                ? "Preenchida pelo CPF"
+                                : "Preenchida pelo CNPJ"
+                      }
+                      readOnly={form.pix_tipo === "cpf_cnpj"}
+                      type={form.pix_tipo === "email" ? "email" : "text"}
+                      inputMode={form.pix_tipo === "telefone" ? "tel" : "text"}
+                      className={
+                        form.pix_tipo === "cpf_cnpj"
+                          ? "bg-slate-100 text-slate-600"
+                          : "bg-white"
+                      }
+                    />
+                  </Field>
+                </div>
+
+                <p className="text-xs leading-5 text-slate-500">
+                  {form.pix_tipo === "cpf_cnpj"
+                    ? `A chave será exatamente o ${form.tipo === "amigo" ? "CPF" : "CNPJ"} informado acima.`
+                    : form.pix_tipo === "telefone"
+                      ? "Digite o telefone com DDD; o código +55 será incluído automaticamente."
+                      : form.pix_tipo === "aleatoria"
+                        ? "Use a chave aleatória completa, no formato enviado pelo banco."
+                        : "A chave pode ser diferente do e-mail de contato do parceiro."}
+                </p>
+              </div>
             </div>
 
             {error && (
@@ -740,11 +966,13 @@ function SummaryCard({
 function PartnerTableRow({
   partner,
   deleting,
+  onCopyPix,
   onEdit,
   onDelete,
 }: {
   partner: Partner;
   deleting: boolean;
+  onCopyPix: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -777,6 +1005,26 @@ function PartnerTableRow({
         >
           {typeLabel(partner.tipo)}
         </span>
+      </td>
+      <td className="max-w-64 px-4 py-4">
+        <button
+          type="button"
+          onClick={onCopyPix}
+          className="group flex max-w-full items-center gap-2 text-left"
+          title={`Copiar chave PIX: ${partner.pix_chave}`}
+        >
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+              {partner.pix_tipo
+                ? PIX_KEY_LABELS[partner.pix_tipo]
+                : "PIX pendente"}
+            </p>
+            <p className="truncate font-semibold text-slate-700 group-hover:text-[#A11C27]">
+              {formatPixKey(partner)}
+            </p>
+          </div>
+          <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-[#A11C27]" />
+        </button>
       </td>
       <td className="px-4 py-4 text-right font-black text-[#A11C27]">
         {formatPercent(partner.comissao_pct)}
@@ -819,11 +1067,13 @@ function PartnerTableRow({
 function PartnerMobileCard({
   partner,
   deleting,
+  onCopyPix,
   onEdit,
   onDelete,
 }: {
   partner: Partner;
   deleting: boolean;
+  onCopyPix: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -867,6 +1117,23 @@ function PartnerMobileCard({
           <Mail className="h-4 w-4 shrink-0" />
           <span className="truncate">{partner.email}</span>
         </a>
+        <button
+          type="button"
+          onClick={onCopyPix}
+          className="flex min-w-0 items-center gap-2 text-left hover:text-[#A11C27]"
+          title="Copiar chave PIX"
+        >
+          <QrCode className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">
+              PIX · {partner.pix_tipo
+                ? PIX_KEY_LABELS[partner.pix_tipo]
+                : "Pendente"}
+            </span>
+            <span className="block truncate">{formatPixKey(partner)}</span>
+          </span>
+          <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        </button>
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-3 text-center">

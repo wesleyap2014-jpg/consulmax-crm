@@ -1,5 +1,5 @@
 // src/pages/Carteira.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
@@ -857,6 +857,7 @@ const Carteira: React.FC = () => {
   const [showCarteira, setShowCarteira] = useState<boolean>(true);
 
   const [showModal, setShowModal] = useState<boolean>(false);
+  const opportunitySalePrefillHandled = useRef(false);
   const [form, setForm] = useState<Partial<Venda>>({
     cpf: "",
     data_venda: new Date().toISOString().slice(0, 10),
@@ -1132,7 +1133,7 @@ const Carteira: React.FC = () => {
     if (error) throw error;
   }
 
-  const prefillFromLead = async (leadId: string) => {
+  const prefillFromLead = useCallback(async (leadId: string) => {
     if (!leadId) return;
 
     const { data: cliente } = await supabase.from("clientes").select("cpf,data_nascimento").eq("lead_id", leadId).maybeSingle();
@@ -1165,7 +1166,33 @@ const Carteira: React.FC = () => {
         tabela: lastVenda.tabela ?? f.tabela,
       }));
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (loading || opportunitySalePrefillHandled.current) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const leadId = params.get("lead_id");
+    if (!leadId) {
+      opportunitySalePrefillHandled.current = true;
+      return;
+    }
+    if (!leads.some((lead) => lead.id === leadId)) return;
+
+    opportunitySalePrefillHandled.current = true;
+    setForm((current) => ({ ...current, lead_id: leadId }));
+    setShowModal(true);
+    void prefillFromLead(leadId);
+
+    params.delete("lead_id");
+    params.delete("opportunity_id");
+    const nextSearch = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
+    );
+  }, [loading, leads, prefillFromLead]);
 
   const registrarVenda = async () => {
     try {

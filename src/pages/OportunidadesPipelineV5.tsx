@@ -52,13 +52,15 @@ type Vendedor = {
   hierarchy_level?: string | null;
 };
 type StageUI =
-  | "novo_lead"
-  | "diagnostico"
-  | "reuniao_agendada"
-  | "proposta_negociacao"
-  | "fechamento_programado"
+  | "novo"
+  | "contato_andamento"
+  | "qualificacao_diagnostico"
+  | "proposta_apresentada"
+  | "negociacao_follow_up"
+  | "fechamento_documentacao"
   | "fechado_ganho"
   | "fechado_perdido";
+type LostDestination = "descartado" | "nutricao";
 type Opp = {
   id: string;
   lead_id: string;
@@ -84,6 +86,7 @@ type Opp = {
   documentos_pendentes?: string | null;
   lost_reason?: string | null;
   lost_details?: string | null;
+  lost_destination?: LostDestination | null;
   won_at?: string | null;
   lost_at?: string | null;
 };
@@ -176,36 +179,57 @@ const chartColors = [
 ];
 
 const stageLabels: Record<StageUI, string> = {
-  novo_lead: "Novo Lead",
-  diagnostico: "Qualificando/Diagnóstico",
-  reuniao_agendada: "Reunião Agendada",
-  proposta_negociacao: "Proposta Apresentada/Negociação",
-  fechamento_programado: "Fechamento Programado/Aguardando Documentos",
+  novo: "Novo",
+  contato_andamento: "Contato em Andamento",
+  qualificacao_diagnostico: "Qualificação e Diagnóstico",
+  proposta_apresentada: "Proposta Apresentada",
+  negociacao_follow_up: "Negociação e Follow-up",
+  fechamento_documentacao: "Fechamento e Documentação",
   fechado_ganho: "Fechado (Ganho)",
   fechado_perdido: "Fechado (Perdido)",
 };
+const stageDescriptions: Record<Exclude<StageUI, "fechado_ganho" | "fechado_perdido">, string> = {
+  novo: "Entrou no CRM e ainda não houve avanço comercial.",
+  contato_andamento:
+    "O vendedor está tentando contato ou já iniciou a conversa, mas ainda não levantou informações suficientes.",
+  qualificacao_diagnostico:
+    "Entendimento do objetivo, crédito desejado, capacidade de pagamento, entrada ou lance, prazo, urgência e segmento.",
+  proposta_apresentada:
+    "O cliente já recebeu ou participou da apresentação de uma solução concreta.",
+  negociacao_follow_up:
+    "Comparações, dúvidas, ajustes, análise de opções e acompanhamento da decisão.",
+  fechamento_documentacao:
+    "O cliente sinalizou positivamente e está em processo de envio de documentos, pagamento ou cadastramento da venda.",
+};
 const oldToStage: Record<string, StageUI> = {
-  Novo: "novo_lead",
-  "Novo Lead": "novo_lead",
-  Qualificando: "diagnostico",
-  Qualificação: "diagnostico",
-  Qualificacao: "diagnostico",
-  "Qualificando/Diagnóstico": "diagnostico",
-  "Reunião Agendada": "reuniao_agendada",
-  Proposta: "proposta_negociacao",
-  Negociação: "proposta_negociacao",
-  Negociacao: "proposta_negociacao",
-  "Proposta Apresentada/Negociação": "proposta_negociacao",
-  "Fechamento Programado/Aguardando Documentos": "fechamento_programado",
+  Novo: "novo",
+  "Novo Lead": "novo",
+  "Contato em Andamento": "contato_andamento",
+  Qualificando: "qualificacao_diagnostico",
+  Qualificação: "qualificacao_diagnostico",
+  Qualificacao: "qualificacao_diagnostico",
+  "Qualificando/Diagnóstico": "qualificacao_diagnostico",
+  "Qualificação e Diagnóstico": "qualificacao_diagnostico",
+  "Reunião Agendada": "qualificacao_diagnostico",
+  Proposta: "proposta_apresentada",
+  "Proposta Apresentada": "proposta_apresentada",
+  Negociação: "negociacao_follow_up",
+  Negociacao: "negociacao_follow_up",
+  "Proposta Apresentada/Negociação": "negociacao_follow_up",
+  "Negociação e Follow-up": "negociacao_follow_up",
+  "Fechamento Programado/Aguardando Documentos": "fechamento_documentacao",
+  "Fechamento e Documentação": "fechamento_documentacao",
   "Fechado (Ganho)": "fechado_ganho",
   "Fechado (Perdido)": "fechado_perdido",
 };
-const activeStages: StageUI[] = [
-  "novo_lead",
-  "diagnostico",
-  "reuniao_agendada",
-  "proposta_negociacao",
-  "fechamento_programado",
+type ActiveStage = Exclude<StageUI, "fechado_ganho" | "fechado_perdido">;
+const activeStages: ActiveStage[] = [
+  "novo",
+  "contato_andamento",
+  "qualificacao_diagnostico",
+  "proposta_apresentada",
+  "negociacao_follow_up",
+  "fechamento_documentacao",
 ];
 const allStages: StageUI[] = [
   ...activeStages,
@@ -232,7 +256,7 @@ const normalizeText = (v?: string | null) =>
     .trim()
     .toLowerCase();
 const normalizeStage = (s?: string | null): StageUI =>
-  oldToStage[String(s || "").trim()] || "novo_lead";
+  oldToStage[String(s || "").trim()] || "novo";
 const dbStage = (s: StageUI) => stageLabels[s];
 const moneyBase = (o: Opp) =>
   Number(o.valor_credito || o.credito_desejado || 0);
@@ -341,6 +365,20 @@ function MoneyInput({
   );
 }
 
+function StageInfo({ stage }: { stage: ActiveStage }) {
+  const description = stageDescriptions[stage];
+  return (
+    <abbr
+      style={stageInfoIcon}
+      title={description}
+      aria-label={`${stageLabels[stage]}: ${description}`}
+      tabIndex={0}
+    >
+      i
+    </abbr>
+  );
+}
+
 export default function OportunidadesPipelineV5() {
   const navigate = useNavigate();
   const [meId, setMeId] = useState<string | null>(null);
@@ -362,6 +400,7 @@ export default function OportunidadesPipelineV5() {
   const [editing, setEditing] = useState<Opp | null>(null);
   const [newNote, setNewNote] = useState("");
   const [lostModal, setLostModal] = useState<Opp | null>(null);
+  const [lostDestination, setLostDestination] = useState<LostDestination | "">("");
   const [lostReason, setLostReason] = useState("Não respondeu");
   const [lostDetails, setLostDetails] = useState("");
   const [wonModal, setWonModal] = useState<Opp | null>(null);
@@ -419,7 +458,7 @@ export default function OportunidadesPipelineV5() {
     let oppQ = supabase
       .from("opportunities")
       .select(
-        "id,lead_id,vendedor_id,owner_id,segmento,valor_credito,observacao,score,estagio,expected_close_at,created_at,credito_desejado,parcela_desejada,lance_disponivel,prazo_contemplacao,finalidade_recurso,reuniao_at,reuniao_tipo,reuniao_link,proposta_id,fechamento_previsto_em,documentos_pendentes,lost_reason,lost_details,won_at,lost_at",
+        "id,lead_id,vendedor_id,owner_id,segmento,valor_credito,observacao,score,estagio,expected_close_at,created_at,credito_desejado,parcela_desejada,lance_disponivel,prazo_contemplacao,finalidade_recurso,reuniao_at,reuniao_tipo,reuniao_link,proposta_id,fechamento_previsto_em,documentos_pendentes,lost_reason,lost_details,lost_destination,won_at,lost_at",
       )
       .order("created_at", { ascending: false });
     if (!matrix)
@@ -706,7 +745,7 @@ export default function OportunidadesPipelineV5() {
         segmento: null,
         valor_credito: 0,
         score: 1,
-        estagio: dbStage("novo_lead"),
+        estagio: dbStage("novo"),
       })
       .select()
       .single();
@@ -737,7 +776,7 @@ export default function OportunidadesPipelineV5() {
         segmento: null,
         valor_credito: 0,
         score: 1,
-        estagio: dbStage("novo_lead"),
+        estagio: dbStage("novo"),
       })
       .select()
       .single();
@@ -776,9 +815,7 @@ export default function OportunidadesPipelineV5() {
   }
   async function moveStage(op: Opp, target: StageUI) {
     if (target === "fechado_perdido") {
-      setLostModal(op);
-      setLostReason(op.lost_reason || "Não respondeu");
-      setLostDetails(op.lost_details || "");
+      openLostModal(op);
       return;
     }
     if (target === "fechado_ganho") {
@@ -792,29 +829,46 @@ export default function OportunidadesPipelineV5() {
       "stage",
     );
   }
+  function openLostModal(op: Opp) {
+    setLostModal(op);
+    setLostDestination(op.lost_destination || "");
+    setLostReason(op.lost_reason || "Não respondeu");
+    setLostDetails(op.lost_details || "");
+  }
   async function confirmLost() {
     if (!lostModal) return;
-    const msg = `Marcado como perdido. Motivo: ${lostReason}.${lostDetails ? ` Detalhes: ${lostDetails}` : ""}`;
+    if (!lostDestination) return alert("Selecione o destino do lead.");
+    const details = lostDetails.trim();
+    if (lostDestination === "descartado" && !lostReason)
+      return alert("Selecione o motivo da perda.");
+    if (lostDestination === "descartado" && !details)
+      return alert("Informe um resumo do motivo da perda.");
+    const discarded = lostDestination === "descartado";
+    const msg = discarded
+      ? `Lead descartado. Motivo: ${lostReason}. Resumo: ${details}`
+      : "Oportunidade encerrada e lead enviado para nutrição.";
     await updateOpp(
       lostModal,
       {
         estagio: dbStage("fechado_perdido"),
-        lost_reason: lostReason,
-        lost_details: lostDetails || null,
-        lost_at: new Date().toISOString(),
+        lost_destination: lostDestination,
+        lost_reason: discarded ? lostReason : null,
+        lost_details: discarded ? details : null,
       },
       msg,
       "lost",
     );
     setLostModal(null);
+    setLostDestination("");
+    setLostReason("Não respondeu");
     setLostDetails("");
   }
   async function confirmWon(goCarteira: boolean) {
     if (!wonModal) return;
     const saved = await updateOpp(
       wonModal,
-      { estagio: dbStage("fechado_ganho"), won_at: new Date().toISOString() },
-      "Marcado como fechado ganho.",
+      { estagio: dbStage("fechado_ganho") },
+      "Marcado como fechado ganho. Data de conversão registrada.",
       "won",
     );
     setWonModal(null);
@@ -870,11 +924,12 @@ export default function OportunidadesPipelineV5() {
     const st = normalizeStage(op.estagio);
     const first = (lead?.nome || "Olá").split(" ")[0];
     const messages: Record<StageUI, string> = {
-      novo_lead: `${first}, vi seu interesse em consórcio. Posso te fazer 2 perguntas rápidas para entender seu objetivo e montar uma estratégia melhor?`,
-      diagnostico: `${first}, com base no que você me passou, vou organizar crédito, parcela, lance e prazo de contemplação para te orientar melhor.`,
-      reuniao_agendada: `${first}, nossa reunião está agendada. Segue o link: ${op.reuniao_link || "vou te enviar por aqui"}.`,
-      proposta_negociacao: `${first}, preparei uma proposta alinhada com seu objetivo. Posso te explicar os pontos principais agora?`,
-      fechamento_programado: `${first}, estamos na etapa final. Vou te orientar nos documentos para avançarmos com segurança.`,
+      novo: `${first}, vi seu interesse em consórcio. Posso te fazer 2 perguntas rápidas para entender seu objetivo e montar uma estratégia melhor?`,
+      contato_andamento: `${first}, tudo bem? Quero entender melhor seu objetivo para te orientar com uma estratégia adequada. Podemos conversar?`,
+      qualificacao_diagnostico: `${first}, com base no que você me passou, vou organizar crédito, parcela, lance e prazo de contemplação para te orientar melhor.`,
+      proposta_apresentada: `${first}, preparei uma proposta alinhada com seu objetivo. Posso te explicar os pontos principais agora?`,
+      negociacao_follow_up: `${first}, ficou alguma dúvida ou ponto que você gostaria de ajustar na proposta? Posso comparar novas possibilidades para você.`,
+      fechamento_documentacao: `${first}, estamos na etapa final. Vou te orientar nos documentos para avançarmos com segurança.`,
       fechado_ganho: `${first}, parabéns pela conquista! Vamos acompanhar tudo até a entrega do bem.`,
       fechado_perdido: `${first}, obrigado pela conversa. Quando fizer sentido retomar seu planejamento, fico à disposição.`,
     };
@@ -889,8 +944,7 @@ export default function OportunidadesPipelineV5() {
           <div style={eyebrow}>CRM Consulmax</div>
           <h1 style={titleStyle}>Oportunidades</h1>
           <p style={subtitleStyle}>
-            Esteira comercial com paginação por estágio e visual de gráficos no
-            estilo V2.
+            Funil comercial em seis fases, do novo lead ao fechamento.
           </p>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -966,6 +1020,21 @@ export default function OportunidadesPipelineV5() {
         </select>
       </section>
 
+      <section style={kpiScroller} aria-label="Indicadores do funil ativo">
+        <div style={kpiGrid}>
+          {stageData.map((item) => (
+            <article key={item.stage} style={kpiCard}>
+              <div style={kpiHeader}>
+                <span>{item.label}</span>
+                <StageInfo stage={item.stage} />
+              </div>
+              <strong style={kpiValue}>{item.qtd}</strong>
+              <span style={kpiTotal}>{fmtBRLCompact(item.total)}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section style={graphGridV2Style}>
         <div style={chartCard}>
           <div style={chartTitle}>Funil em aberto</div>
@@ -1023,7 +1092,10 @@ export default function OportunidadesPipelineV5() {
                 }}
               >
                 <div style={columnHeader}>
-                  <div style={columnTitle}>{stageLabels[stage]}</div>
+                  <div style={columnTitleWithInfo}>
+                    <span>{stageLabels[stage]}</span>
+                    <StageInfo stage={stage} />
+                  </div>
                   <div style={pill}>{allRows.length}</div>
                 </div>
                 <div style={columnTotal}>
@@ -1086,7 +1158,7 @@ export default function OportunidadesPipelineV5() {
           saveEditing={saveEditing}
           moveStage={moveStage}
           scheduleMeeting={scheduleMeeting}
-          setLostModal={setLostModal}
+          openLostModal={openLostModal}
           setWonModal={setWonModal}
         />
       )}
@@ -1095,28 +1167,57 @@ export default function OportunidadesPipelineV5() {
           title="Marcar como Fechado Perdido"
           onClose={() => setLostModal(null)}
         >
-          <label style={labelStyle}>Motivo da perda</label>
+          <label style={labelStyle}>Destino do lead *</label>
           <select
             style={inputStyle}
-            value={lostReason}
-            onChange={(e) => setLostReason(e.target.value)}
+            value={lostDestination}
+            onChange={(e) =>
+              setLostDestination(e.target.value as LostDestination | "")
+            }
           >
-            {lostReasons.map((r) => (
-              <option key={r}>{r}</option>
-            ))}
+            <option value="">Selecione o destino</option>
+            <option value="descartado">Descartado</option>
+            <option value="nutricao">Nutrição</option>
           </select>
-          <label style={labelStyle}>Mais informações</label>
-          <textarea
-            style={textareaStyle}
-            value={lostDetails}
-            onChange={(e) => setLostDetails(e.target.value)}
-          />
+          {lostDestination === "descartado" && (
+            <>
+              <label style={labelStyle}>Motivo da perda *</label>
+              <select
+                style={inputStyle}
+                value={lostReason}
+                onChange={(e) => setLostReason(e.target.value)}
+              >
+                {lostReasons.map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+              <label style={labelStyle}>Resumo do motivo *</label>
+              <textarea
+                style={textareaStyle}
+                value={lostDetails}
+                onChange={(e) => setLostDetails(e.target.value)}
+                placeholder="Resuma por que esta oportunidade foi descartada."
+              />
+            </>
+          )}
+          {lostDestination === "nutricao" && (
+            <div style={nutritionHint}>
+              A oportunidade será finalizada, mas o lead permanecerá disponível
+              para uma retomada futura.
+            </div>
+          )}
           <div style={footerActions}>
             <button style={btnGhost} onClick={() => setLostModal(null)}>
               Cancelar
             </button>
-            <button style={btnPrimary} onClick={confirmLost}>
-              Confirmar perda
+            <button
+              style={btnPrimary}
+              disabled={saving || !lostDestination}
+              onClick={confirmLost}
+            >
+              {lostDestination === "nutricao"
+                ? "Finalizar em nutrição"
+                : "Confirmar descarte"}
             </button>
           </div>
         </Modal>
@@ -1124,7 +1225,8 @@ export default function OportunidadesPipelineV5() {
       {wonModal && (
         <Modal title="Fechado Ganho" onClose={() => setWonModal(null)}>
           <p style={{ color: C.ink2 }}>
-            Deseja realizar o lançamento da venda agora na Carteira?
+            A data de conversão será registrada. Deseja realizar o lançamento da
+            venda agora?
           </p>
           <div style={footerActions}>
             <button style={btnGhost} onClick={() => confirmWon(false)}>
@@ -1476,7 +1578,7 @@ function EditModal(props: {
   saveEditing: () => void;
   moveStage: (op: Opp, stage: StageUI) => void;
   scheduleMeeting: (op: Opp) => void;
-  setLostModal: (o: Opp) => void;
+  openLostModal: (o: Opp) => void;
   setWonModal: (o: Opp) => void;
 }) {
   const {
@@ -1491,7 +1593,7 @@ function EditModal(props: {
     saveEditing,
     moveStage,
     scheduleMeeting,
-    setLostModal,
+    openLostModal,
     setWonModal,
   } = props;
   return (
@@ -1561,7 +1663,7 @@ function EditModal(props: {
           />
         </div>
         <div style={modalSection}>
-          <h3 style={sectionTitle}>Qualificando / Diagnóstico</h3>
+          <h3 style={sectionTitle}>Qualificação e Diagnóstico</h3>
           <label style={labelStyle}>Crédito desejado</label>
           <MoneyInput
             value={brlInputFromNumber(editing.credito_desejado)}
@@ -1601,7 +1703,7 @@ function EditModal(props: {
           />
         </div>
         <div style={modalSection}>
-          <h3 style={sectionTitle}>Reunião agendada</h3>
+          <h3 style={sectionTitle}>Agendamento de reunião</h3>
           <label style={labelStyle}>Data e hora</label>
           <input
             style={inputStyle}
@@ -1643,7 +1745,7 @@ function EditModal(props: {
           </button>
         </div>
         <div style={modalSection}>
-          <h3 style={sectionTitle}>Proposta / Negociação</h3>
+          <h3 style={sectionTitle}>Proposta e follow-up</h3>
           <label style={labelStyle}>Propostas salvas para este lead</label>
           <select
             style={inputStyle}
@@ -1662,7 +1764,7 @@ function EditModal(props: {
           </select>
         </div>
         <div style={modalSection}>
-          <h3 style={sectionTitle}>Fechamento programado</h3>
+          <h3 style={sectionTitle}>Fechamento e documentação</h3>
           <label style={labelStyle}>Data prevista</label>
           <input
             style={inputStyle}
@@ -1705,7 +1807,7 @@ function EditModal(props: {
         </div>
       </div>
       <div style={footerActions}>
-        <button style={btnGhost} onClick={() => setLostModal(editing)}>
+        <button style={btnGhost} onClick={() => openLostModal(editing)}>
           Marcar perdido
         </button>
         <button style={btnGhost} onClick={() => setWonModal(editing)}>
@@ -1870,6 +1972,67 @@ const filterCard: React.CSSProperties = {
   padding: 14,
   marginBottom: 16,
 };
+const kpiScroller: React.CSSProperties = {
+  position: "relative",
+  zIndex: 1,
+  overflowX: "auto",
+  paddingBottom: 8,
+  marginBottom: 8,
+};
+const kpiGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(6, minmax(180px, 1fr))",
+  gap: 10,
+  minWidth: 1130,
+};
+const kpiCard: React.CSSProperties = {
+  background: "rgba(255,255,255,.84)",
+  border: "1px solid rgba(255,255,255,.78)",
+  borderRadius: 20,
+  padding: 14,
+  boxShadow: "0 14px 38px rgba(30,41,63,.09)",
+};
+const kpiHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 8,
+  minHeight: 38,
+  color: C.navy,
+  fontSize: 13,
+  fontWeight: 900,
+  lineHeight: 1.2,
+};
+const kpiValue: React.CSSProperties = {
+  display: "block",
+  color: C.red,
+  fontSize: 28,
+  lineHeight: 1,
+  marginTop: 7,
+};
+const kpiTotal: React.CSSProperties = {
+  display: "block",
+  color: C.gold,
+  fontSize: 12,
+  fontWeight: 900,
+  marginTop: 6,
+};
+const stageInfoIcon: React.CSSProperties = {
+  width: 20,
+  height: 20,
+  flex: "0 0 20px",
+  display: "inline-grid",
+  placeItems: "center",
+  borderRadius: 999,
+  border: "1px solid rgba(30,41,63,.18)",
+  background: "rgba(255,255,255,.92)",
+  color: C.navy,
+  fontFamily: "Georgia, serif",
+  fontSize: 12,
+  fontWeight: 800,
+  textDecoration: "none",
+  cursor: "help",
+};
 const inputStyle: React.CSSProperties = {
   width: "100%",
   border: "1px solid rgba(30,41,63,.14)",
@@ -1971,7 +2134,7 @@ const boardStyleV5: React.CSSProperties = {
   position: "relative",
   zIndex: 1,
   display: "grid",
-  gridTemplateColumns: "repeat(5, minmax(270px, 1fr))",
+  gridTemplateColumns: "repeat(6, minmax(270px, 1fr))",
   gap: 12,
   overflowX: "auto",
   paddingBottom: 18,
@@ -1995,6 +2158,12 @@ const columnTitle: React.CSSProperties = {
   fontWeight: 900,
   fontSize: 14,
   lineHeight: 1.2,
+};
+const columnTitleWithInfo: React.CSSProperties = {
+  ...columnTitle,
+  display: "flex",
+  alignItems: "flex-start",
+  gap: 7,
 };
 const pill: React.CSSProperties = {
   minWidth: 28,
@@ -2190,6 +2359,16 @@ const formHint: React.CSSProperties = {
   color: C.slate,
   fontSize: 12,
   marginTop: 8,
+};
+const nutritionHint: React.CSSProperties = {
+  marginTop: 12,
+  padding: 12,
+  borderRadius: 14,
+  border: "1px solid rgba(181,165,115,.35)",
+  background: "rgba(224,206,140,.16)",
+  color: C.ink2,
+  fontSize: 13,
+  lineHeight: 1.45,
 };
 const leadResults: React.CSSProperties = {
   display: "grid",

@@ -653,8 +653,6 @@ async function handleSingleInboundMessage(
     ? await supabaseAdmin
         .from("whatsapp_contacts")
         .update({
-          wa_id: waId,
-          telefone: waId,
           nome: existingContact.nome || nome,
           updated_at: inboundAt,
         })

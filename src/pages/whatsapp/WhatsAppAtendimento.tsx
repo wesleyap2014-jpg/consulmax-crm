@@ -1157,6 +1157,7 @@ export default function WhatsAppAtendimento() {
         stage: "finalizado",
         queue: "finalizado",
         closed_at: now,
+        unread_count: 0,
         updated_at: now,
       })
       .eq("id", active.id);

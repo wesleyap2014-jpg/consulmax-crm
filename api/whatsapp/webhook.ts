@@ -561,7 +561,7 @@ async function findActiveConversation(contactId: string) {
   const { data, error } = await supabaseAdmin
     .from("whatsapp_conversations")
     .select(
-      "id, unread_count, status, stage, queue, closed_at, last_message_at",
+      "id, unread_count, status, stage, queue, closed_at, last_message_at, created_at",
     )
     .eq("contact_id", contactId)
     .not("status", "in", "(fechada,finalizado)")
@@ -582,7 +582,7 @@ async function findRecentlyClosedConversationForRating(contactId: string) {
   const { data, error } = await supabaseAdmin
     .from("whatsapp_conversations")
     .select(
-      "id, unread_count, status, stage, queue, closed_at, last_message_at",
+      "id, unread_count, status, stage, queue, closed_at, last_message_at, created_at",
     )
     .eq("contact_id", contactId)
     .or(
@@ -705,7 +705,7 @@ async function handleSingleInboundMessage(
           unread_count: 1,
         })
         .select(
-          "id, unread_count, status, stage, queue, closed_at, last_message_at",
+          "id, unread_count, status, stage, queue, closed_at, last_message_at, created_at",
         )
         .single();
     if (createConversationError || !createdConversation?.id) {

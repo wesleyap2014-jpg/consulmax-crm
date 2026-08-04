@@ -9,18 +9,22 @@ function log(label, status) {
 let s = fs.readFileSync(webhookFile, "utf8");
 let changed = false;
 
-// Segurança final: depois de todos os patches, qualquer shorthand `nome,` dentro de payload
-// vira expressão segura. Isso evita ReferenceError quando evento de chamada não traz contact.profile.name.
+// Segurança final: depois de todos os patches, propriedades shorthand `nome,`
+// em uma linha própria viram expressão segura. O início da linha é obrigatório
+// para não corromper expressões como `existingContact.nome || nome,`.
 const safeNomeExpr = 'nome: (typeof nome !== "undefined" ? nome : null),';
-if (!s.includes(safeNomeExpr)) {
-  const before = s;
-  s = s.replace(/\bnome,\n/g, safeNomeExpr + "\n");
-  s = s.replace(/\bnome,\r\n/g, safeNomeExpr + "\r\n");
-  changed = s !== before;
-  log("guard nome shorthand", changed ? "aplicado" : "nenhum trecho encontrado");
-} else {
-  log("guard nome shorthand", "já aplicado");
-}
+const beforeNomeGuard = s;
+s = s.replace(
+  /^(\s*)nome,(\r?\n)/gm,
+  (_match, indentation, lineBreak) =>
+    `${indentation}${safeNomeExpr}${lineBreak}`,
+);
+const nomeGuardChanged = s !== beforeNomeGuard;
+changed = changed || nomeGuardChanged;
+log(
+  "guard nome shorthand",
+  nomeGuardChanged ? "aplicado" : "já aplicado ou nenhum trecho encontrado",
+);
 
 // Segurança extra específica para handleSingleCallEvent: se não existir uma variável nome no escopo,
 // cria uma declaração segura logo após direction/status.

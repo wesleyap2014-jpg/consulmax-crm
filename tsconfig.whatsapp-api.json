@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [
+    "api/whatsapp/webhook.ts",
+    "api/whatsapp/send.ts",
+    "api/whatsapp/template.ts"
+  ]
+}

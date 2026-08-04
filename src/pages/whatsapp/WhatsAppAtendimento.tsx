@@ -15,6 +15,7 @@ import {
   Send,
   Settings,
   Smile,
+  Volume2,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -26,6 +27,11 @@ import {
   WhatsAppMessageBubble,
   type WhatsAppMessage,
 } from "./WhatsAppMessageBubble";
+import {
+  useWhatsAppSound,
+  WHATSAPP_VOLUME_MAX,
+  WHATSAPP_VOLUME_MIN,
+} from "@/components/whatsapp/WhatsAppNotificationsProvider";
 
 type Board = "comercial" | "pos_vendas" | "operacional";
 type Tab = "todos" | Board | "relatorios";
@@ -302,8 +308,6 @@ const QUICK_REPLIES = [
 ];
 const MESSAGE_SELECT =
   "id,conversation_id,direction,body,message_type,created_at,raw_payload,media_id,media_mime_type,meta_message_id";
-const SOUND_STORAGE_KEY = "consulmax-whatsapp-notification-sound";
-
 const onlyDigits = (v?: string | null) => String(v || "").replace(/\D/g, "");
 const normalizeQueue = (v?: string | null) =>
   LEGACY_MAP[String(v || "com_novo").toLowerCase()] ||
@@ -387,11 +391,6 @@ const recorderMimeType = () => {
   );
 };
 
-const readSoundPreference = () => {
-  if (typeof window === "undefined") return true;
-  return window.localStorage.getItem(SOUND_STORAGE_KEY) !== "off";
-};
-
 function Modal({
   title,
   subtitle,
@@ -467,8 +466,7 @@ export default function WhatsAppAtendimento() {
     [file, setFile] = useState<File | null>(null),
     [replyTo, setReplyTo] = useState<Msg | null>(null);
   const [chatSearch, setChatSearch] = useState(""),
-    [quickRepliesOpen, setQuickRepliesOpen] = useState(false),
-    [soundEnabled, setSoundEnabled] = useState(readSoundPreference);
+    [quickRepliesOpen, setQuickRepliesOpen] = useState(false);
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({}),
     [retryingId, setRetryingId] = useState<string | null>(null),
     [realtimeStatus, setRealtimeStatus] = useState<
@@ -480,9 +478,14 @@ export default function WhatsAppAtendimento() {
     audioChunksRef = useRef<BlobPart[]>([]),
     streamRef = useRef<MediaStream | null>(null);
   const activeRef = useRef<Conv | null>(null),
-    soundEnabledRef = useRef(soundEnabled),
-    mediaUrlCacheRef = useRef<Record<string, string>>({}),
-    audioContextRef = useRef<AudioContext | null>(null);
+    mediaUrlCacheRef = useRef<Record<string, string>>({});
+  const {
+    soundEnabled,
+    volume,
+    toggleSound,
+    setVolume,
+    testSound,
+  } = useWhatsAppSound();
 
   async function load(show = false, silent = false) {
     if (show) setLoading(true);
@@ -533,47 +536,6 @@ export default function WhatsAppAtendimento() {
     await loadMessages(c.id);
   }
 
-  function playNotificationSound() {
-    if (!soundEnabledRef.current || typeof window === "undefined") return;
-
-    try {
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as typeof window & { webkitAudioContext?: typeof AudioContext })
-          .webkitAudioContext;
-      if (!AudioContextClass) return;
-      const context = audioContextRef.current || new AudioContextClass();
-      audioContextRef.current = context;
-      const now = context.currentTime;
-
-      [0, 0.13].forEach((delay, index) => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.type = "sine";
-        oscillator.frequency.setValueAtTime(
-          index === 0 ? 740 : 940,
-          now + delay,
-        );
-        gain.gain.setValueAtTime(0.0001, now + delay);
-        gain.gain.exponentialRampToValueAtTime(0.16, now + delay + 0.015);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.11);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(now + delay);
-        oscillator.stop(now + delay + 0.12);
-      });
-    } catch (error) {
-      console.warn("Não foi possível reproduzir o som de notificação.", error);
-    }
-  }
-
-  function toggleSound() {
-    const next = !soundEnabled;
-    setSoundEnabled(next);
-    soundEnabledRef.current = next;
-    window.localStorage.setItem(SOUND_STORAGE_KEY, next ? "on" : "off");
-    if (next) window.setTimeout(playNotificationSound, 0);
-  }
   async function loadTemplates() {
     const res = await fetch("/api/meta/whatsapp?resource=templates").catch(
       () => null,
@@ -658,9 +620,6 @@ export default function WhatsAppAtendimento() {
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
-  useEffect(() => {
-    soundEnabledRef.current = soundEnabled;
-  }, [soundEnabled]);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs.length, active?.id]);
@@ -805,11 +764,6 @@ export default function WhatsAppAtendimento() {
                 }
               }
 
-              if (
-                payload.eventType === "INSERT" &&
-                row?.direction === "inbound"
-              )
-                playNotificationSound();
             },
           )
           .on(
@@ -1750,6 +1704,36 @@ export default function WhatsAppAtendimento() {
             )}
             {soundEnabled ? "Som ativo" : "Som desligado"}
           </button>
+          <div className="flex min-w-[250px] items-center gap-3 rounded-xl bg-white/10 px-3 py-2">
+            <label className="min-w-0 flex-1" htmlFor="whatsapp-notification-volume">
+              <span className="mb-1 flex items-center justify-between gap-3 text-xs font-black">
+                <span>Volume</span>
+                <span>{volume}%</span>
+              </span>
+              <input
+                id="whatsapp-notification-volume"
+                type="range"
+                min={WHATSAPP_VOLUME_MIN}
+                max={WHATSAPP_VOLUME_MAX}
+                step={5}
+                value={volume}
+                disabled={!soundEnabled}
+                onChange={(event) => setVolume(Number(event.target.value))}
+                className="h-2 w-full cursor-pointer accent-white disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Volume do som de novas mensagens do WhatsApp"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={testSound}
+              disabled={!soundEnabled}
+              className="rounded-lg bg-white/10 p-2 hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Testar volume do alerta"
+              aria-label="Testar volume do alerta do WhatsApp"
+            >
+              <Volume2 className="h-4 w-4" />
+            </button>
+          </div>
           <button
             onClick={() => setStartOpen(true)}
             className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"

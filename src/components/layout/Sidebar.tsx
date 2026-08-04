@@ -2,6 +2,7 @@
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { useMemo, useState, useEffect, type CSSProperties, type FC } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useWhatsAppUnread } from "@/components/whatsapp/WhatsAppNotificationsProvider";
 import type { LucideIcon } from "lucide-react";
 import {
   BadgeCheck,
@@ -46,6 +47,7 @@ type FlatItem = {
   icon: LucideIcon;
   onlyForWesley?: boolean;
   showDot?: boolean;
+  alertLabel?: string;
   end?: boolean;
   activeMatch?: (pathname: string) => boolean;
 };
@@ -143,10 +145,11 @@ const SidebarLiquidBG: FC = () => (
   </div>
 );
 
-const AlertDot: FC = () => (
+const AlertDot: FC<{ label?: string }> = ({ label = "Há pendências para hoje" }) => (
   <span
     className="ml-2 h-2.5 w-2.5 rounded-full bg-[#A11C27] animate-pulse shadow-[0_0_0_4px_rgba(161,28,39,0.25)]"
-    aria-label="Há pendências para hoje"
+    aria-label={label}
+    title={label}
   />
 );
 
@@ -305,6 +308,8 @@ function itemIsVisible(item: FlatItem, authUserId: string | null) {
 export default function Sidebar({ onNavigate }: SidebarProps) {
   const location = useLocation();
   const pathname = location.pathname;
+  const { hasUnread: hasWhatsappUnread, unreadCount: whatsappUnreadCount } =
+    useWhatsAppUnread();
 
   const [isSmall, setIsSmall] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -446,8 +451,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             to: "/atendimento-whatsapp",
             label: "WhatsApp",
             icon: MessageCircle,
+            showDot: hasWhatsappUnread,
+            alertLabel:
+              whatsappUnreadCount === 1
+                ? "Há uma conversa com nova mensagem no WhatsApp"
+                : `Há ${whatsappUnreadCount} conversas com novas mensagens no WhatsApp`,
             end: true,
-            activeMatch: (p) => p === "/atendimento-whatsapp" || p.startsWith("/atendimento-whatsapp") || p === "/whatsapp" || p === "/central-whatsapp" || p === "/atendimento",
+            activeMatch: (p) => p === "/atendimento-whatsapp" || p.startsWith("/atendimento-whatsapp") || p.startsWith("/whatsapp") || p === "/central-whatsapp" || p === "/atendimento",
           },
           { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
           {
@@ -517,7 +527,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         ],
       },
     }),
-    [navAlerts]
+    [hasWhatsappUnread, navAlerts, whatsappUnreadCount]
   );
 
   const widthClass = useMemo(() => {
@@ -566,10 +576,10 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         {!compact && (
           <span className="flex w-full min-w-0 items-center justify-between">
             <span className="truncate">{item.label}</span>
-            {item.showDot && <AlertDot />}
+            {item.showDot && <AlertDot label={item.alertLabel} />}
           </span>
         )}
-        {compact && item.showDot && <AlertDot />}
+        {compact && item.showDot && <AlertDot label={item.alertLabel} />}
       </NavLink>
     );
   };

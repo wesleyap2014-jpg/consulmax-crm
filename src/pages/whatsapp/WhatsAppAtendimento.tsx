@@ -1,107 +1,1990 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Loader2, MessageCircle, Mic, Paperclip, Phone, Plus, RefreshCw, Send, Settings, Smile, X } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  CheckCircle2,
+  Loader2,
+  MessageCircle,
+  MessageSquareMore,
+  Mic,
+  Paperclip,
+  Phone,
+  Plus,
+  RefreshCw,
+  Search,
+  Send,
+  Settings,
+  Smile,
+  X,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { WhatsAppModuleHeader } from "./WhatsAppShell";
+import {
+  getReplyMetaMessageId,
+  getStoredMedia,
+  messageSearchText,
+  WhatsAppMessageBubble,
+  type WhatsAppMessage,
+} from "./WhatsAppMessageBubble";
 
 type Board = "comercial" | "pos_vendas" | "operacional";
 type Tab = "todos" | Board | "relatorios";
-type Conv = { id: string; queue?: string | null; stage?: string | null; status?: string | null; last_message?: string | null; last_message_at?: string | null; unread_count?: number | null; assigned_to?: string | null; lead_id?: string | null; closed_at?: string | null; whatsapp_contacts?: { id?: string | null; nome?: string | null; telefone?: string | null; wa_id?: string | null } | null };
-type Msg = { id: string; direction: "inbound" | "outbound"; body?: string | null; message_type?: string | null; created_at: string; raw_payload?: any; media_mime_type?: string | null };
-type Queue = { key: string; label: string; board: Board; color: string; desc: string; terminal?: boolean };
-type ContactOption = { source: "lead" | "cliente" | "whatsapp" | "manual"; id?: string | null; nome: string; telefone: string; email?: string | null; lead_id?: string | null; cliente_id?: string | null };
-type Template = { name: string; language?: string | null; category?: string | null; body?: string | null; status?: string | null };
-
-const C = { red: "#A11C27", navy: "#1E293F", gold: "#B5A573", green: "#0f766e", muted: "#64748b" };
-const CLOSED = new Set(["fechada", "finalizado", "finalizada", "closed", "fechado_ganho", "fechado_perdido"]);
-const COMMERCIAL: Queue[] = [
-  { key: "com_novo", label: "Novo", board: "comercial", color: C.red, desc: "Entrada comercial" },
-  { key: "com_qualificando", label: "Qualificando/Diagnóstico", board: "comercial", color: C.navy, desc: "Diagnóstico inicial" },
-  { key: "com_reuniao", label: "Reunião Agendada", board: "comercial", color: C.navy, desc: "Reunião marcada" },
-  { key: "com_proposta", label: "Proposta Apresentada/Negociação", board: "comercial", color: C.navy, desc: "Proposta e follow-up" },
-  { key: "com_fechamento", label: "Fechamento Programado/Aguardando Documentos", board: "comercial", color: C.gold, desc: "Documentos/fechamento" },
-  { key: "fechado_ganho", label: "Fechado Ganho", board: "comercial", color: C.green, desc: "Vai para relatórios", terminal: true },
-  { key: "fechado_perdido", label: "Fechado Perdido", board: "comercial", color: C.muted, desc: "Vai para relatórios", terminal: true },
-];
-const POST_SALES: Queue[] = [
-  { key: "pos_novo_cliente", label: "Novo Cliente", board: "pos_vendas", color: C.red, desc: "Entrada do pós-vendas" },
-  { key: "pos_sucesso", label: "Sucesso do Cliente", board: "pos_vendas", color: C.green, desc: "Acompanhamento e sucesso" },
-  { key: "pos_boletos", label: "Boletos", board: "pos_vendas", color: C.gold, desc: "Solicitação e envio de boletos" },
-  { key: "pos_res_assembleia", label: "Res. Assembleia", board: "pos_vendas", color: C.gold, desc: "Resultado de assembleia" },
-  { key: "pos_recup_clientes", label: "Recup. Clientes", board: "pos_vendas", color: C.red, desc: "Recuperação de clientes" },
-];
-const OPERATIONAL: Queue[] = [
-  { key: "op_suporte", label: "Suporte ao Cliente", board: "operacional", color: C.green, desc: "Suporte geral" },
-  { key: "op_contemplacao", label: "Contemplação", board: "operacional", color: C.green, desc: "Processo de contemplação" },
-  { key: "op_transferencia", label: "Transferência de Cota", board: "operacional", color: C.green, desc: "Transferência" },
-  { key: "op_financeiro", label: "Financeiro", board: "operacional", color: C.gold, desc: "Demandas financeiras" },
-  { key: "op_outras", label: "Outras Solicitações", board: "operacional", color: C.muted, desc: "Solicitações diversas" },
-];
-const ALL_QUEUES = [...COMMERCIAL, ...POST_SALES, ...OPERATIONAL];
-const LEGACY_MAP: Record<string, string> = { novos_contatos: "com_novo", entrada: "com_novo", triagem: "com_novo", comercial: "com_novo", qualificacao: "com_qualificando", proposta: "com_proposta", negociacao: "com_proposta", cliente_ativo: "pos_novo_cliente", boleto: "pos_boletos", contemplacao: "op_contemplacao", pos_venda: "pos_sucesso", suporte: "op_suporte", financeiro: "op_financeiro" };
-const EMOJIS = ["😀","😄","😂","🤣","😊","😉","😍","🥰","😎","🤝","👏","🙏","🙌","💪","👊","👍","👌","✅","🔥","🚀","🎯","💰","🏡","🚗","📄","📌","📲","☎️","⏰","🎉","🥳","🤩","😃","😅","🙂","😌","🤔","😬","😢","😭","😡","❤️","💙","💚","💛","🧡","💜","⭐","⚡","✨","📈","📊","📝","📎","📍","🔒","🔑","🏆","💼"];
-
-const onlyDigits = (v?: string | null) => String(v || "").replace(/\D/g, "");
-const normalizeQueue = (v?: string | null) => LEGACY_MAP[String(v || "com_novo").toLowerCase()] || String(v || "com_novo").toLowerCase();
-const queueOf = (c?: Conv | null) => normalizeQueue(c?.queue || c?.stage);
-const qdef = (key?: string | null) => ALL_QUEUES.find((q) => q.key === normalizeQueue(key)) || COMMERCIAL[0];
-const isClosed = (c?: Conv | null) => CLOSED.has(String(c?.status || "").toLowerCase()) || CLOSED.has(String(c?.stage || "").toLowerCase()) || CLOSED.has(String(c?.queue || "").toLowerCase());
-const nameOf = (c?: Conv | null) => c?.whatsapp_contacts?.nome || "Cliente WhatsApp";
-const phoneOf = (c?: Conv | null) => c?.whatsapp_contacts?.telefone || c?.whatsapp_contacts?.wa_id || "";
-const initials = (v?: string | null) => String(v || "Cliente").trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "C";
-const in24h = (c?: Conv | null) => !!c?.last_message_at && Date.now() - new Date(c.last_message_at).getTime() <= 86400000;
-const rel = (v?: string | null) => { if (!v) return "—"; const m = Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / 60000)); if (m < 1) return "agora"; if (m < 60) return `${m} min`; const h = Math.floor(m / 60); return h < 24 ? `${h} h` : `${Math.floor(h / 24)} d`; };
-const fmtPhone = (v?: string | null) => { const d = onlyDigits(v); const l = d.startsWith("55") ? d.slice(2) : d; if (l.length === 11) return `(${l.slice(0, 2)}) ${l.slice(2, 7)}-${l.slice(7)}`; if (l.length === 10) return `(${l.slice(0, 2)}) ${l.slice(2, 6)}-${l.slice(6)}`; return d || "Telefone não identificado"; };
-const withCountry = (country: string, phone: string) => { const d = onlyDigits(phone); const code = onlyDigits(country) || "55"; return d ? d.startsWith(code) ? d : `${code}${d}` : ""; };
-const brl = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
-const boardLabel = (b: Board) => b === "comercial" ? "Comercial" : b === "pos_vendas" ? "Pós-Vendas" : "Operacional";
-const queuesByBoard = (b: Board) => b === "comercial" ? COMMERCIAL : b === "pos_vendas" ? POST_SALES : OPERATIONAL;
-const recorderMimeType = () => {
-  const options = ["audio/ogg;codecs=opus", "audio/ogg", "audio/mp4", "audio/aac", "audio/mpeg"];
-  return options.find((type) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) || "";
+type Conv = {
+  id: string;
+  queue?: string | null;
+  stage?: string | null;
+  status?: string | null;
+  last_message?: string | null;
+  last_message_at?: string | null;
+  unread_count?: number | null;
+  assigned_to?: string | null;
+  lead_id?: string | null;
+  closed_at?: string | null;
+  whatsapp_contacts?: {
+    id?: string | null;
+    nome?: string | null;
+    telefone?: string | null;
+    wa_id?: string | null;
+  } | null;
+};
+type Msg = WhatsAppMessage;
+type Queue = {
+  key: string;
+  label: string;
+  board: Board;
+  color: string;
+  desc: string;
+  terminal?: boolean;
+};
+type ContactOption = {
+  source: "lead" | "cliente" | "whatsapp" | "manual";
+  id?: string | null;
+  nome: string;
+  telefone: string;
+  email?: string | null;
+  lead_id?: string | null;
+  cliente_id?: string | null;
+};
+type Template = {
+  name: string;
+  language?: string | null;
+  category?: string | null;
+  body?: string | null;
+  status?: string | null;
 };
 
-function Modal({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode }) {
-  return <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto bg-slate-950/45 p-4 pt-10 backdrop-blur-sm"><div className="w-full max-w-5xl rounded-[28px] bg-white p-5 shadow-2xl ring-1 ring-slate-200"><div className="mb-4 flex items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Central WhatsApp</p><h2 className="text-2xl font-black text-slate-900">{title}</h2>{subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}</div><button onClick={onClose} className="rounded-full p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>{children}</div></div>;
+const C = {
+  red: "#A11C27",
+  navy: "#1E293F",
+  gold: "#B5A573",
+  green: "#0f766e",
+  muted: "#64748b",
+};
+const CLOSED = new Set([
+  "fechada",
+  "finalizado",
+  "finalizada",
+  "closed",
+  "fechado_ganho",
+  "fechado_perdido",
+]);
+const COMMERCIAL: Queue[] = [
+  {
+    key: "com_novo",
+    label: "Novo",
+    board: "comercial",
+    color: C.red,
+    desc: "Entrada comercial",
+  },
+  {
+    key: "com_qualificando",
+    label: "Qualificando/Diagnóstico",
+    board: "comercial",
+    color: C.navy,
+    desc: "Diagnóstico inicial",
+  },
+  {
+    key: "com_reuniao",
+    label: "Reunião Agendada",
+    board: "comercial",
+    color: C.navy,
+    desc: "Reunião marcada",
+  },
+  {
+    key: "com_proposta",
+    label: "Proposta Apresentada/Negociação",
+    board: "comercial",
+    color: C.navy,
+    desc: "Proposta e follow-up",
+  },
+  {
+    key: "com_fechamento",
+    label: "Fechamento Programado/Aguardando Documentos",
+    board: "comercial",
+    color: C.gold,
+    desc: "Documentos/fechamento",
+  },
+  {
+    key: "fechado_ganho",
+    label: "Fechado Ganho",
+    board: "comercial",
+    color: C.green,
+    desc: "Vai para relatórios",
+    terminal: true,
+  },
+  {
+    key: "fechado_perdido",
+    label: "Fechado Perdido",
+    board: "comercial",
+    color: C.muted,
+    desc: "Vai para relatórios",
+    terminal: true,
+  },
+];
+const POST_SALES: Queue[] = [
+  {
+    key: "pos_novo_cliente",
+    label: "Novo Cliente",
+    board: "pos_vendas",
+    color: C.red,
+    desc: "Entrada do pós-vendas",
+  },
+  {
+    key: "pos_sucesso",
+    label: "Sucesso do Cliente",
+    board: "pos_vendas",
+    color: C.green,
+    desc: "Acompanhamento e sucesso",
+  },
+  {
+    key: "pos_boletos",
+    label: "Boletos",
+    board: "pos_vendas",
+    color: C.gold,
+    desc: "Solicitação e envio de boletos",
+  },
+  {
+    key: "pos_res_assembleia",
+    label: "Res. Assembleia",
+    board: "pos_vendas",
+    color: C.gold,
+    desc: "Resultado de assembleia",
+  },
+  {
+    key: "pos_recup_clientes",
+    label: "Recup. Clientes",
+    board: "pos_vendas",
+    color: C.red,
+    desc: "Recuperação de clientes",
+  },
+];
+const OPERATIONAL: Queue[] = [
+  {
+    key: "op_suporte",
+    label: "Suporte ao Cliente",
+    board: "operacional",
+    color: C.green,
+    desc: "Suporte geral",
+  },
+  {
+    key: "op_contemplacao",
+    label: "Contemplação",
+    board: "operacional",
+    color: C.green,
+    desc: "Processo de contemplação",
+  },
+  {
+    key: "op_transferencia",
+    label: "Transferência de Cota",
+    board: "operacional",
+    color: C.green,
+    desc: "Transferência",
+  },
+  {
+    key: "op_financeiro",
+    label: "Financeiro",
+    board: "operacional",
+    color: C.gold,
+    desc: "Demandas financeiras",
+  },
+  {
+    key: "op_outras",
+    label: "Outras Solicitações",
+    board: "operacional",
+    color: C.muted,
+    desc: "Solicitações diversas",
+  },
+];
+const ALL_QUEUES = [...COMMERCIAL, ...POST_SALES, ...OPERATIONAL];
+const LEGACY_MAP: Record<string, string> = {
+  novos_contatos: "com_novo",
+  entrada: "com_novo",
+  triagem: "com_novo",
+  comercial: "com_novo",
+  qualificacao: "com_qualificando",
+  proposta: "com_proposta",
+  negociacao: "com_proposta",
+  cliente_ativo: "pos_novo_cliente",
+  boleto: "pos_boletos",
+  contemplacao: "op_contemplacao",
+  pos_venda: "pos_sucesso",
+  suporte: "op_suporte",
+  financeiro: "op_financeiro",
+};
+const EMOJIS = [
+  "😀",
+  "😄",
+  "😂",
+  "🤣",
+  "😊",
+  "😉",
+  "😍",
+  "🥰",
+  "😎",
+  "🤝",
+  "👏",
+  "🙏",
+  "🙌",
+  "💪",
+  "👊",
+  "👍",
+  "👌",
+  "✅",
+  "🔥",
+  "🚀",
+  "🎯",
+  "💰",
+  "🏡",
+  "🚗",
+  "📄",
+  "📌",
+  "📲",
+  "☎️",
+  "⏰",
+  "🎉",
+  "🥳",
+  "🤩",
+  "😃",
+  "😅",
+  "🙂",
+  "😌",
+  "🤔",
+  "😬",
+  "😢",
+  "😭",
+  "😡",
+  "❤️",
+  "💙",
+  "💚",
+  "💛",
+  "🧡",
+  "💜",
+  "⭐",
+  "⚡",
+  "✨",
+  "📈",
+  "📊",
+  "📝",
+  "📎",
+  "📍",
+  "🔒",
+  "🔑",
+  "🏆",
+  "💼",
+];
+const QUICK_REPLIES = [
+  "Olá! Tudo bem? Como posso te ajudar hoje?",
+  "Perfeito! Vou analisar essas informações e já retorno por aqui.",
+  "Você consegue me informar o crédito desejado, a parcela ideal e o valor disponível para entrada ou lance?",
+  "Sua simulação está pronta. Posso te explicar os principais pontos agora?",
+  "Para avançarmos, você pode me enviar os documentos pendentes por aqui, por favor?",
+  "Combinado! Ficarei acompanhando e retorno na data acertada.",
+];
+const MESSAGE_SELECT =
+  "id,conversation_id,direction,body,message_type,created_at,raw_payload,media_id,media_mime_type,meta_message_id";
+const SOUND_STORAGE_KEY = "consulmax-whatsapp-notification-sound";
+
+const onlyDigits = (v?: string | null) => String(v || "").replace(/\D/g, "");
+const normalizeQueue = (v?: string | null) =>
+  LEGACY_MAP[String(v || "com_novo").toLowerCase()] ||
+  String(v || "com_novo").toLowerCase();
+const queueOf = (c?: Conv | null) => normalizeQueue(c?.queue || c?.stage);
+const qdef = (key?: string | null) =>
+  ALL_QUEUES.find((q) => q.key === normalizeQueue(key)) || COMMERCIAL[0];
+const isClosed = (c?: Conv | null) =>
+  CLOSED.has(String(c?.status || "").toLowerCase()) ||
+  CLOSED.has(String(c?.stage || "").toLowerCase()) ||
+  CLOSED.has(String(c?.queue || "").toLowerCase());
+const nameOf = (c?: Conv | null) =>
+  c?.whatsapp_contacts?.nome || "Cliente WhatsApp";
+const phoneOf = (c?: Conv | null) =>
+  c?.whatsapp_contacts?.telefone || c?.whatsapp_contacts?.wa_id || "";
+const initials = (v?: string | null) =>
+  String(v || "Cliente")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join("") || "C";
+const in24h = (c?: Conv | null) =>
+  !!c?.last_message_at &&
+  Date.now() - new Date(c.last_message_at).getTime() <= 86400000;
+const rel = (v?: string | null) => {
+  if (!v) return "—";
+  const m = Math.max(
+    0,
+    Math.floor((Date.now() - new Date(v).getTime()) / 60000),
+  );
+  if (m < 1) return "agora";
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h} h` : `${Math.floor(h / 24)} d`;
+};
+const fmtPhone = (v?: string | null) => {
+  const d = onlyDigits(v);
+  const l = d.startsWith("55") ? d.slice(2) : d;
+  if (l.length === 11)
+    return `(${l.slice(0, 2)}) ${l.slice(2, 7)}-${l.slice(7)}`;
+  if (l.length === 10)
+    return `(${l.slice(0, 2)}) ${l.slice(2, 6)}-${l.slice(6)}`;
+  return d || "Telefone não identificado";
+};
+const withCountry = (country: string, phone: string) => {
+  const d = onlyDigits(phone);
+  const code = onlyDigits(country) || "55";
+  return d ? (d.startsWith(code) ? d : `${code}${d}`) : "";
+};
+const brl = (v: number) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
+    v || 0,
+  );
+const boardLabel = (b: Board) =>
+  b === "comercial"
+    ? "Comercial"
+    : b === "pos_vendas"
+      ? "Pós-Vendas"
+      : "Operacional";
+const queuesByBoard = (b: Board) =>
+  b === "comercial"
+    ? COMMERCIAL
+    : b === "pos_vendas"
+      ? POST_SALES
+      : OPERATIONAL;
+const recorderMimeType = () => {
+  const options = [
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+    "audio/mp4",
+    "audio/aac",
+    "audio/mpeg",
+  ];
+  return (
+    options.find(
+      (type) =>
+        typeof MediaRecorder !== "undefined" &&
+        MediaRecorder.isTypeSupported(type),
+    ) || ""
+  );
+};
+
+const readSoundPreference = () => {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(SOUND_STORAGE_KEY) !== "off";
+};
+
+function Modal({
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto bg-slate-950/45 p-4 pt-10 backdrop-blur-sm">
+      <div className="w-full max-w-5xl rounded-[28px] bg-white p-5 shadow-2xl ring-1 ring-slate-200">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">
+              Central WhatsApp
+            </p>
+            <h2 className="text-2xl font-black text-slate-900">{title}</h2>
+            {subtitle && (
+              <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-full p-2 hover:bg-slate-100"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export default function WhatsAppAtendimento() {
-  const [convs, setConvs] = useState<Conv[]>([]), [allConvs, setAllConvs] = useState<Conv[]>([]), [active, setActive] = useState<Conv | null>(null), [msgs, setMsgs] = useState<Msg[]>([]), [ratings, setRatings] = useState<Msg[]>([]);
-  const [loading, setLoading] = useState(true), [refreshing, setRefreshing] = useState(false), [sending, setSending] = useState(false), [recording, setRecording] = useState(false), [emojiOpen, setEmojiOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>("todos"), [listFilter, setListFilter] = useState<"tudo" | "nao_lidas" | "novos" | "meus">("tudo"), [search, setSearch] = useState("");
-  const [startOpen, setStartOpen] = useState(false), [finishOpen, setFinishOpen] = useState(false), [queuesOpen, setQueuesOpen] = useState(false);
-  const [contactQuery, setContactQuery] = useState(""), [contacts, setContacts] = useState<ContactOption[]>([]), [selectedContact, setSelectedContact] = useState<ContactOption | null>(null);
-  const [country, setCountry] = useState("55"), [manualName, setManualName] = useState(""), [manualPhone, setManualPhone] = useState(""), [startBoard, setStartBoard] = useState<Board>("comercial"), [startQueue, setStartQueue] = useState("com_novo");
-  const [templates, setTemplates] = useState<Template[]>([]), [startTemplate, setStartTemplate] = useState(""), [startMessage, setStartMessage] = useState(""), [templateFallbackMessage, setTemplateFallbackMessage] = useState("");
-  const [sendSatisfaction, setSendSatisfaction] = useState(true), [messageText, setMessageText] = useState(""), [file, setFile] = useState<File | null>(null), [replyTo, setReplyTo] = useState<Msg | null>(null);
-  const endRef = useRef<HTMLDivElement | null>(null), fileRef = useRef<HTMLInputElement | null>(null), recorderRef = useRef<MediaRecorder | null>(null), audioChunksRef = useRef<BlobPart[]>([]), streamRef = useRef<MediaStream | null>(null);
+  const [convs, setConvs] = useState<Conv[]>([]),
+    [allConvs, setAllConvs] = useState<Conv[]>([]),
+    [active, setActive] = useState<Conv | null>(null),
+    [msgs, setMsgs] = useState<Msg[]>([]),
+    [ratings, setRatings] = useState<Msg[]>([]);
+  const [loading, setLoading] = useState(true),
+    [refreshing, setRefreshing] = useState(false),
+    [sending, setSending] = useState(false),
+    [recording, setRecording] = useState(false),
+    [emojiOpen, setEmojiOpen] = useState(false);
+  const [tab, setTab] = useState<Tab>("todos"),
+    [listFilter, setListFilter] = useState<
+      "tudo" | "nao_lidas" | "novos" | "meus"
+    >("tudo"),
+    [search, setSearch] = useState("");
+  const [startOpen, setStartOpen] = useState(false),
+    [finishOpen, setFinishOpen] = useState(false),
+    [queuesOpen, setQueuesOpen] = useState(false);
+  const [contactQuery, setContactQuery] = useState(""),
+    [contacts, setContacts] = useState<ContactOption[]>([]),
+    [selectedContact, setSelectedContact] = useState<ContactOption | null>(
+      null,
+    );
+  const [country, setCountry] = useState("55"),
+    [manualName, setManualName] = useState(""),
+    [manualPhone, setManualPhone] = useState(""),
+    [startBoard, setStartBoard] = useState<Board>("comercial"),
+    [startQueue, setStartQueue] = useState("com_novo");
+  const [templates, setTemplates] = useState<Template[]>([]),
+    [startTemplate, setStartTemplate] = useState(""),
+    [startMessage, setStartMessage] = useState(""),
+    [templateFallbackMessage, setTemplateFallbackMessage] = useState("");
+  const [sendSatisfaction, setSendSatisfaction] = useState(true),
+    [messageText, setMessageText] = useState(""),
+    [file, setFile] = useState<File | null>(null),
+    [replyTo, setReplyTo] = useState<Msg | null>(null);
+  const [chatSearch, setChatSearch] = useState(""),
+    [quickRepliesOpen, setQuickRepliesOpen] = useState(false),
+    [soundEnabled, setSoundEnabled] = useState(readSoundPreference);
+  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({}),
+    [retryingId, setRetryingId] = useState<string | null>(null),
+    [realtimeStatus, setRealtimeStatus] = useState<
+      "connecting" | "connected" | "disconnected"
+    >("connecting");
+  const endRef = useRef<HTMLDivElement | null>(null),
+    fileRef = useRef<HTMLInputElement | null>(null),
+    recorderRef = useRef<MediaRecorder | null>(null),
+    audioChunksRef = useRef<BlobPart[]>([]),
+    streamRef = useRef<MediaStream | null>(null);
+  const activeRef = useRef<Conv | null>(null),
+    soundEnabledRef = useRef(soundEnabled),
+    mediaUrlCacheRef = useRef<Record<string, string>>({}),
+    audioContextRef = useRef<AudioContext | null>(null);
 
-  async function load(show = false) { show ? setLoading(true) : setRefreshing(true); const { data, error } = await supabase.from("whatsapp_conversations").select("*, whatsapp_contacts(id,nome,telefone,wa_id)").order("last_message_at", { ascending: false, nullsFirst: false }).limit(300); if (!error) { const rows = (data || []) as Conv[]; setAllConvs(rows); setConvs(rows.filter((c) => !isClosed(c))); } const { data: ratingRows } = await supabase.from("whatsapp_messages").select("id,direction,body,message_type,created_at,raw_payload,media_mime_type").eq("sender_type", "avaliacao").order("created_at", { ascending: false }).limit(500); setRatings((ratingRows || []) as Msg[]); setLoading(false); setRefreshing(false); }
-  async function loadMessages(id: string) { const { data } = await supabase.from("whatsapp_messages").select("id,direction,body,message_type,created_at,raw_payload,media_mime_type").eq("conversation_id", id).order("created_at", { ascending: true }); setMsgs((data || []) as Msg[]); await supabase.from("whatsapp_conversations").update({ unread_count: 0 }).eq("id", id); }
-  async function open(c: Conv) { setActive(c); await loadMessages(c.id); }
-  async function loadTemplates() { const res = await fetch("/api/meta/whatsapp?resource=templates").catch(() => null); const json = res ? await res.json().catch(() => null) : null; const approved = Array.isArray(json?.templates) ? json.templates.filter((t: Template) => String(t.status || "").toUpperCase() === "APPROVED") : []; setTemplates(approved); if (approved[0] && !startTemplate) setStartTemplate(approved[0].name); }
-  async function searchContacts(q: string) { setContactQuery(q); if (q.trim().length < 2) return setContacts([]); const like = `%${q.trim()}%`; const [leads, clientes, wa] = await Promise.all([supabase.from("leads").select("id,nome,telefone,email").or(`nome.ilike.${like},telefone.ilike.${like},email.ilike.${like}`).limit(8).then((r) => r.data || []), supabase.from("clientes").select("id,nome,telefone,email,lead_id").or(`nome.ilike.${like},telefone.ilike.${like},email.ilike.${like}`).limit(8).then((r) => r.data || []), supabase.from("whatsapp_contacts").select("id,nome,telefone,wa_id,lead_id").or(`nome.ilike.${like},telefone.ilike.${like},wa_id.ilike.${like}`).limit(8).then((r) => r.data || [])]); const rows: ContactOption[] = [...leads.map((x: any) => ({ source: "lead" as const, id: x.id, lead_id: x.id, nome: x.nome || "Lead", telefone: x.telefone || "", email: x.email || null })), ...clientes.map((x: any) => ({ source: "cliente" as const, id: x.id, cliente_id: x.id, lead_id: x.lead_id || null, nome: x.nome || "Cliente", telefone: x.telefone || "", email: x.email || null })), ...wa.map((x: any) => ({ source: "whatsapp" as const, id: x.id, lead_id: x.lead_id || null, nome: x.nome || "Contato WhatsApp", telefone: x.telefone || x.wa_id || "" }))]; const seen = new Set<string>(); setContacts(rows.filter((r) => { const k = `${onlyDigits(r.telefone)}-${r.nome}`; if (!onlyDigits(r.telefone) || seen.has(k)) return false; seen.add(k); return true; })); }
+  async function load(show = false, silent = false) {
+    if (show) setLoading(true);
+    else if (!silent) setRefreshing(true);
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select("*, whatsapp_contacts(id,nome,telefone,wa_id)")
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(300);
+    if (!error) {
+      const rows = (data || []) as Conv[];
+      setAllConvs(rows);
+      setConvs(rows.filter((c) => !isClosed(c)));
+      setActive((current) =>
+        current
+          ? rows.find((row) => row.id === current.id) || current
+          : current,
+      );
+    }
+    if (!silent) {
+      const { data: ratingRows } = await supabase
+        .from("whatsapp_messages")
+        .select(MESSAGE_SELECT)
+        .eq("sender_type", "avaliacao")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      setRatings((ratingRows || []) as Msg[]);
+    }
+    setLoading(false);
+    setRefreshing(false);
+  }
+  async function loadMessages(id: string, markRead = true) {
+    const { data } = await supabase
+      .from("whatsapp_messages")
+      .select(MESSAGE_SELECT)
+      .eq("conversation_id", id)
+      .order("created_at", { ascending: true });
+    setMsgs((data || []) as Msg[]);
+    if (markRead)
+      await supabase
+        .from("whatsapp_conversations")
+        .update({ unread_count: 0 })
+        .eq("id", id);
+  }
+  async function open(c: Conv) {
+    setActive(c);
+    setChatSearch("");
+    await loadMessages(c.id);
+  }
 
-  useEffect(() => { load(true); loadTemplates(); }, []);
-  useEffect(() => { if (active?.id) loadMessages(active.id); }, [active?.id]);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs.length, active?.id]);
-  useEffect(() => { setStartQueue(startBoard === "comercial" ? "com_novo" : startBoard === "pos_vendas" ? "pos_novo_cliente" : "op_suporte"); }, [startBoard]);
+  function playNotificationSound() {
+    if (!soundEnabledRef.current || typeof window === "undefined") return;
 
-  const filtered = useMemo(() => { const q = search.trim().toLowerCase(), qd = onlyDigits(q); return convs.filter((c) => { if (listFilter === "nao_lidas" && !c.unread_count) return false; if (listFilter === "novos" && (c.assigned_to || isClosed(c))) return false; if (listFilter === "meus" && !c.assigned_to) return false; if (!q) return true; return nameOf(c).toLowerCase().includes(q) || String(c.last_message || "").toLowerCase().includes(q) || onlyDigits(phoneOf(c)).includes(qd); }); }, [convs, search, listFilter]);
-  const counts = useMemo(() => { const open = convs.length, closed = allConvs.filter(isClosed).length, novos = convs.filter((c) => !c.assigned_to).length, won = allConvs.filter((c) => queueOf(c) === "fechado_ganho").length, lost = allConvs.filter((c) => queueOf(c) === "fechado_perdido").length, winRate = won + lost ? Math.round((won / (won + lost)) * 100) : 0; const ratingNums = ratings.map((r) => Number(onlyDigits(r.body))).filter((n) => n >= 1 && n <= 5); const avgRating = ratingNums.length ? (ratingNums.reduce((a, b) => a + b, 0) / ratingNums.length).toFixed(1) : "—"; return { open, closed, novos, won, lost, winRate, total: allConvs.length, inbound: msgs.filter((m) => m.direction === "inbound").length, outbound: msgs.filter((m) => m.direction === "outbound").length, ratingCount: ratingNums.length, avgRating, estimatedOpenings: allConvs.filter((c) => !!c.last_message_at).length, estimatedCostBRL: 0 }; }, [convs, allConvs, msgs, ratings]);
-  const kanbanQueues = tab === "comercial" ? COMMERCIAL.filter((q) => !q.terminal) : tab === "pos_vendas" ? POST_SALES : OPERATIONAL;
-  const byQueue = useMemo(() => { const map = new Map<string, Conv[]>(); kanbanQueues.forEach((q) => map.set(q.key, [])); filtered.forEach((c) => { const k = queueOf(c); if (map.has(k)) map.get(k)?.push(c); }); return map; }, [filtered, tab]);
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioContextClass) return;
+      const context = audioContextRef.current || new AudioContextClass();
+      audioContextRef.current = context;
+      const now = context.currentTime;
 
-  async function transfer(queue: string, c: Conv = active as Conv) { if (!c?.id) return; await supabase.from("whatsapp_conversations").update({ queue, stage: queue, updated_at: new Date().toISOString() }).eq("id", c.id); setActive((p) => p?.id === c.id ? { ...p, queue, stage: queue } : p); await load(); }
-  async function createTicket() { const contact = selectedContact || { source: "manual" as const, nome: manualName || "Contato", telefone: withCountry(country, manualPhone) }; const phone = onlyDigits(contact.telefone); if (!phone) return alert("Informe ou selecione um contato com telefone."); setSending(true); try { const now = new Date().toISOString(); const { data: waContact, error } = await supabase.from("whatsapp_contacts").upsert({ wa_id: phone, telefone: phone, nome: contact.nome || null, lead_id: contact.lead_id || null, updated_at: now }, { onConflict: "wa_id" }).select("id,nome,telefone,wa_id,lead_id").single(); if (error || !waContact?.id) throw error || new Error("Contato não criado."); const { data: existing } = await supabase.from("whatsapp_conversations").select("*, whatsapp_contacts(id,nome,telefone,wa_id)").eq("contact_id", waContact.id).not("status", "in", "(fechada,finalizado)").order("created_at", { ascending: false }).limit(1).maybeSingle(); const conv = existing?.id ? existing : (await supabase.from("whatsapp_conversations").insert({ contact_id: waContact.id, lead_id: waContact.lead_id || contact.lead_id || null, queue: startQueue, stage: startQueue, status: "humano", last_message: "Ticket criado", last_message_at: now, unread_count: 0 }).select("*, whatsapp_contacts(id,nome,telefone,wa_id)").single()).data; if (!conv?.id) throw new Error("Ticket não criado."); setStartOpen(false); setSelectedContact(null); setManualName(""); setManualPhone(""); setStartMessage(""); setTemplateFallbackMessage(""); await load(true); await open(conv as Conv); if (startMessage.trim() && in24h(conv as Conv)) await sendPayload(conv as Conv, startMessage.trim()); } catch (e: any) { alert(e?.message || "Não foi possível criar ticket."); } finally { setSending(false); } }
-  function fileToBase64(f: File): Promise<string> { return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result || "")); r.onerror = reject; r.readAsDataURL(f); }); }
-  async function sendPayload(conv: Conv, body?: string) { const base = String(body ?? messageText).trim(); const text = replyTo && !body ? `↪ Respondendo: ${replyTo.body || replyTo.message_type || "mensagem"}\n\n${base}` : base; if (!conv?.id || (!text && !file)) return; if (!in24h(conv)) return alert("Cliente fora da janela de 24h. Envie um modelo aprovado para reabrir."); setSending(true); try { const payload: any = { conversation_id: conv.id, to: phoneOf(conv), body: text }; if (file) { payload.file_base64 = await fileToBase64(file); payload.file_name = file.name; payload.mime_type = file.type || "application/octet-stream"; payload.caption = text; } const res = await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); const json = await res.json().catch(() => null); if (!res.ok || !json?.ok) throw new Error(json?.error?.error?.message || json?.error?.message || json?.error || "Falha ao enviar mensagem"); setMessageText(""); setReplyTo(null); setFile(null); await loadMessages(conv.id); await load(); } catch (e: any) { alert(e?.message || "Não foi possível enviar."); } finally { setSending(false); } }
-  async function sendTemplate(conv: Conv) { if (!startTemplate) return alert("Selecione um modelo aprovado."); setSending(true); try { const res = await fetch("/api/whatsapp/template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: conv.id, to: phoneOf(conv), template_name: startTemplate, template_language: "pt_BR" }) }); const json = await res.json().catch(() => null); if (!res.ok || !json?.ok) throw new Error(json?.error?.error?.message || json?.error || "Falha ao enviar modelo"); await loadMessages(conv.id); await load(); } catch (e: any) { alert(e?.message || "Não foi possível enviar modelo."); } finally { setSending(false); } }
-  async function finishConversation() { if (!active?.id) return; const now = new Date().toISOString(); if (sendSatisfaction && in24h(active)) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: active.id, to: phoneOf(active), body: "Antes de encerrar, como você avalia nosso atendimento de 1 a 5? 😊" }) }); await supabase.from("whatsapp_conversations").update({ status: "fechada", stage: "finalizado", queue: "finalizado", closed_at: now, updated_at: now }).eq("id", active.id); setFinishOpen(false); setActive(null); setMsgs([]); await load(true); }
-  async function toggleRecording() { if (recording) { recorderRef.current?.stop(); streamRef.current?.getTracks().forEach((track) => track.stop()); setRecording(false); return; } try { const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); streamRef.current = stream; audioChunksRef.current = []; const mime = recorderMimeType(); const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); recorderRef.current = recorder; recorder.ondataavailable = (event) => { if (event.data?.size) audioChunksRef.current.push(event.data); }; recorder.onstop = () => { const finalType = recorder.mimeType?.includes("ogg") ? "audio/ogg" : recorder.mimeType?.includes("mp4") ? "audio/mp4" : recorder.mimeType?.includes("aac") ? "audio/aac" : "audio/ogg"; const ext = finalType === "audio/mp4" ? "m4a" : finalType === "audio/aac" ? "aac" : "ogg"; const blob = new Blob(audioChunksRef.current, { type: finalType }); const audioFile = new File([blob], `audio-${Date.now()}.${ext}`, { type: finalType }); setFile(audioFile); }; recorder.start(); setRecording(true); } catch { alert("Não foi possível acessar o microfone. Confira a permissão do navegador."); } }
+      [0, 0.13].forEach((delay, index) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(
+          index === 0 ? 740 : 940,
+          now + delay,
+        );
+        gain.gain.setValueAtTime(0.0001, now + delay);
+        gain.gain.exponentialRampToValueAtTime(0.16, now + delay + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.11);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now + delay);
+        oscillator.stop(now + delay + 0.12);
+      });
+    } catch (error) {
+      console.warn("Não foi possível reproduzir o som de notificação.", error);
+    }
+  }
 
-  function Row({ c }: { c: Conv }) { const q = qdef(queueOf(c)), selected = active?.id === c.id; return <button draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", c.id)} onClick={() => open(c)} className={`flex w-full gap-3 border-b px-4 py-3 text-left hover:bg-slate-50 ${selected ? "bg-slate-100" : "bg-white"}`}><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-black text-white" style={{ background: q.color }}>{initials(nameOf(c))}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-black text-slate-900">{nameOf(c)}</p><span className="text-[11px] font-bold text-slate-400">{rel(c.last_message_at)}</span></div><p className="mt-1 truncate text-xs text-slate-500">{c.last_message || fmtPhone(phoneOf(c))}</p><div className="mt-2 flex flex-wrap gap-1.5"><span className="rounded-full border px-2 py-0.5 text-[10px] font-bold text-slate-500">Ticket #{c.id.slice(0, 8).toUpperCase()}</span><span className="rounded-full border px-2 py-0.5 text-[10px] font-bold text-slate-500">{boardLabel(q.board)}</span><span className="rounded-full border px-2 py-0.5 text-[10px] font-bold text-slate-500">{q.label}</span>{!!c.unread_count && <span className="rounded-full bg-[#A11C27] px-2 py-0.5 text-[10px] font-bold text-white">{c.unread_count}</span>}</div></div></button>; }
-  function Chat({ drawer = false }: { drawer?: boolean } = {}) { if (!active) return <div className="flex h-full min-h-[72vh] items-center justify-center p-8 text-center text-slate-500"><div><MessageCircle className="mx-auto mb-3 h-12 w-12 text-slate-300" /><p className="text-lg font-black text-slate-800">Selecione uma conversa</p><p className="mt-1 text-sm">A conversa abrirá aqui.</p></div></div>; const q = qdef(queueOf(active)), outside = !in24h(active); return <div onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) setFile(f); }} className="relative flex h-full max-h-[calc(100vh-72px)] min-h-0 flex-col overflow-hidden bg-[#efe7dd]"><div className="flex items-center justify-between gap-2 border-b bg-white px-4 py-3"><div className="flex min-w-0 items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-black text-white" style={{ background: q.color }}>{initials(nameOf(active))}</div><div className="min-w-0"><p className="truncate font-black text-slate-900">{nameOf(active)}</p><p className="truncate text-xs text-slate-500">Ticket #{active.id.slice(0, 8).toUpperCase()} • {boardLabel(q.board)} • {q.label}</p></div></div><div className="flex shrink-0 gap-2"><select value={queueOf(active)} onChange={(e) => transfer(e.target.value)} className="max-w-[190px] rounded-xl border bg-white px-3 py-2 text-xs font-bold text-slate-600">{ALL_QUEUES.map((item) => <option key={item.key} value={item.key}>{boardLabel(item.board)} · {item.label}</option>)}</select><button onClick={() => setFinishOpen(true)} className="rounded-xl border px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"><CheckCircle2 className="mr-1 inline h-4 w-4" />Finalizar</button>{drawer && <button onClick={() => setActive(null)} className="rounded-xl border px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"><X className="h-4 w-4" /></button>}</div></div><div className="flex-1 space-y-2 overflow-y-auto p-4">{msgs.map((m) => { const out = m.direction === "outbound"; return <div key={m.id} className={`group flex ${out ? "justify-end" : "justify-start"}`}><div className={`max-w-[78%] rounded-2xl px-3 py-2 text-sm shadow ${out ? "bg-[#dcf8c6]" : "bg-white"}`}><p className="whitespace-pre-wrap">{m.body || m.message_type || "Mensagem"}</p><button onClick={() => setReplyTo(m)} className="mt-1 hidden text-[10px] font-bold text-[#A11C27] group-hover:block">Responder</button><p className="mt-1 text-right text-[10px] text-slate-400">{new Date(m.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}{out && <span className={m.raw_payload?.meta_status === "read" ? "ml-1 font-black text-sky-500" : "ml-1 font-black text-slate-400"}>{m.raw_payload?.meta_status === "read" || m.raw_payload?.meta_status === "delivered" ? "✓✓" : "✓"}</span>}</p></div></div>; })}<div ref={endRef} /></div>{outside && <div className="border-t bg-amber-50 p-3 text-xs font-bold text-amber-900"><div className="mb-2">Cliente fora da janela de 24h. Selecione um modelo aprovado.</div><div className="flex gap-2"><select value={startTemplate} onChange={(e) => setStartTemplate(e.target.value)} className="flex-1 rounded-xl border bg-white px-3 py-2 text-xs"><option value="">Selecionar modelo</option>{templates.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}</select><button onClick={() => sendTemplate(active)} disabled={sending || !startTemplate} className="rounded-xl bg-[#A11C27] px-3 py-2 text-xs font-black text-white disabled:opacity-50">Enviar modelo</button></div></div>}<div className="border-t bg-white p-3"><input ref={fileRef} type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />{emojiOpen && <div className="mb-2 grid max-h-40 grid-cols-10 gap-1 overflow-auto rounded-2xl border bg-white p-2 shadow-lg">{EMOJIS.map((emoji) => <button key={emoji} onClick={() => { setMessageText((v) => v + emoji); setEmojiOpen(false); }} className="rounded-lg p-1 text-xl hover:bg-slate-100">{emoji}</button>)}</div>}{replyTo && <div className="mb-2 flex items-center justify-between rounded-xl bg-[#A11C27]/10 px-3 py-2 text-xs font-bold text-[#A11C27]"><span>Respondendo: {replyTo.body || replyTo.message_type || "mensagem"}</span><button onClick={() => setReplyTo(null)}>cancelar</button></div>}{file && <div className="mb-2 flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600"><span className="truncate">{file.name}</span><button onClick={() => setFile(null)}>remover</button></div>}<div className="flex items-end gap-2"><button onClick={() => setEmojiOpen((v) => !v)} className="rounded-full p-3 hover:bg-slate-100"><Smile className="h-5 w-5" /></button><button onClick={() => fileRef.current?.click()} className="rounded-full p-3 hover:bg-slate-100"><Paperclip className="h-5 w-5" /></button><button onClick={toggleRecording} className={`rounded-full p-3 hover:bg-slate-100 ${recording ? "bg-red-100 text-red-700" : ""}`} title={recording ? "Parar gravação" : "Gravar áudio"}><Mic className="h-5 w-5" /></button><button onClick={async () => { const tpl = templates.find((t) => t.name === "call_permission_optin")?.name || "call_permission_optin"; setStartTemplate(tpl); await sendTemplate(active); }} className="rounded-full p-3 hover:bg-slate-100"><Phone className="h-5 w-5" /></button><textarea disabled={outside} value={messageText} onChange={(e) => setMessageText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPayload(active); } }} placeholder={outside ? "Reabra com modelo aprovado." : "Digite sua mensagem..."} className="max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border bg-slate-50 px-4 py-3 text-sm" /><button onClick={() => sendPayload(active)} disabled={sending || outside || (!messageText.trim() && !file)} className="rounded-2xl bg-[#A11C27] p-3 text-white disabled:opacity-40">{sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}</button></div>{recording && <p className="mt-2 text-xs font-bold text-red-700">Gravando áudio... clique no microfone para parar e anexar.</p>}</div></div>; }
-  function Reports() { return <div className="space-y-4"><div className="grid gap-4 md:grid-cols-4">{[["Conversas abertas", counts.open, C.red], ["Novos contatos", counts.novos, C.gold], ["Finalizados", counts.closed, C.green], ["Conversão", `${counts.winRate}%`, C.navy]].map(([l, v, color]) => <div key={l} className="rounded-3xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-400">{l}</p><p className="mt-2 text-3xl font-black" style={{ color: color as string }}>{v}</p></div>)}</div><div className="grid gap-4 lg:grid-cols-4"><div className="rounded-3xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-400">Mensagens recebidas</p><p className="mt-2 text-3xl font-black">{counts.inbound}</p></div><div className="rounded-3xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-400">Mensagens enviadas</p><p className="mt-2 text-3xl font-black">{counts.outbound}</p></div><div className="rounded-3xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-400">Avaliações</p><p className="mt-2 text-3xl font-black text-emerald-700">{counts.ratingCount}</p></div><div className="rounded-3xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-400">Avaliação média</p><p className="mt-2 text-3xl font-black text-emerald-700">{counts.avgRating}</p></div></div><div className="rounded-3xl border bg-white p-5 shadow-sm"><h3 className="text-lg font-black text-slate-900">Custos e qualidade</h3><div className="mt-4 grid gap-3 md:grid-cols-3">{["Custo por campanha", "Custo por modelo/template", "Custo por vendedor", "Tempo até primeira resposta", "Tempo médio do ticket aberto", "Custo por conversa"].map((i) => <div key={i} className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-700">{i}</div>)}</div></div></div>; }
+  function toggleSound() {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    soundEnabledRef.current = next;
+    window.localStorage.setItem(SOUND_STORAGE_KEY, next ? "on" : "off");
+    if (next) window.setTimeout(playNotificationSound, 0);
+  }
+  async function loadTemplates() {
+    const res = await fetch("/api/meta/whatsapp?resource=templates").catch(
+      () => null,
+    );
+    const json = res ? await res.json().catch(() => null) : null;
+    const approved = Array.isArray(json?.templates)
+      ? json.templates.filter(
+          (t: Template) => String(t.status || "").toUpperCase() === "APPROVED",
+        )
+      : [];
+    setTemplates(approved);
+    if (approved[0] && !startTemplate) setStartTemplate(approved[0].name);
+  }
+  async function searchContacts(q: string) {
+    setContactQuery(q);
+    if (q.trim().length < 2) return setContacts([]);
+    const like = `%${q.trim()}%`;
+    const [leads, clientes, wa] = await Promise.all([
+      supabase
+        .from("leads")
+        .select("id,nome,telefone,email")
+        .or(`nome.ilike.${like},telefone.ilike.${like},email.ilike.${like}`)
+        .limit(8)
+        .then((r) => r.data || []),
+      supabase
+        .from("clientes")
+        .select("id,nome,telefone,email,lead_id")
+        .or(`nome.ilike.${like},telefone.ilike.${like},email.ilike.${like}`)
+        .limit(8)
+        .then((r) => r.data || []),
+      supabase
+        .from("whatsapp_contacts")
+        .select("id,nome,telefone,wa_id,lead_id")
+        .or(`nome.ilike.${like},telefone.ilike.${like},wa_id.ilike.${like}`)
+        .limit(8)
+        .then((r) => r.data || []),
+    ]);
+    const rows: ContactOption[] = [
+      ...leads.map((x: any) => ({
+        source: "lead" as const,
+        id: x.id,
+        lead_id: x.id,
+        nome: x.nome || "Lead",
+        telefone: x.telefone || "",
+        email: x.email || null,
+      })),
+      ...clientes.map((x: any) => ({
+        source: "cliente" as const,
+        id: x.id,
+        cliente_id: x.id,
+        lead_id: x.lead_id || null,
+        nome: x.nome || "Cliente",
+        telefone: x.telefone || "",
+        email: x.email || null,
+      })),
+      ...wa.map((x: any) => ({
+        source: "whatsapp" as const,
+        id: x.id,
+        lead_id: x.lead_id || null,
+        nome: x.nome || "Contato WhatsApp",
+        telefone: x.telefone || x.wa_id || "",
+      })),
+    ];
+    const seen = new Set<string>();
+    setContacts(
+      rows.filter((r) => {
+        const k = `${onlyDigits(r.telefone)}-${r.nome}`;
+        if (!onlyDigits(r.telefone) || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      }),
+    );
+  }
 
-  return <div className="space-y-5"><WhatsAppModuleHeader title="Atendimento WhatsApp" subtitle="Tickets, WhatsApp Web, Kanban Comercial, Pós-Vendas e Operacional." /><div className="flex flex-col gap-3 rounded-[28px] bg-gradient-to-r from-[#1E293F] to-[#A11C27] p-4 text-white shadow-xl lg:flex-row lg:items-center lg:justify-between"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-white/60">WhatsApp oficial conectado ao CRM</p><h1 className="text-2xl font-black">Central de Atendimentos</h1></div><div className="flex flex-wrap gap-2"><button onClick={() => setStartOpen(true)} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"><Plus className="mr-2 inline h-4 w-4" />Iniciar conversa</button><button onClick={() => setQueuesOpen(true)} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"><Settings className="mr-2 inline h-4 w-4" />Configurar filas</button><button onClick={() => load()} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"><RefreshCw className={`mr-2 inline h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />Atualizar</button></div></div><div className="grid gap-3 md:grid-cols-4"><div className="rounded-2xl bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-400">Novos</p><p className="text-2xl font-black text-[#B5A573]">{counts.novos}</p></div><div className="rounded-2xl bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-400">Abertos</p><p className="text-2xl font-black text-[#A11C27]">{counts.open}</p></div><div className="rounded-2xl bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-400">Finalizados</p><p className="text-2xl font-black text-emerald-700">{counts.closed}</p></div><div className="rounded-2xl bg-white p-4 shadow-sm"><p className="text-xs font-bold text-slate-400">Total</p><p className="text-2xl font-black text-[#1E293F]">{counts.total}</p></div></div><div className="rounded-[28px] border bg-white p-3 shadow-sm"><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap gap-2">{(["todos", "comercial", "pos_vendas", "operacional", "relatorios"] as const).map((item) => <button key={item} onClick={() => { setTab(item); if (item !== "todos") setActive(null); }} className={`rounded-full px-4 py-2 text-sm font-black ${tab === item ? "bg-[#1E293F] text-white" : "bg-slate-100 text-slate-600"}`}>{item === "todos" ? "Todos" : item === "relatorios" ? "Relatórios" : item === "pos_vendas" ? "Pós-Vendas" : item.charAt(0).toUpperCase() + item.slice(1)}</button>)}</div><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome, telefone ou mensagem..." className="rounded-2xl border bg-slate-50 px-4 py-3 text-sm lg:w-[360px]" /></div></div>{loading ? <div className="flex h-[60vh] items-center justify-center rounded-3xl bg-white"><Loader2 className="h-7 w-7 animate-spin" /></div> : tab === "relatorios" ? Reports() : tab === "todos" ? <div className="grid min-h-[72vh] overflow-hidden rounded-3xl border bg-white shadow-sm lg:grid-cols-[430px_1fr]"><div className="border-r"><div className="border-b p-4"><h3 className="text-xl font-black">WhatsApp</h3><div className="mt-3 flex gap-2">{[["tudo", "Tudo"], ["nao_lidas", "Não lidas"], ["novos", "Novos"], ["meus", "Meus"]].map(([key, label]) => <button key={key} onClick={() => setListFilter(key as any)} className={`rounded-full border px-3 py-1 text-xs font-bold ${listFilter === key ? "bg-[#1E293F] text-white" : "bg-slate-50 text-slate-600"}`}>{label}</button>)}</div></div><div className="max-h-[72vh] overflow-auto">{filtered.map((c) => <Row key={c.id} c={c} />)}</div></div>{Chat()}</div> : <div className="relative min-h-[72vh]"><div className="flex min-h-[62vh] gap-4 overflow-x-auto pb-5">{kanbanQueues.map((q) => { const items = byQueue.get(q.key) || []; return <div key={q.key} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const id = e.dataTransfer.getData("text/plain"); const c = convs.find((x) => x.id === id); if (c) transfer(q.key, c); }} className="w-[330px] shrink-0"><div className="sticky top-0 z-10 mb-3 rounded-3xl border bg-white p-3 shadow-sm"><div className="flex items-center justify-between"><div><div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full" style={{ background: q.color }} /><p className="font-black text-slate-800">{q.label}</p></div><p className="mt-1 text-xs text-slate-400">{q.desc}</p></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">{items.length}</span></div></div><div className="space-y-3">{items.length === 0 ? <div className="rounded-3xl border border-dashed bg-white/70 p-5 text-center text-sm text-slate-400">Nenhum ticket nesta etapa.</div> : items.map((c) => <Row key={c.id} c={c} />)}</div></div>; })}</div>{active && <div className="fixed inset-0 z-[80] bg-slate-950/30 backdrop-blur-[2px]" onClick={() => setActive(null)}><div className="absolute bottom-6 right-6 top-6 w-[min(500px,calc(100vw-48px))] overflow-hidden rounded-[32px] bg-white shadow-2xl ring-1 ring-white/60" onClick={(e) => e.stopPropagation()}>{Chat({ drawer: true })}</div></div>}</div>}{startOpen && <Modal title="Iniciar conversa" subtitle="Pesquise leads/clientes/contatos ou adicione manualmente." onClose={() => setStartOpen(false)}><div className="grid gap-5 lg:grid-cols-[1fr_360px]"><div className="space-y-4"><input value={contactQuery} onChange={(e) => searchContacts(e.target.value)} placeholder="Pesquisar cliente, lead, telefone ou e-mail..." className="w-full rounded-2xl border px-4 py-3 text-sm" /><div className="max-h-64 overflow-auto rounded-2xl border">{contacts.length === 0 ? <div className="p-4 text-sm text-slate-400">Pesquise pelo menos 2 letras. Se não encontrar, adicione manualmente ao lado.</div> : contacts.map((c) => <button key={`${c.source}-${c.id}-${c.telefone}`} onClick={() => { setSelectedContact(c); setManualName(c.nome); setManualPhone(c.telefone); }} className={`flex w-full items-center justify-between border-b p-3 text-left hover:bg-slate-50 ${selectedContact?.telefone === c.telefone ? "bg-slate-100" : ""}`}><div><p className="font-black text-slate-800">{c.nome}</p><p className="text-xs text-slate-500">{fmtPhone(c.telefone)} • {c.source}</p></div><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-500">{c.source}</span></button>)}</div><div className="grid gap-3 md:grid-cols-2"><select value={country} onChange={(e) => setCountry(e.target.value)} className="rounded-2xl border px-4 py-3 text-sm"><option value="55">Brasil +55</option><option value="1">EUA/Canadá +1</option><option value="351">Portugal +351</option></select><input value={manualPhone} onChange={(e) => { setManualPhone(e.target.value); setSelectedContact(null); }} placeholder="DDD + número" className="rounded-2xl border px-4 py-3 text-sm" /><input value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="Nome do contato" className="rounded-2xl border px-4 py-3 text-sm md:col-span-2" /></div></div><div className="space-y-3 rounded-3xl bg-slate-50 p-4"><select value={startBoard} onChange={(e) => setStartBoard(e.target.value as Board)} className="w-full rounded-2xl border px-4 py-3 text-sm"><option value="comercial">Comercial</option><option value="pos_vendas">Pós-Vendas</option><option value="operacional">Operacional</option></select><select value={startQueue} onChange={(e) => setStartQueue(e.target.value)} className="w-full rounded-2xl border px-4 py-3 text-sm">{queuesByBoard(startBoard).filter((q) => !q.terminal).map((q) => <option key={q.key} value={q.key}>{q.label}</option>)}</select><select value={startTemplate} onChange={(e) => setStartTemplate(e.target.value)} className="w-full rounded-2xl border px-4 py-3 text-sm"><option value="">Modelo aprovado para reabertura</option>{templates.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}</select><textarea value={templateFallbackMessage} onChange={(e) => setTemplateFallbackMessage(e.target.value)} className="min-h-[80px] w-full rounded-2xl border px-4 py-3 text-sm" placeholder="Mensagem automática após aceite" /><textarea value={startMessage} onChange={(e) => setStartMessage(e.target.value)} className="min-h-[80px] w-full rounded-2xl border px-4 py-3 text-sm" placeholder="Mensagem inicial na janela de 24h" /><button onClick={createTicket} disabled={sending} className="w-full rounded-2xl bg-[#A11C27] px-4 py-3 font-black text-white disabled:opacity-50">{sending ? "Criando..." : "Criar ticket"}</button></div></div></Modal>}{finishOpen && <Modal title="Finalizar conversa" subtitle="Escolha se deseja enviar a pesquisa de satisfação." onClose={() => setFinishOpen(false)}><div className="space-y-4"><label className="flex items-center gap-3 rounded-2xl border p-4"><input type="checkbox" checked={sendSatisfaction} onChange={(e) => setSendSatisfaction(e.target.checked)} /><span className="font-bold text-slate-700">Enviar pesquisa de satisfação para o cliente</span></label><button onClick={finishConversation} className="rounded-2xl bg-[#A11C27] px-4 py-3 font-black text-white">Finalizar atendimento</button></div></Modal>}{queuesOpen && <Modal title="Configurar filas" subtitle="Etapas oficiais dos Kanbans." onClose={() => setQueuesOpen(false)}><div className="grid gap-4 lg:grid-cols-3">{[["Comercial", COMMERCIAL], ["Pós-Vendas", POST_SALES], ["Operacional", OPERATIONAL]].map(([title, rows]: any) => <div key={title}><h3 className="mb-3 font-black text-slate-900">{title}</h3><div className="space-y-2">{rows.map((q: Queue) => <div key={q.key} className="rounded-2xl border p-3"><p className="font-black">{q.label}</p><p className="text-xs text-slate-500">{q.desc}</p></div>)}</div></div>)}</div></Modal>}</div>;
+  useEffect(() => {
+    load(true);
+    loadTemplates();
+  }, []);
+  useEffect(() => {
+    if (active?.id) loadMessages(active.id);
+  }, [active?.id]);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [msgs.length, active?.id]);
+  useEffect(() => {
+    setStartQueue(
+      startBoard === "comercial"
+        ? "com_novo"
+        : startBoard === "pos_vendas"
+          ? "pos_novo_cliente"
+          : "op_suporte",
+    );
+  }, [startBoard]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pending = msgs
+      .map((message) => ({ message, media: getStoredMedia(message) }))
+      .filter(
+        ({ message, media }) =>
+          !!media?.storage_path && !mediaUrlCacheRef.current[message.id],
+      );
+
+    if (pending.length === 0) return;
+
+    void Promise.all(
+      pending.map(async ({ message, media }) => {
+        const bucket = media?.bucket || "whatsapp-media";
+        const path = media?.storage_path;
+        if (!path) return;
+
+        const { data, error } = await supabase.storage
+          .from(bucket)
+          .createSignedUrl(path, 6 * 60 * 60);
+        if (error || !data?.signedUrl) {
+          console.error("Erro ao gerar URL assinada da mídia WhatsApp:", error);
+          return;
+        }
+
+        mediaUrlCacheRef.current[message.id] = data.signedUrl;
+      }),
+    ).then(() => {
+      if (!cancelled) setMediaUrls({ ...mediaUrlCacheRef.current });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [msgs]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("whatsapp-atendimento-tempo-real")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "whatsapp_messages" },
+        (payload) => {
+          const row = (payload.new || payload.old) as Msg | null;
+          const current = activeRef.current;
+
+          if (row?.conversation_id && current?.id === row.conversation_id) {
+            setMsgs((previous) => {
+              if (payload.eventType === "DELETE")
+                return previous.filter((message) => message.id !== row.id);
+              const exists = previous.some((message) => message.id === row.id);
+              if (exists)
+                return previous.map((message) =>
+                  message.id === row.id ? row : message,
+                );
+              return [...previous, row].sort(
+                (a, b) =>
+                  new Date(a.created_at).getTime() -
+                  new Date(b.created_at).getTime(),
+              );
+            });
+
+            if (payload.eventType === "INSERT" && row.direction === "inbound") {
+              void supabase
+                .from("whatsapp_conversations")
+                .update({ unread_count: 0 })
+                .eq("id", row.conversation_id);
+            }
+          }
+
+          if (payload.eventType === "INSERT" && row?.direction === "inbound")
+            playNotificationSound();
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "whatsapp_conversations" },
+        () => {
+          void load(false, true);
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setRealtimeStatus("connected");
+        else if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+        )
+          setRealtimeStatus("disconnected");
+        else setRealtimeStatus("connecting");
+      });
+
+    const fallback = window.setInterval(() => {
+      void load(false, true);
+    }, 30000);
+
+    return () => {
+      window.clearInterval(fallback);
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase(),
+      qd = onlyDigits(q);
+    return convs.filter((c) => {
+      if (listFilter === "nao_lidas" && !c.unread_count) return false;
+      if (listFilter === "novos" && (c.assigned_to || isClosed(c)))
+        return false;
+      if (listFilter === "meus" && !c.assigned_to) return false;
+      if (!q) return true;
+      return (
+        nameOf(c).toLowerCase().includes(q) ||
+        String(c.last_message || "")
+          .toLowerCase()
+          .includes(q) ||
+        onlyDigits(phoneOf(c)).includes(qd)
+      );
+    });
+  }, [convs, search, listFilter]);
+  const visibleMsgs = useMemo(() => {
+    const query = chatSearch.trim().toLocaleLowerCase("pt-BR");
+    return query
+      ? msgs.filter((message) => messageSearchText(message).includes(query))
+      : msgs;
+  }, [msgs, chatSearch]);
+  const messagesByMetaId = useMemo(
+    () =>
+      new Map(
+        msgs
+          .filter((message) => !!message.meta_message_id)
+          .map((message) => [message.meta_message_id as string, message]),
+      ),
+    [msgs],
+  );
+  const messagesById = useMemo(
+    () => new Map(msgs.map((message) => [message.id, message])),
+    [msgs],
+  );
+  const counts = useMemo(() => {
+    const open = convs.length,
+      closed = allConvs.filter(isClosed).length,
+      novos = convs.filter((c) => !c.assigned_to).length,
+      won = allConvs.filter((c) => queueOf(c) === "fechado_ganho").length,
+      lost = allConvs.filter((c) => queueOf(c) === "fechado_perdido").length,
+      winRate = won + lost ? Math.round((won / (won + lost)) * 100) : 0;
+    const ratingNums = ratings
+      .map((r) => Number(onlyDigits(r.body)))
+      .filter((n) => n >= 1 && n <= 5);
+    const avgRating = ratingNums.length
+      ? (ratingNums.reduce((a, b) => a + b, 0) / ratingNums.length).toFixed(1)
+      : "—";
+    return {
+      open,
+      closed,
+      novos,
+      won,
+      lost,
+      winRate,
+      total: allConvs.length,
+      inbound: msgs.filter((m) => m.direction === "inbound").length,
+      outbound: msgs.filter((m) => m.direction === "outbound").length,
+      ratingCount: ratingNums.length,
+      avgRating,
+      estimatedOpenings: allConvs.filter((c) => !!c.last_message_at).length,
+      estimatedCostBRL: 0,
+    };
+  }, [convs, allConvs, msgs, ratings]);
+  const kanbanQueues =
+    tab === "comercial"
+      ? COMMERCIAL.filter((q) => !q.terminal)
+      : tab === "pos_vendas"
+        ? POST_SALES
+        : OPERATIONAL;
+  const byQueue = useMemo(() => {
+    const map = new Map<string, Conv[]>();
+    kanbanQueues.forEach((q) => map.set(q.key, []));
+    filtered.forEach((c) => {
+      const k = queueOf(c);
+      if (map.has(k)) map.get(k)?.push(c);
+    });
+    return map;
+  }, [filtered, tab]);
+
+  async function transfer(queue: string, c: Conv = active as Conv) {
+    if (!c?.id) return;
+    await supabase
+      .from("whatsapp_conversations")
+      .update({ queue, stage: queue, updated_at: new Date().toISOString() })
+      .eq("id", c.id);
+    setActive((p) => (p?.id === c.id ? { ...p, queue, stage: queue } : p));
+    await load();
+  }
+  async function createTicket() {
+    const contact = selectedContact || {
+      source: "manual" as const,
+      nome: manualName || "Contato",
+      telefone: withCountry(country, manualPhone),
+    };
+    const phone = onlyDigits(contact.telefone);
+    if (!phone) return alert("Informe ou selecione um contato com telefone.");
+    setSending(true);
+    try {
+      const now = new Date().toISOString();
+      const { data: waContact, error } = await supabase
+        .from("whatsapp_contacts")
+        .upsert(
+          {
+            wa_id: phone,
+            telefone: phone,
+            nome: contact.nome || null,
+            lead_id: contact.lead_id || null,
+            updated_at: now,
+          },
+          { onConflict: "wa_id" },
+        )
+        .select("id,nome,telefone,wa_id,lead_id")
+        .single();
+      if (error || !waContact?.id)
+        throw error || new Error("Contato não criado.");
+      const { data: existing } = await supabase
+        .from("whatsapp_conversations")
+        .select("*, whatsapp_contacts(id,nome,telefone,wa_id)")
+        .eq("contact_id", waContact.id)
+        .not("status", "in", "(fechada,finalizado)")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const conv = existing?.id
+        ? existing
+        : (
+            await supabase
+              .from("whatsapp_conversations")
+              .insert({
+                contact_id: waContact.id,
+                lead_id: waContact.lead_id || contact.lead_id || null,
+                queue: startQueue,
+                stage: startQueue,
+                status: "humano",
+                last_message: "Ticket criado",
+                last_message_at: now,
+                unread_count: 0,
+              })
+              .select("*, whatsapp_contacts(id,nome,telefone,wa_id)")
+              .single()
+          ).data;
+      if (!conv?.id) throw new Error("Ticket não criado.");
+      setStartOpen(false);
+      setSelectedContact(null);
+      setManualName("");
+      setManualPhone("");
+      setStartMessage("");
+      setTemplateFallbackMessage("");
+      await load(true);
+      await open(conv as Conv);
+      if (startMessage.trim() && in24h(conv as Conv))
+        await sendPayload(conv as Conv, startMessage.trim());
+    } catch (e: any) {
+      alert(e?.message || "Não foi possível criar ticket.");
+    } finally {
+      setSending(false);
+    }
+  }
+  function fileToBase64(f: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result || ""));
+      r.onerror = reject;
+      r.readAsDataURL(f);
+    });
+  }
+  async function sendPayload(conv: Conv, body?: string) {
+    const text = String(body ?? messageText).trim();
+    if (!conv?.id || (!text && !file)) return;
+    if (!in24h(conv))
+      return alert(
+        "Cliente fora da janela de 24h. Envie um modelo aprovado para reabrir.",
+      );
+    setSending(true);
+    try {
+      const payload: any = {
+        conversation_id: conv.id,
+        to: phoneOf(conv),
+        body: text,
+        reply_to_meta_message_id: replyTo?.meta_message_id || null,
+        reply_to_message_id: replyTo?.id || null,
+        reply_to_body: replyTo?.body || null,
+        reply_to_message_type: replyTo?.message_type || null,
+      };
+      if (file) {
+        payload.file_base64 = await fileToBase64(file);
+        payload.file_name = file.name;
+        payload.mime_type = file.type || "application/octet-stream";
+        payload.caption = text;
+      }
+      const res = await fetch("/api/whatsapp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok)
+        throw new Error(
+          json?.error?.error?.message ||
+            json?.error?.message ||
+            json?.error ||
+            "Falha ao enviar mensagem",
+        );
+      setMessageText("");
+      setReplyTo(null);
+      setFile(null);
+      setQuickRepliesOpen(false);
+      await loadMessages(conv.id);
+      await load(false, true);
+    } catch (e: any) {
+      alert(e?.message || "Não foi possível enviar.");
+    } finally {
+      setSending(false);
+    }
+  }
+  async function retryMessage(message: Msg) {
+    if (!active?.id || retryingId) return;
+    if (!in24h(active))
+      return alert(
+        "Cliente fora da janela de 24h. Reabra a conversa com um modelo aprovado antes de reenviar.",
+      );
+    setRetryingId(message.id);
+    try {
+      const res = await fetch("/api/whatsapp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: active.id,
+          to: phoneOf(active),
+          resend_message_id: message.id,
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok)
+        throw new Error(
+          json?.error?.error?.message ||
+            json?.error?.message ||
+            json?.error ||
+            "Falha ao reenviar mensagem",
+        );
+      await loadMessages(active.id);
+      await load(false, true);
+    } catch (e: any) {
+      alert(e?.message || "Não foi possível reenviar.");
+    } finally {
+      setRetryingId(null);
+    }
+  }
+  async function sendTemplate(conv: Conv) {
+    if (!startTemplate) return alert("Selecione um modelo aprovado.");
+    setSending(true);
+    try {
+      const res = await fetch("/api/whatsapp/template", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: conv.id,
+          to: phoneOf(conv),
+          template_name: startTemplate,
+          template_language: "pt_BR",
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok)
+        throw new Error(
+          json?.error?.error?.message ||
+            json?.error ||
+            "Falha ao enviar modelo",
+        );
+      await loadMessages(conv.id);
+      await load();
+    } catch (e: any) {
+      alert(e?.message || "Não foi possível enviar modelo.");
+    } finally {
+      setSending(false);
+    }
+  }
+  async function finishConversation() {
+    if (!active?.id) return;
+    const now = new Date().toISOString();
+    if (sendSatisfaction && in24h(active))
+      await fetch("/api/whatsapp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: active.id,
+          to: phoneOf(active),
+          body: "Antes de encerrar, como você avalia nosso atendimento de 1 a 5? 😊",
+        }),
+      });
+    await supabase
+      .from("whatsapp_conversations")
+      .update({
+        status: "fechada",
+        stage: "finalizado",
+        queue: "finalizado",
+        closed_at: now,
+        updated_at: now,
+      })
+      .eq("id", active.id);
+    setFinishOpen(false);
+    setActive(null);
+    setMsgs([]);
+    await load(true);
+  }
+  async function toggleRecording() {
+    if (recording) {
+      recorderRef.current?.stop();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      setRecording(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+      const mime = recorderMimeType();
+      const recorder = mime
+        ? new MediaRecorder(stream, { mimeType: mime })
+        : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const finalType = recorder.mimeType?.includes("ogg")
+          ? "audio/ogg"
+          : recorder.mimeType?.includes("mp4")
+            ? "audio/mp4"
+            : recorder.mimeType?.includes("aac")
+              ? "audio/aac"
+              : "audio/ogg";
+        const ext =
+          finalType === "audio/mp4"
+            ? "m4a"
+            : finalType === "audio/aac"
+              ? "aac"
+              : "ogg";
+        const blob = new Blob(audioChunksRef.current, { type: finalType });
+        const audioFile = new File([blob], `audio-${Date.now()}.${ext}`, {
+          type: finalType,
+        });
+        setFile(audioFile);
+      };
+      recorder.start();
+      setRecording(true);
+    } catch {
+      alert(
+        "Não foi possível acessar o microfone. Confira a permissão do navegador.",
+      );
+    }
+  }
+
+  function Row({ c }: { c: Conv }) {
+    const q = qdef(queueOf(c)),
+      selected = active?.id === c.id;
+    return (
+      <button
+        draggable
+        onDragStart={(e) => e.dataTransfer.setData("text/plain", c.id)}
+        onClick={() => open(c)}
+        className={`flex w-full gap-3 border-b px-4 py-3 text-left hover:bg-slate-50 ${selected ? "bg-slate-100" : "bg-white"}`}
+      >
+        <div
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-black text-white"
+          style={{ background: q.color }}
+        >
+          {initials(nameOf(c))}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="truncate text-sm font-black text-slate-900">
+              {nameOf(c)}
+            </p>
+            <span className="text-[11px] font-bold text-slate-400">
+              {rel(c.last_message_at)}
+            </span>
+          </div>
+          <p className="mt-1 truncate text-xs text-slate-500">
+            {c.last_message || fmtPhone(phoneOf(c))}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold text-slate-500">
+              Ticket #{c.id.slice(0, 8).toUpperCase()}
+            </span>
+            <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold text-slate-500">
+              {boardLabel(q.board)}
+            </span>
+            <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold text-slate-500">
+              {q.label}
+            </span>
+            {!!c.unread_count && (
+              <span className="rounded-full bg-[#A11C27] px-2 py-0.5 text-[10px] font-bold text-white">
+                {c.unread_count}
+              </span>
+            )}
+          </div>
+        </div>
+      </button>
+    );
+  }
+  function Chat({ drawer = false }: { drawer?: boolean } = {}) {
+    if (!active)
+      return (
+        <div className="flex h-full min-h-[72vh] items-center justify-center p-8 text-center text-slate-500">
+          <div>
+            <MessageCircle className="mx-auto mb-3 h-12 w-12 text-slate-300" />
+            <p className="text-lg font-black text-slate-800">
+              Selecione uma conversa
+            </p>
+            <p className="mt-1 text-sm">A conversa abrirá aqui.</p>
+          </div>
+        </div>
+      );
+    const q = qdef(queueOf(active)),
+      outside = !in24h(active);
+    return (
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const f = e.dataTransfer.files?.[0];
+          if (f) setFile(f);
+        }}
+        className="relative flex h-full max-h-[calc(100vh-72px)] min-h-0 flex-col overflow-hidden bg-[#efe7dd]"
+      >
+        <div className="flex items-center justify-between gap-2 border-b bg-white px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div
+              className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-black text-white"
+              style={{ background: q.color }}
+            >
+              {initials(nameOf(active))}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate font-black text-slate-900">
+                {nameOf(active)}
+              </p>
+              <p className="truncate text-xs text-slate-500">
+                Ticket #{active.id.slice(0, 8).toUpperCase()} •{" "}
+                {boardLabel(q.board)} • {q.label}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <select
+              value={queueOf(active)}
+              onChange={(e) => transfer(e.target.value)}
+              className="max-w-[190px] rounded-xl border bg-white px-3 py-2 text-xs font-bold text-slate-600"
+            >
+              {ALL_QUEUES.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {boardLabel(item.board)} · {item.label}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setFinishOpen(true)}
+              className="rounded-xl border px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"
+            >
+              <CheckCircle2 className="mr-1 inline h-4 w-4" />
+              Finalizar
+            </button>
+            {drawer && (
+              <button
+                onClick={() => setActive(null)}
+                className="rounded-xl border px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 border-b bg-white px-4 py-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={chatSearch}
+              onChange={(event) => setChatSearch(event.target.value)}
+              placeholder="Buscar nesta conversa..."
+              className="w-full rounded-xl border bg-slate-50 py-2 pl-9 pr-8 text-xs outline-none focus:border-[#A11C27]"
+            />
+            {chatSearch && (
+              <button
+                type="button"
+                onClick={() => setChatSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 hover:bg-slate-200"
+                title="Limpar busca"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <span
+            className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black ${
+              realtimeStatus === "connected"
+                ? "bg-emerald-50 text-emerald-700"
+                : realtimeStatus === "connecting"
+                  ? "bg-amber-50 text-amber-700"
+                  : "bg-red-50 text-red-700"
+            }`}
+            title={
+              realtimeStatus === "connected"
+                ? "Atualizações chegando em tempo real"
+                : "Reconectando; atualização automática de segurança ativa"
+            }
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${realtimeStatus === "connected" ? "bg-emerald-500" : realtimeStatus === "connecting" ? "bg-amber-500" : "bg-red-500"}`}
+            />
+            {realtimeStatus === "connected"
+              ? "Ao vivo"
+              : realtimeStatus === "connecting"
+                ? "Conectando"
+                : "Reconectando"}
+          </span>
+        </div>
+        <div className="flex-1 space-y-2 overflow-y-auto p-4">
+          {visibleMsgs.length === 0 && chatSearch && (
+            <div className="mx-auto max-w-sm rounded-2xl bg-white/80 p-4 text-center text-sm text-slate-500 shadow-sm">
+              Nenhuma mensagem encontrada para “{chatSearch}”.
+            </div>
+          )}
+          {visibleMsgs.map((message) => {
+            const replyMetaMessageId = getReplyMetaMessageId(message);
+            const storedReply = message.raw_payload?._reply_to;
+            const repliedMessage =
+              (replyMetaMessageId
+                ? messagesByMetaId.get(replyMetaMessageId)
+                : null) ||
+              (storedReply?.message_id
+                ? messagesById.get(storedReply.message_id)
+                : null);
+
+            return (
+              <WhatsAppMessageBubble
+                key={message.id}
+                message={message}
+                mediaUrl={mediaUrls[message.id]}
+                repliedMessage={repliedMessage}
+                onReply={setReplyTo}
+                onRetry={retryMessage}
+                retrying={retryingId === message.id}
+              />
+            );
+          })}
+          <div ref={endRef} />
+        </div>
+        {outside && (
+          <div className="border-t bg-amber-50 p-3 text-xs font-bold text-amber-900">
+            <div className="mb-2">
+              Cliente fora da janela de 24h. Selecione um modelo aprovado.
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={startTemplate}
+                onChange={(e) => setStartTemplate(e.target.value)}
+                className="flex-1 rounded-xl border bg-white px-3 py-2 text-xs"
+              >
+                <option value="">Selecionar modelo</option>
+                {templates.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => sendTemplate(active)}
+                disabled={sending || !startTemplate}
+                className="rounded-xl bg-[#A11C27] px-3 py-2 text-xs font-black text-white disabled:opacity-50"
+              >
+                Enviar modelo
+              </button>
+            </div>
+          </div>
+        )}
+        <div className="border-t bg-white p-3">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+            className="hidden"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
+          {emojiOpen && (
+            <div className="mb-2 grid max-h-40 grid-cols-10 gap-1 overflow-auto rounded-2xl border bg-white p-2 shadow-lg">
+              {EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    setMessageText((v) => v + emoji);
+                    setEmojiOpen(false);
+                  }}
+                  className="rounded-lg p-1 text-xl hover:bg-slate-100"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+          {quickRepliesOpen && (
+            <div className="mb-2 rounded-2xl border bg-white p-3 shadow-lg">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  Mensagens rápidas
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setQuickRepliesOpen(false)}
+                  className="rounded-full p-1 text-slate-400 hover:bg-slate-100"
+                  title="Fechar"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid max-h-48 gap-2 overflow-y-auto sm:grid-cols-2">
+                {QUICK_REPLIES.map((reply) => (
+                  <button
+                    key={reply}
+                    type="button"
+                    onClick={() => {
+                      setMessageText(reply);
+                      setQuickRepliesOpen(false);
+                    }}
+                    className="rounded-xl border bg-slate-50 p-2 text-left text-xs font-semibold text-slate-700 hover:border-[#A11C27]/40 hover:bg-[#A11C27]/5"
+                  >
+                    {reply}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {replyTo && (
+            <div className="mb-2 flex items-center justify-between rounded-xl bg-[#A11C27]/10 px-3 py-2 text-xs font-bold text-[#A11C27]">
+              <span>
+                Respondendo:{" "}
+                {replyTo.body || replyTo.message_type || "mensagem"}
+              </span>
+              <button onClick={() => setReplyTo(null)}>cancelar</button>
+            </div>
+          )}
+          {file && (
+            <div className="mb-2 flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
+              <span className="truncate">{file.name}</span>
+              <button onClick={() => setFile(null)}>remover</button>
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <button
+              onClick={() => setEmojiOpen((v) => !v)}
+              className="rounded-full p-3 hover:bg-slate-100"
+              title="Emojis"
+            >
+              <Smile className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setQuickRepliesOpen((value) => !value)}
+              className={`rounded-full p-3 hover:bg-slate-100 ${quickRepliesOpen ? "bg-slate-100 text-[#A11C27]" : ""}`}
+              title="Mensagens rápidas"
+            >
+              <MessageSquareMore className="h-5 w-5" />
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="rounded-full p-3 hover:bg-slate-100"
+            >
+              <Paperclip className="h-5 w-5" />
+            </button>
+            <button
+              onClick={toggleRecording}
+              className={`rounded-full p-3 hover:bg-slate-100 ${recording ? "bg-red-100 text-red-700" : ""}`}
+              title={recording ? "Parar gravação" : "Gravar áudio"}
+            >
+              <Mic className="h-5 w-5" />
+            </button>
+            <button
+              onClick={async () => {
+                const tpl =
+                  templates.find((t) => t.name === "call_permission_optin")
+                    ?.name || "call_permission_optin";
+                setStartTemplate(tpl);
+                await sendTemplate(active);
+              }}
+              className="rounded-full p-3 hover:bg-slate-100"
+            >
+              <Phone className="h-5 w-5" />
+            </button>
+            <textarea
+              disabled={outside}
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendPayload(active);
+                }
+              }}
+              placeholder={
+                outside
+                  ? "Reabra com modelo aprovado."
+                  : "Digite sua mensagem..."
+              }
+              className="max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border bg-slate-50 px-4 py-3 text-sm"
+            />
+            <button
+              onClick={() => sendPayload(active)}
+              disabled={sending || outside || (!messageText.trim() && !file)}
+              className="rounded-2xl bg-[#A11C27] p-3 text-white disabled:opacity-40"
+            >
+              {sending ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Send className="h-5 w-5" />
+              )}
+            </button>
+          </div>
+          {recording && (
+            <p className="mt-2 text-xs font-bold text-red-700">
+              Gravando áudio... clique no microfone para parar e anexar.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+  function Reports() {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-4 md:grid-cols-4">
+          {[
+            ["Conversas abertas", counts.open, C.red],
+            ["Novos contatos", counts.novos, C.gold],
+            ["Finalizados", counts.closed, C.green],
+            ["Conversão", `${counts.winRate}%`, C.navy],
+          ].map(([l, v, color]) => (
+            <div key={l} className="rounded-3xl border bg-white p-5 shadow-sm">
+              <p className="text-xs font-bold uppercase text-slate-400">{l}</p>
+              <p
+                className="mt-2 text-3xl font-black"
+                style={{ color: color as string }}
+              >
+                {v}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-4">
+          <div className="rounded-3xl border bg-white p-5 shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-400">
+              Mensagens recebidas
+            </p>
+            <p className="mt-2 text-3xl font-black">{counts.inbound}</p>
+          </div>
+          <div className="rounded-3xl border bg-white p-5 shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-400">
+              Mensagens enviadas
+            </p>
+            <p className="mt-2 text-3xl font-black">{counts.outbound}</p>
+          </div>
+          <div className="rounded-3xl border bg-white p-5 shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-400">
+              Avaliações
+            </p>
+            <p className="mt-2 text-3xl font-black text-emerald-700">
+              {counts.ratingCount}
+            </p>
+          </div>
+          <div className="rounded-3xl border bg-white p-5 shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-400">
+              Avaliação média
+            </p>
+            <p className="mt-2 text-3xl font-black text-emerald-700">
+              {counts.avgRating}
+            </p>
+          </div>
+        </div>
+        <div className="rounded-3xl border bg-white p-5 shadow-sm">
+          <h3 className="text-lg font-black text-slate-900">
+            Custos e qualidade
+          </h3>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {[
+              "Custo por campanha",
+              "Custo por modelo/template",
+              "Custo por vendedor",
+              "Tempo até primeira resposta",
+              "Tempo médio do ticket aberto",
+              "Custo por conversa",
+            ].map((i) => (
+              <div
+                key={i}
+                className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-700"
+              >
+                {i}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <WhatsAppModuleHeader
+        title="Atendimento WhatsApp"
+        subtitle="Tickets, WhatsApp Web, Kanban Comercial, Pós-Vendas e Operacional."
+      />
+      <div className="flex flex-col gap-3 rounded-[28px] bg-gradient-to-r from-[#1E293F] to-[#A11C27] p-4 text-white shadow-xl lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-white/60">
+            WhatsApp oficial conectado ao CRM
+          </p>
+          <h1 className="text-2xl font-black">Central de Atendimentos</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-xs font-black">
+            <span
+              className={`h-2 w-2 rounded-full ${realtimeStatus === "connected" ? "bg-emerald-400" : realtimeStatus === "connecting" ? "bg-amber-300" : "bg-red-300"}`}
+            />
+            {realtimeStatus === "connected"
+              ? "Tempo real ativo"
+              : realtimeStatus === "connecting"
+                ? "Conectando"
+                : "Reconectando"}
+          </span>
+          <button
+            type="button"
+            onClick={toggleSound}
+            className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"
+            title={
+              soundEnabled
+                ? "Desativar sons de novas mensagens"
+                : "Ativar sons de novas mensagens"
+            }
+          >
+            {soundEnabled ? (
+              <Bell className="mr-2 inline h-4 w-4" />
+            ) : (
+              <BellOff className="mr-2 inline h-4 w-4" />
+            )}
+            {soundEnabled ? "Som ativo" : "Som desligado"}
+          </button>
+          <button
+            onClick={() => setStartOpen(true)}
+            className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"
+          >
+            <Plus className="mr-2 inline h-4 w-4" />
+            Iniciar conversa
+          </button>
+          <button
+            onClick={() => setQueuesOpen(true)}
+            className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"
+          >
+            <Settings className="mr-2 inline h-4 w-4" />
+            Configurar filas
+          </button>
+          <button
+            onClick={() => load()}
+            className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/20"
+          >
+            <RefreshCw
+              className={`mr-2 inline h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            Atualizar
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-slate-400">Novos</p>
+          <p className="text-2xl font-black text-[#B5A573]">{counts.novos}</p>
+        </div>
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-slate-400">Abertos</p>
+          <p className="text-2xl font-black text-[#A11C27]">{counts.open}</p>
+        </div>
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-slate-400">Finalizados</p>
+          <p className="text-2xl font-black text-emerald-700">
+            {counts.closed}
+          </p>
+        </div>
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold text-slate-400">Total</p>
+          <p className="text-2xl font-black text-[#1E293F]">{counts.total}</p>
+        </div>
+      </div>
+      <div className="rounded-[28px] border bg-white p-3 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                "todos",
+                "comercial",
+                "pos_vendas",
+                "operacional",
+                "relatorios",
+              ] as const
+            ).map((item) => (
+              <button
+                key={item}
+                onClick={() => {
+                  setTab(item);
+                  if (item !== "todos") setActive(null);
+                }}
+                className={`rounded-full px-4 py-2 text-sm font-black ${tab === item ? "bg-[#1E293F] text-white" : "bg-slate-100 text-slate-600"}`}
+              >
+                {item === "todos"
+                  ? "Todos"
+                  : item === "relatorios"
+                    ? "Relatórios"
+                    : item === "pos_vendas"
+                      ? "Pós-Vendas"
+                      : item.charAt(0).toUpperCase() + item.slice(1)}
+              </button>
+            ))}
+          </div>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por nome, telefone ou mensagem..."
+            className="rounded-2xl border bg-slate-50 px-4 py-3 text-sm lg:w-[360px]"
+          />
+        </div>
+      </div>
+      {loading ? (
+        <div className="flex h-[60vh] items-center justify-center rounded-3xl bg-white">
+          <Loader2 className="h-7 w-7 animate-spin" />
+        </div>
+      ) : tab === "relatorios" ? (
+        Reports()
+      ) : tab === "todos" ? (
+        <div className="grid min-h-[72vh] overflow-hidden rounded-3xl border bg-white shadow-sm lg:grid-cols-[430px_1fr]">
+          <div className="border-r">
+            <div className="border-b p-4">
+              <h3 className="text-xl font-black">WhatsApp</h3>
+              <div className="mt-3 flex gap-2">
+                {[
+                  ["tudo", "Tudo"],
+                  ["nao_lidas", "Não lidas"],
+                  ["novos", "Novos"],
+                  ["meus", "Meus"],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setListFilter(key as any)}
+                    className={`rounded-full border px-3 py-1 text-xs font-bold ${listFilter === key ? "bg-[#1E293F] text-white" : "bg-slate-50 text-slate-600"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="max-h-[72vh] overflow-auto">
+              {filtered.map((c) => (
+                <Row key={c.id} c={c} />
+              ))}
+            </div>
+          </div>
+          {Chat()}
+        </div>
+      ) : (
+        <div className="relative min-h-[72vh]">
+          <div className="flex min-h-[62vh] gap-4 overflow-x-auto pb-5">
+            {kanbanQueues.map((q) => {
+              const items = byQueue.get(q.key) || [];
+              return (
+                <div
+                  key={q.key}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    const id = e.dataTransfer.getData("text/plain");
+                    const c = convs.find((x) => x.id === id);
+                    if (c) transfer(q.key, c);
+                  }}
+                  className="w-[330px] shrink-0"
+                >
+                  <div className="sticky top-0 z-10 mb-3 rounded-3xl border bg-white p-3 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-3 w-3 rounded-full"
+                            style={{ background: q.color }}
+                          />
+                          <p className="font-black text-slate-800">{q.label}</p>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-400">{q.desc}</p>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">
+                        {items.length}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {items.length === 0 ? (
+                      <div className="rounded-3xl border border-dashed bg-white/70 p-5 text-center text-sm text-slate-400">
+                        Nenhum ticket nesta etapa.
+                      </div>
+                    ) : (
+                      items.map((c) => <Row key={c.id} c={c} />)
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {active && (
+            <div
+              className="fixed inset-0 z-[80] bg-slate-950/30 backdrop-blur-[2px]"
+              onClick={() => setActive(null)}
+            >
+              <div
+                className="absolute bottom-6 right-6 top-6 w-[min(500px,calc(100vw-48px))] overflow-hidden rounded-[32px] bg-white shadow-2xl ring-1 ring-white/60"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {Chat({ drawer: true })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {startOpen && (
+        <Modal
+          title="Iniciar conversa"
+          subtitle="Pesquise leads/clientes/contatos ou adicione manualmente."
+          onClose={() => setStartOpen(false)}
+        >
+          <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+            <div className="space-y-4">
+              <input
+                value={contactQuery}
+                onChange={(e) => searchContacts(e.target.value)}
+                placeholder="Pesquisar cliente, lead, telefone ou e-mail..."
+                className="w-full rounded-2xl border px-4 py-3 text-sm"
+              />
+              <div className="max-h-64 overflow-auto rounded-2xl border">
+                {contacts.length === 0 ? (
+                  <div className="p-4 text-sm text-slate-400">
+                    Pesquise pelo menos 2 letras. Se não encontrar, adicione
+                    manualmente ao lado.
+                  </div>
+                ) : (
+                  contacts.map((c) => (
+                    <button
+                      key={`${c.source}-${c.id}-${c.telefone}`}
+                      onClick={() => {
+                        setSelectedContact(c);
+                        setManualName(c.nome);
+                        setManualPhone(c.telefone);
+                      }}
+                      className={`flex w-full items-center justify-between border-b p-3 text-left hover:bg-slate-50 ${selectedContact?.telefone === c.telefone ? "bg-slate-100" : ""}`}
+                    >
+                      <div>
+                        <p className="font-black text-slate-800">{c.nome}</p>
+                        <p className="text-xs text-slate-500">
+                          {fmtPhone(c.telefone)} • {c.source}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-500">
+                        {c.source}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <select
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value)}
+                  className="rounded-2xl border px-4 py-3 text-sm"
+                >
+                  <option value="55">Brasil +55</option>
+                  <option value="1">EUA/Canadá +1</option>
+                  <option value="351">Portugal +351</option>
+                </select>
+                <input
+                  value={manualPhone}
+                  onChange={(e) => {
+                    setManualPhone(e.target.value);
+                    setSelectedContact(null);
+                  }}
+                  placeholder="DDD + número"
+                  className="rounded-2xl border px-4 py-3 text-sm"
+                />
+                <input
+                  value={manualName}
+                  onChange={(e) => setManualName(e.target.value)}
+                  placeholder="Nome do contato"
+                  className="rounded-2xl border px-4 py-3 text-sm md:col-span-2"
+                />
+              </div>
+            </div>
+            <div className="space-y-3 rounded-3xl bg-slate-50 p-4">
+              <select
+                value={startBoard}
+                onChange={(e) => setStartBoard(e.target.value as Board)}
+                className="w-full rounded-2xl border px-4 py-3 text-sm"
+              >
+                <option value="comercial">Comercial</option>
+                <option value="pos_vendas">Pós-Vendas</option>
+                <option value="operacional">Operacional</option>
+              </select>
+              <select
+                value={startQueue}
+                onChange={(e) => setStartQueue(e.target.value)}
+                className="w-full rounded-2xl border px-4 py-3 text-sm"
+              >
+                {queuesByBoard(startBoard)
+                  .filter((q) => !q.terminal)
+                  .map((q) => (
+                    <option key={q.key} value={q.key}>
+                      {q.label}
+                    </option>
+                  ))}
+              </select>
+              <select
+                value={startTemplate}
+                onChange={(e) => setStartTemplate(e.target.value)}
+                className="w-full rounded-2xl border px-4 py-3 text-sm"
+              >
+                <option value="">Modelo aprovado para reabertura</option>
+                {templates.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <textarea
+                value={templateFallbackMessage}
+                onChange={(e) => setTemplateFallbackMessage(e.target.value)}
+                className="min-h-[80px] w-full rounded-2xl border px-4 py-3 text-sm"
+                placeholder="Mensagem automática após aceite"
+              />
+              <textarea
+                value={startMessage}
+                onChange={(e) => setStartMessage(e.target.value)}
+                className="min-h-[80px] w-full rounded-2xl border px-4 py-3 text-sm"
+                placeholder="Mensagem inicial na janela de 24h"
+              />
+              <button
+                onClick={createTicket}
+                disabled={sending}
+                className="w-full rounded-2xl bg-[#A11C27] px-4 py-3 font-black text-white disabled:opacity-50"
+              >
+                {sending ? "Criando..." : "Criar ticket"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {finishOpen && (
+        <Modal
+          title="Finalizar conversa"
+          subtitle="Escolha se deseja enviar a pesquisa de satisfação."
+          onClose={() => setFinishOpen(false)}
+        >
+          <div className="space-y-4">
+            <label className="flex items-center gap-3 rounded-2xl border p-4">
+              <input
+                type="checkbox"
+                checked={sendSatisfaction}
+                onChange={(e) => setSendSatisfaction(e.target.checked)}
+              />
+              <span className="font-bold text-slate-700">
+                Enviar pesquisa de satisfação para o cliente
+              </span>
+            </label>
+            <button
+              onClick={finishConversation}
+              className="rounded-2xl bg-[#A11C27] px-4 py-3 font-black text-white"
+            >
+              Finalizar atendimento
+            </button>
+          </div>
+        </Modal>
+      )}
+      {queuesOpen && (
+        <Modal
+          title="Configurar filas"
+          subtitle="Etapas oficiais dos Kanbans."
+          onClose={() => setQueuesOpen(false)}
+        >
+          <div className="grid gap-4 lg:grid-cols-3">
+            {[
+              ["Comercial", COMMERCIAL],
+              ["Pós-Vendas", POST_SALES],
+              ["Operacional", OPERATIONAL],
+            ].map(([title, rows]: any) => (
+              <div key={title}>
+                <h3 className="mb-3 font-black text-slate-900">{title}</h3>
+                <div className="space-y-2">
+                  {rows.map((q: Queue) => (
+                    <div key={q.key} className="rounded-2xl border p-3">
+                      <p className="font-black">{q.label}</p>
+                      <p className="text-xs text-slate-500">{q.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
 }

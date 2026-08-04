@@ -711,68 +711,195 @@ export default function WhatsAppAtendimento() {
   }, [msgs]);
 
   useEffect(() => {
-    const channel = supabase
-      .channel("whatsapp-atendimento-tempo-real")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "whatsapp_messages" },
-        (payload) => {
-          const row = (payload.new || payload.old) as Msg | null;
-          const current = activeRef.current;
+    let disposed = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let retryTimer: number | null = null;
+    let channelVersion = 0;
+    let reconnectAttempts = 0;
+    let subscribed = false;
+    let connecting = false;
 
-          if (row?.conversation_id && current?.id === row.conversation_id) {
-            setMsgs((previous) => {
-              if (payload.eventType === "DELETE")
-                return previous.filter((message) => message.id !== row.id);
-              const exists = previous.some((message) => message.id === row.id);
-              if (exists)
-                return previous.map((message) =>
-                  message.id === row.id ? row : message,
-                );
-              return [...previous, row].sort(
-                (a, b) =>
-                  new Date(a.created_at).getTime() -
-                  new Date(b.created_at).getTime(),
-              );
-            });
+    const clearRetry = () => {
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = null;
+    };
 
-            if (payload.eventType === "INSERT" && row.direction === "inbound") {
-              void supabase
-                .from("whatsapp_conversations")
-                .update({ unread_count: 0 })
-                .eq("id", row.conversation_id);
+    const syncVisibleState = async () => {
+      await load(false, true);
+      const conversationId = activeRef.current?.id;
+      if (conversationId) await loadMessages(conversationId, false);
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || connecting || retryTimer !== null) return;
+      const delay = Math.min(30000, 2000 * 2 ** reconnectAttempts);
+      reconnectAttempts += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        void connectRealtime();
+      }, delay);
+    };
+
+    async function connectRealtime() {
+      if (disposed || connecting) return;
+      connecting = true;
+      subscribed = false;
+      const version = ++channelVersion;
+
+      try {
+        if (channel) {
+          const previousChannel = channel;
+          channel = null;
+          await supabase.removeChannel(previousChannel);
+        }
+
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (session?.access_token)
+          await supabase.realtime.setAuth(session.access_token);
+
+        if (disposed || version !== channelVersion) return;
+
+        const nextChannel = supabase
+          .channel(`whatsapp-atendimento-tempo-real-${version}`)
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "whatsapp_messages" },
+            (payload) => {
+              const row = (payload.new || payload.old) as Msg | null;
+              const current = activeRef.current;
+
+              if (row?.conversation_id && current?.id === row.conversation_id) {
+                if (payload.eventType === "UPDATE") {
+                  // Recarrega a linha completa para garantir que JSONB/status não
+                  // fique congelado caso o payload de replicação venha parcial.
+                  void loadMessages(row.conversation_id, false);
+                } else {
+                  setMsgs((previous) => {
+                    if (payload.eventType === "DELETE")
+                      return previous.filter((message) => message.id !== row.id);
+                    const exists = previous.some(
+                      (message) => message.id === row.id,
+                    );
+                    if (exists)
+                      return previous.map((message) =>
+                        message.id === row.id ? row : message,
+                      );
+                    return [...previous, row].sort(
+                      (a, b) =>
+                        new Date(a.created_at).getTime() -
+                        new Date(b.created_at).getTime(),
+                    );
+                  });
+                }
+
+                if (
+                  payload.eventType === "INSERT" &&
+                  row.direction === "inbound"
+                ) {
+                  void supabase
+                    .from("whatsapp_conversations")
+                    .update({ unread_count: 0 })
+                    .eq("id", row.conversation_id);
+                }
+              }
+
+              if (
+                payload.eventType === "INSERT" &&
+                row?.direction === "inbound"
+              )
+                playNotificationSound();
+            },
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "whatsapp_conversations",
+            },
+            () => {
+              void load(false, true);
+            },
+          )
+          .subscribe((status, error) => {
+            if (disposed || version !== channelVersion) return;
+
+            if (status === "SUBSCRIBED") {
+              connecting = false;
+              subscribed = true;
+              reconnectAttempts = 0;
+              clearRetry();
+              setRealtimeStatus("connected");
+              void syncVisibleState();
+              return;
             }
-          }
 
-          if (payload.eventType === "INSERT" && row?.direction === "inbound")
-            playNotificationSound();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "whatsapp_conversations" },
-        () => {
-          void load(false, true);
-        },
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") setRealtimeStatus("connected");
-        else if (
-          status === "CHANNEL_ERROR" ||
-          status === "TIMED_OUT" ||
-          status === "CLOSED"
-        )
-          setRealtimeStatus("disconnected");
-        else setRealtimeStatus("connecting");
-      });
+            if (
+              status === "CHANNEL_ERROR" ||
+              status === "TIMED_OUT" ||
+              status === "CLOSED"
+            ) {
+              connecting = false;
+              subscribed = false;
+              setRealtimeStatus("disconnected");
+              console.warn("WHATSAPP_REALTIME_CHANNEL_STATUS", {
+                status,
+                error: error?.message || null,
+              });
+              scheduleReconnect();
+              return;
+            }
+
+            setRealtimeStatus("connecting");
+          });
+
+        channel = nextChannel;
+      } catch (error) {
+        connecting = false;
+        subscribed = false;
+        setRealtimeStatus("disconnected");
+        console.warn("WHATSAPP_REALTIME_CONNECT_ERROR", error);
+        scheduleReconnect();
+      }
+    }
 
     const fallback = window.setInterval(() => {
-      void load(false, true);
-    }, 30000);
+      void syncVisibleState();
+    }, 10000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      void syncVisibleState();
+      if (!subscribed) void connectRealtime();
+    };
+    const handleOnline = () => {
+      void syncVisibleState();
+      if (!subscribed) void connectRealtime();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("online", handleOnline);
+
+    const {
+      data: { subscription: authSubscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.access_token) return;
+      void supabase.realtime.setAuth(session.access_token);
+      if (!subscribed) scheduleReconnect();
+    });
+
+    void connectRealtime();
 
     return () => {
+      disposed = true;
+      channelVersion += 1;
+      clearRetry();
       window.clearInterval(fallback);
-      void supabase.removeChannel(channel);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("online", handleOnline);
+      authSubscription.unsubscribe();
+      if (channel) void supabase.removeChannel(channel);
     };
   }, []);
 

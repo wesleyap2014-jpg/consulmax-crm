@@ -9,7 +9,9 @@ const META_TOKEN = process.env.META_WHATSAPP_TOKEN!;
 const DEFAULT_PHONE_NUMBER_ID = process.env.META_WHATSAPP_PHONE_NUMBER_ID!;
 const MEDIA_BUCKET = process.env.WHATSAPP_MEDIA_BUCKET || "whatsapp-media";
 const GRAPH_BASE = "https://graph.facebook.com/v21.0";
-const CAMPAIGN_BATCH_LIMIT = Number(process.env.WHATSAPP_CAMPAIGN_BATCH_LIMIT || 10);
+const CAMPAIGN_BATCH_LIMIT = Number(
+  process.env.WHATSAPP_CAMPAIGN_BATCH_LIMIT || 10,
+);
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -24,7 +26,11 @@ function sleep(ms: number) {
 }
 
 function firstName(nome?: string | null) {
-  return String(nome || "").trim().split(/\s+/)[0] || "";
+  return (
+    String(nome || "")
+      .trim()
+      .split(/\s+/)[0] || ""
+  );
 }
 
 function safeFileName(value?: string | null) {
@@ -35,9 +41,13 @@ function safeFileName(value?: string | null) {
     .slice(0, 120);
 }
 
-function detectMediaKind(mimeType?: string | null, explicit?: string | null): MediaKind {
+function detectMediaKind(
+  mimeType?: string | null,
+  explicit?: string | null,
+): MediaKind {
   const requested = String(explicit || "").toLowerCase();
-  if (["image", "video", "audio", "document"].includes(requested)) return requested as MediaKind;
+  if (["image", "video", "audio", "document"].includes(requested))
+    return requested as MediaKind;
 
   const mime = String(mimeType || "").toLowerCase();
   if (mime.startsWith("image/")) return "image";
@@ -78,7 +88,10 @@ function renderCampaignBody(template: string, contact: any) {
   let body = String(template || "")
     .replace(/{{\s*nome\s*}}/gi, contact?.nome || "")
     .replace(/{{\s*primeiro_nome\s*}}/gi, firstName(contact?.nome))
-    .replace(/{{\s*telefone\s*}}/gi, onlyDigits(contact?.telefone_digits || contact?.telefone));
+    .replace(
+      /{{\s*telefone\s*}}/gi,
+      onlyDigits(contact?.telefone_digits || contact?.telefone),
+    );
 
   if (!/\b(SAIR|PARAR|CANCELAR|DESCADASTRAR|STOP)\b/i.test(body)) {
     body += "\n\nPara não receber mais mensagens da Consulmax, responda SAIR.";
@@ -93,13 +106,19 @@ function makeMediaMessagePayload(params: {
   mediaId: string;
   caption: string;
   fileName: string;
+  replyToMetaMessageId?: string | null;
 }) {
-  const { to, mediaKind, mediaId, caption, fileName } = params;
+  const { to, mediaKind, mediaId, caption, fileName, replyToMetaMessageId } =
+    params;
+  const context = replyToMetaMessageId
+    ? { context: { message_id: replyToMetaMessageId } }
+    : {};
 
   if (mediaKind === "image") {
     return {
       messaging_product: "whatsapp",
       to,
+      ...context,
       type: "image",
       image: { id: mediaId, ...(caption ? { caption } : {}) },
     };
@@ -109,6 +128,7 @@ function makeMediaMessagePayload(params: {
     return {
       messaging_product: "whatsapp",
       to,
+      ...context,
       type: "video",
       video: { id: mediaId, ...(caption ? { caption } : {}) },
     };
@@ -118,6 +138,7 @@ function makeMediaMessagePayload(params: {
     return {
       messaging_product: "whatsapp",
       to,
+      ...context,
       type: "audio",
       audio: { id: mediaId },
     };
@@ -126,8 +147,13 @@ function makeMediaMessagePayload(params: {
   return {
     messaging_product: "whatsapp",
     to,
+    ...context,
     type: "document",
-    document: { id: mediaId, filename: fileName, ...(caption ? { caption } : {}) },
+    document: {
+      id: mediaId,
+      filename: fileName,
+      ...(caption ? { caption } : {}),
+    },
   };
 }
 
@@ -147,26 +173,48 @@ async function sendTextMessage(params: {
   user_id?: string | null;
   sender_type?: string;
   raw_payload_extra?: Record<string, any>;
+  reply_to_meta_message_id?: string | null;
+  reply_to_message_id?: string | null;
+  reply_to_body?: string | null;
+  reply_to_message_type?: string | null;
 }) {
-  const { conversation_id, to, body, user_id, sender_type = "usuario", raw_payload_extra } = params;
+  const {
+    conversation_id,
+    to,
+    body,
+    user_id,
+    sender_type = "usuario",
+    raw_payload_extra,
+    reply_to_meta_message_id,
+    reply_to_message_id,
+    reply_to_body,
+    reply_to_message_type,
+  } = params;
   const phone = onlyDigits(to);
+  const sentAt = new Date().toISOString();
 
-  const response = await fetch(`${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/messages`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${META_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to: phone,
-      type: "text",
-      text: {
-        preview_url: false,
-        body,
+  const response = await fetch(
+    `${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${META_TOKEN}`,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: phone,
+        ...(reply_to_meta_message_id
+          ? { context: { message_id: reply_to_meta_message_id } }
+          : {}),
+        type: "text",
+        text: {
+          preview_url: false,
+          body,
+        },
+      }),
+    },
+  );
 
   const data = await readJson(response);
 
@@ -185,17 +233,32 @@ async function sendTextMessage(params: {
     message_type: "text",
     body,
     meta_message_id: metaMessageId,
-    raw_payload: { ...data, ...(raw_payload_extra || {}) },
+    raw_payload: {
+      ...data,
+      meta_status: "sent",
+      meta_status_at: sentAt,
+      ...(raw_payload_extra || {}),
+      ...(reply_to_meta_message_id || reply_to_message_id
+        ? {
+            _reply_to: {
+              meta_message_id: reply_to_meta_message_id || null,
+              message_id: reply_to_message_id || null,
+              body: reply_to_body || null,
+              message_type: reply_to_message_type || null,
+            },
+          }
+        : {}),
+    },
   });
 
   await supabaseAdmin
     .from("whatsapp_conversations")
     .update({
       last_message: body,
-      last_message_at: new Date().toISOString(),
+      last_message_at: sentAt,
       unread_count: 0,
       status: "humano",
-      updated_at: new Date().toISOString(),
+      updated_at: sentAt,
     })
     .eq("id", conversation_id);
 
@@ -213,6 +276,10 @@ async function sendMediaMessage(params: {
   media_type?: string | null;
   sender_type?: string;
   raw_payload_extra?: Record<string, any>;
+  reply_to_meta_message_id?: string | null;
+  reply_to_message_id?: string | null;
+  reply_to_body?: string | null;
+  reply_to_message_type?: string | null;
 }) {
   const {
     conversation_id,
@@ -225,13 +292,21 @@ async function sendMediaMessage(params: {
     media_type,
     sender_type = "usuario",
     raw_payload_extra,
+    reply_to_meta_message_id,
+    reply_to_message_id,
+    reply_to_body,
+    reply_to_message_type,
   } = params;
 
   const phone = onlyDigits(to);
   const mimeType = String(mime_type || "application/octet-stream");
   const mediaKind = detectMediaKind(mimeType, media_type);
-  const cleanFileName = safeFileName(file_name || `arquivo.${extFromNameOrMime("arquivo", mimeType)}`);
-  const base64 = String(file_base64).includes(",") ? String(file_base64).split(",").pop() || "" : String(file_base64);
+  const cleanFileName = safeFileName(
+    file_name || `arquivo.${extFromNameOrMime("arquivo", mimeType)}`,
+  );
+  const base64 = String(file_base64).includes(",")
+    ? String(file_base64).split(",").pop() || ""
+    : String(file_base64);
   const buffer = Buffer.from(base64, "base64");
 
   if (!buffer.length) {
@@ -241,10 +316,12 @@ async function sendMediaMessage(params: {
   const ext = extFromNameOrMime(cleanFileName, mimeType);
   const storagePath = `outbound/${conversation_id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
 
-  const saved = await supabaseAdmin.storage.from(MEDIA_BUCKET).upload(storagePath, buffer, {
-    contentType: mimeType,
-    upsert: false,
-  });
+  const saved = await supabaseAdmin.storage
+    .from(MEDIA_BUCKET)
+    .upload(storagePath, buffer, {
+      contentType: mimeType,
+      upsert: false,
+    });
 
   if (saved.error) {
     console.error("SUPABASE_MEDIA_UPLOAD_ERROR", saved.error);
@@ -256,11 +333,14 @@ async function sendMediaMessage(params: {
   form.append("file", bufferToBlob(buffer, mimeType), cleanFileName);
   form.append("type", mimeType);
 
-  const uploadResponse = await fetch(`${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/media`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${META_TOKEN}` },
-    body: form,
-  });
+  const uploadResponse = await fetch(
+    `${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/media`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${META_TOKEN}` },
+      body: form,
+    },
+  );
 
   const uploadData = await readJson(uploadResponse);
 
@@ -276,16 +356,20 @@ async function sendMediaMessage(params: {
     mediaId: uploadData.id,
     caption: cleanCaption,
     fileName: cleanFileName,
+    replyToMetaMessageId: reply_to_meta_message_id,
   });
 
-  const sendResponse = await fetch(`${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/messages`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${META_TOKEN}`,
-      "Content-Type": "application/json",
+  const sendResponse = await fetch(
+    `${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${META_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+  );
 
   const sendData = await readJson(sendResponse);
 
@@ -295,6 +379,7 @@ async function sendMediaMessage(params: {
   }
 
   const metaMessageId = sendData?.messages?.[0]?.id || null;
+  const sentAt = new Date().toISOString();
   const lastMessage =
     cleanCaption ||
     (mediaKind === "image"
@@ -318,7 +403,19 @@ async function sendMediaMessage(params: {
     raw_payload: {
       send: sendData,
       upload: uploadData,
+      meta_status: "sent",
+      meta_status_at: sentAt,
       ...(raw_payload_extra || {}),
+      ...(reply_to_meta_message_id || reply_to_message_id
+        ? {
+            _reply_to: {
+              meta_message_id: reply_to_meta_message_id || null,
+              message_id: reply_to_message_id || null,
+              body: reply_to_body || null,
+              message_type: reply_to_message_type || null,
+            },
+          }
+        : {}),
       _consulmax_media: {
         bucket: MEDIA_BUCKET,
         storage_path: storagePath,
@@ -334,14 +431,113 @@ async function sendMediaMessage(params: {
     .from("whatsapp_conversations")
     .update({
       last_message: lastMessage,
-      last_message_at: new Date().toISOString(),
+      last_message_at: sentAt,
       unread_count: 0,
       status: "humano",
-      updated_at: new Date().toISOString(),
+      updated_at: sentAt,
     })
     .eq("id", conversation_id);
 
-  return { ok: true, status: 200, data: sendData, media_id: uploadData.id, storage_path: storagePath };
+  return {
+    ok: true,
+    status: 200,
+    data: sendData,
+    media_id: uploadData.id,
+    storage_path: storagePath,
+  };
+}
+
+async function resendStoredMessage(params: {
+  message_id: string;
+  conversation_id: string;
+  to: string;
+  user_id?: string | null;
+}) {
+  const { data: message, error } = await supabaseAdmin
+    .from("whatsapp_messages")
+    .select(
+      "id,conversation_id,direction,body,message_type,media_mime_type,meta_message_id,raw_payload",
+    )
+    .eq("id", params.message_id)
+    .eq("conversation_id", params.conversation_id)
+    .eq("direction", "outbound")
+    .maybeSingle();
+
+  if (error || !message?.id) {
+    return {
+      ok: false,
+      status: 404,
+      error: error?.message || "Mensagem não encontrada para reenvio.",
+    };
+  }
+
+  const retryExtra = {
+    _retry_of: {
+      message_id: message.id,
+      meta_message_id: message.meta_message_id || null,
+    },
+  };
+  const type = String(message.message_type || "text").toLowerCase();
+
+  if (type === "text" && message.body) {
+    return sendTextMessage({
+      conversation_id: params.conversation_id,
+      to: params.to,
+      body: message.body,
+      user_id: params.user_id,
+      raw_payload_extra: retryExtra,
+    });
+  }
+
+  if (["image", "video", "audio", "document"].includes(type)) {
+    const storedMedia = message.raw_payload?._consulmax_media;
+    const bucket = storedMedia?.bucket || MEDIA_BUCKET;
+    const storagePath = storedMedia?.storage_path;
+    if (!storagePath)
+      return {
+        ok: false,
+        status: 409,
+        error: "Arquivo original não está disponível para reenvio.",
+      };
+
+    const { data: blob, error: downloadError } = await supabaseAdmin.storage
+      .from(bucket)
+      .download(storagePath);
+    if (downloadError || !blob) {
+      return {
+        ok: false,
+        status: 500,
+        error:
+          downloadError?.message ||
+          "Não foi possível recuperar o arquivo original.",
+      };
+    }
+
+    const buffer = Buffer.from(await blob.arrayBuffer());
+    return sendMediaMessage({
+      conversation_id: params.conversation_id,
+      to: params.to,
+      user_id: params.user_id,
+      file_base64: buffer.toString("base64"),
+      file_name:
+        storedMedia?.original_file_name ||
+        `arquivo.${extFromNameOrMime("arquivo", message.media_mime_type || blob.type)}`,
+      mime_type:
+        message.media_mime_type ||
+        storedMedia?.mime_type ||
+        blob.type ||
+        "application/octet-stream",
+      caption: message.body || "",
+      media_type: type,
+      raw_payload_extra: retryExtra,
+    });
+  }
+
+  return {
+    ok: false,
+    status: 409,
+    error: "Este tipo de mensagem não pode ser reenviado automaticamente.",
+  };
 }
 
 async function ensureCampaignConversation(contact: any) {
@@ -357,12 +553,13 @@ async function ensureCampaignConversation(contact: any) {
         nome: contact.nome || null,
         updated_at: now,
       },
-      { onConflict: "wa_id" }
+      { onConflict: "wa_id" },
     )
     .select("id,lead_id")
     .single();
 
-  if (contactError || !waContact?.id) throw contactError || new Error("Contato não criado.");
+  if (contactError || !waContact?.id)
+    throw contactError || new Error("Contato não criado.");
 
   const { data: existing } = await supabaseAdmin
     .from("whatsapp_conversations")
@@ -391,7 +588,8 @@ async function ensureCampaignConversation(contact: any) {
     .select("id")
     .single();
 
-  if (error || !conversation?.id) throw error || new Error("Conversa não criada.");
+  if (error || !conversation?.id)
+    throw error || new Error("Conversa não criada.");
   return conversation.id;
 }
 
@@ -402,11 +600,15 @@ async function downloadCampaignAttachment(campaign: any) {
     .from(campaign.attachment_bucket || MEDIA_BUCKET)
     .download(campaign.attachment_path);
 
-  if (error || !data) throw error || new Error("Anexo da campanha não encontrado.");
+  if (error || !data)
+    throw error || new Error("Anexo da campanha não encontrado.");
 
   const buffer = Buffer.from(await data.arrayBuffer());
-  const mimeType = campaign.attachment_mime_type || data.type || "application/octet-stream";
-  const fileName = safeFileName(String(campaign.attachment_path).split("/").pop() || "arquivo");
+  const mimeType =
+    campaign.attachment_mime_type || data.type || "application/octet-stream";
+  const fileName = safeFileName(
+    String(campaign.attachment_path).split("/").pop() || "arquivo",
+  );
   const base64 = buffer.toString("base64");
 
   return {
@@ -478,10 +680,12 @@ async function processScheduledCampaigns() {
     };
   }
 
-  const attachment = await downloadCampaignAttachment(campaign).catch((error) => {
-    console.warn("CAMPAIGN_ATTACHMENT_WARNING", error);
-    return null;
-  });
+  const attachment = await downloadCampaignAttachment(campaign).catch(
+    (error) => {
+      console.warn("CAMPAIGN_ATTACHMENT_WARNING", error);
+      return null;
+    },
+  );
 
   let sent = 0;
   let failed = 0;
@@ -618,13 +822,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { conversation_id, to, body, user_id, file_base64, file_name, mime_type, caption, media_type } = req.body || {};
+    const {
+      conversation_id,
+      to,
+      body,
+      user_id,
+      file_base64,
+      file_name,
+      mime_type,
+      caption,
+      media_type,
+      resend_message_id,
+      reply_to_meta_message_id,
+      reply_to_message_id,
+      reply_to_body,
+      reply_to_message_type,
+    } = req.body || {};
 
     if (!conversation_id || !to) {
       return res.status(400).json({
         ok: false,
         error: "conversation_id e to são obrigatórios.",
       });
+    }
+
+    if (resend_message_id) {
+      const result = await resendStoredMessage({
+        message_id: resend_message_id,
+        conversation_id,
+        to,
+        user_id,
+      });
+      if (!result.ok)
+        return res
+          .status(result.status)
+          .json({ ok: false, error: result.error });
+      return res.status(200).json({ ok: true, data: result.data });
     }
 
     if (file_base64 && mime_type) {
@@ -637,9 +870,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         mime_type,
         caption,
         media_type,
+        reply_to_meta_message_id,
+        reply_to_message_id,
+        reply_to_body,
+        reply_to_message_type,
       });
 
-      if (!result.ok) return res.status(result.status).json({ ok: false, error: result.error });
+      if (!result.ok)
+        return res
+          .status(result.status)
+          .json({ ok: false, error: result.error });
 
       return res.status(200).json({
         ok: true,
@@ -656,8 +896,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const result = await sendTextMessage({ conversation_id, to, body, user_id });
-    if (!result.ok) return res.status(result.status).json({ ok: false, error: result.error });
+    const result = await sendTextMessage({
+      conversation_id,
+      to,
+      body,
+      user_id,
+      reply_to_meta_message_id,
+      reply_to_message_id,
+      reply_to_body,
+      reply_to_message_type,
+    });
+    if (!result.ok)
+      return res.status(result.status).json({ ok: false, error: result.error });
 
     return res.status(200).json({ ok: true, data: result.data });
   } catch (error: any) {

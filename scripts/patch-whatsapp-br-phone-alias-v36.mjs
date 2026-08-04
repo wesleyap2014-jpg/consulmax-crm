@@ -45,7 +45,7 @@ patchIfExists("api/whatsapp/send.ts", (src) => {
         sender_type,
         raw_payload_extra: { ...(raw_payload_extra || {}), _audio_fallback: true, meta_upload_error: uploadData, storage_path: storagePath },
       });
-      return { ok: fallback.ok, status: fallback.status, data: fallback.data, media_id: null, storage_path };
+      return { ok: fallback.ok, status: fallback.status, data: fallback.data, media_id: null, storage_path: storagePath };
     }
 
     return { ok: false, status: uploadResponse.status, error: uploadData };

@@ -22,8 +22,7 @@ const MARKETING_AUTH_TEMPLATE_NAME = process.env.WHATSAPP_MARKETING_AUTH_TEMPLAT
 const MARKETING_AUTH_TEMPLATE_LANGUAGE = process.env.WHATSAPP_MARKETING_AUTH_TEMPLATE_LANGUAGE || "pt_BR";
 
 async function hasMarketingConsent(phoneValue?: string | null) {
-  const variants = typeof brPhoneVariants === "function" ? brPhoneVariants(phoneValue) : [onlyDigits(phoneValue)];
-  const phones = variants.filter(Boolean);
+  const phones = [onlyDigits(phoneValue)].filter(Boolean);
   if (phones.length === 0) return false;
 
   const { data, error } = await supabaseAdmin
@@ -42,8 +41,7 @@ async function hasMarketingConsent(phoneValue?: string | null) {
 }
 
 async function alreadyAskedConsent(campaignId: string, phoneValue?: string | null) {
-  const variants = typeof brPhoneVariants === "function" ? brPhoneVariants(phoneValue) : [onlyDigits(phoneValue)];
-  const phones = variants.filter(Boolean);
+  const phones = [onlyDigits(phoneValue)].filter(Boolean);
   if (!campaignId || phones.length === 0) return false;
 
   const { data, error } = await supabaseAdmin
@@ -62,7 +60,7 @@ async function alreadyAskedConsent(campaignId: string, phoneValue?: string | nul
 }
 
 async function sendConsentTemplate(campaign: any, recipient: any, phoneValue: string) {
-  const phone = typeof resolveWhatsAppSendPhone === "function" ? await resolveWhatsAppSendPhone(phoneValue, null) : onlyDigits(phoneValue);
+  const phone = onlyDigits(phoneValue);
   const first = firstName(recipient?.nome) || "cliente";
 
   const response = await fetch(GRAPH_BASE + "/" + DEFAULT_PHONE_NUMBER_ID + "/messages", {

@@ -15,6 +15,8 @@ const VOLUME_STORAGE_KEY = "consulmax-whatsapp-notification-volume";
 export const WHATSAPP_VOLUME_MIN = 25;
 export const WHATSAPP_VOLUME_MAX = 200;
 const DEFAULT_VOLUME = 100;
+const CLOSED_CONVERSATION_STATES =
+  "(fechada,finalizado,finalizada,closed,fechado_ganho,fechado_perdido)";
 
 type IncomingMessage = {
   id: string;
@@ -174,7 +176,10 @@ export function WhatsAppNotificationsProvider({
     const { count, error } = await supabase
       .from("whatsapp_conversations")
       .select("id", { count: "exact", head: true })
-      .gt("unread_count", 0);
+      .gt("unread_count", 0)
+      .not("status", "in", CLOSED_CONVERSATION_STATES)
+      .not("stage", "in", CLOSED_CONVERSATION_STATES)
+      .not("queue", "in", CLOSED_CONVERSATION_STATES);
 
     if (error) {
       console.warn("Não foi possível atualizar o alerta do WhatsApp.", error);
@@ -204,7 +209,6 @@ export function WhatsAppNotificationsProvider({
   const notifyIncoming = useCallback((message: IncomingMessage) => {
     if (!message.id || message.id === latestIncomingIdRef.current) return;
     latestIncomingIdRef.current = message.id;
-    setUnreadCount((current) => Math.max(1, current + 1));
     if (soundEnabledRef.current) playNotificationTone(volumeRef.current);
   }, []);
 

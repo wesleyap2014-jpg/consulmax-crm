@@ -55,13 +55,32 @@ patchIfExists("api/whatsapp/send.ts", (src) => {
   return src;
 });
 
-// Restaura inbound: se encontramos contato por alias BR, não podemos sobrescrever wa_id/telefone,
-// porque pode bater em unique constraint e impedir a mensagem recebida de ser salva.
+// Restaura inbound: se encontramos contato por alias BR, não podemos sobrescrever
+// wa_id/telefone, porque pode bater em unique constraint e impedir a mensagem
+// recebida de ser salva. A substituição aceita o código formatado em múltiplas
+// linhas e falha o build se a escrita insegura continuar presente.
 patchIfExists("api/whatsapp/webhook.ts", (src) => {
-  return src.replace(
-    `? await supabaseAdmin.from("whatsapp_contacts").update({ wa_id: waId, telefone: waId, nome: existingContact.nome || nome, updated_at: inboundAt }).eq("id", existingContact.id).select("id, lead_id").single()`,
-    `? await supabaseAdmin.from("whatsapp_contacts").update({ nome: existingContact.nome || nome, updated_at: inboundAt }).eq("id", existingContact.id).select("id, lead_id").single()`
+  const inboundStart = src.indexOf("async function handleSingleInboundMessage");
+  const inboundEnd = src.indexOf("async function handleSingleCallEvent", inboundStart);
+  if (inboundStart < 0 || inboundEnd <= inboundStart) {
+    throw new Error(`${marker}: handleSingleInboundMessage não encontrado`);
+  }
+
+  const inbound = src.slice(inboundStart, inboundEnd).replace(
+    /\.update\(\{\s*wa_id:\s*waId,\s*telefone:\s*waId,\s*nome:\s*existingContact\.nome\s*\|\|\s*nome,\s*updated_at:\s*inboundAt,?\s*\}\)/m,
+    `.update({
+          nome: existingContact.nome || nome,
+          updated_at: inboundAt,
+        })`,
   );
+
+  if (/\.update\(\{\s*wa_id:\s*waId,\s*telefone:\s*waId,/m.test(inbound)) {
+    throw new Error(
+      `${marker}: atualização insegura de wa_id/telefone ainda presente no inbound`,
+    );
+  }
+
+  return src.slice(0, inboundStart) + inbound + src.slice(inboundEnd);
 });
 
 // Pequenos ajustes visuais no drawer do Kanban e gravação sem fingir MIME aceito.

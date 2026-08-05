@@ -27,6 +27,24 @@ const sendTemplate = section(
 );
 
 if (
+  source.includes("isBoletoTemplate(") &&
+  !/function\s+isBoletoTemplate\s*\(/.test(source)
+) {
+  throw new Error(
+    "[validate-whatsapp-template-ticket-flow] isBoletoTemplate é usado, mas não está definido.",
+  );
+}
+
+if (
+  /function\s+isBoletoTemplate\s*\(/.test(source) &&
+  !source.includes("BOLETO_TEMPLATE_NAMES")
+) {
+  throw new Error(
+    "[validate-whatsapp-template-ticket-flow] A identificação dos modelos de boleto está incompleta.",
+  );
+}
+
+if (
   !/if\s*\(\s*startTemplate\s*\)\s*await\s+sendTemplate\(conv\s+as\s+Conv\)/m.test(
     createTicket,
   )

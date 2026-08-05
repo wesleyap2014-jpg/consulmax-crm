@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import lameJsBrowserUrl from "lamejs/lame.min.js?url";
 import {
   Bell,
   BellOff,
@@ -381,6 +382,8 @@ const recorderMimeType = () => {
     "audio/mp4",
     "audio/aac",
     "audio/mpeg",
+    "audio/webm;codecs=opus",
+    "audio/webm",
   ];
   return (
     options.find(
@@ -390,6 +393,104 @@ const recorderMimeType = () => {
     ) || ""
   );
 };
+
+type BrowserMp3Encoder = {
+  encodeBuffer: (samples: Int16Array) => Int8Array;
+  flush: () => Int8Array;
+};
+
+type BrowserLameJs = {
+  Mp3Encoder: new (
+    channels: number,
+    sampleRate: number,
+    kbps: number,
+  ) => BrowserMp3Encoder;
+};
+
+let lameJsLoaderPromise: Promise<BrowserLameJs> | null = null;
+
+function loadBrowserLameJs() {
+  const browserWindow = window as typeof window & {
+    lamejs?: BrowserLameJs;
+  };
+  if (browserWindow.lamejs?.Mp3Encoder)
+    return Promise.resolve(browserWindow.lamejs);
+  if (lameJsLoaderPromise) return lameJsLoaderPromise;
+
+  lameJsLoaderPromise = new Promise<BrowserLameJs>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = lameJsBrowserUrl;
+    script.async = true;
+    script.dataset.consulmaxLamejs = "true";
+    script.onload = () => {
+      if (browserWindow.lamejs?.Mp3Encoder) {
+        resolve(browserWindow.lamejs);
+        return;
+      }
+      reject(new Error("Encoder MP3 não foi carregado."));
+    };
+    script.onerror = () =>
+      reject(new Error("Falha ao carregar o encoder MP3."));
+    document.head.appendChild(script);
+  }).catch((error) => {
+    lameJsLoaderPromise = null;
+    throw error;
+  });
+
+  return lameJsLoaderPromise;
+}
+
+async function convertRecordedAudioToMp3(blob: Blob) {
+  const audioContext = new AudioContext();
+
+  try {
+    const audioBuffer = await audioContext.decodeAudioData(
+      await blob.arrayBuffer(),
+    );
+    const mono = new Float32Array(audioBuffer.length);
+
+    for (
+      let channel = 0;
+      channel < audioBuffer.numberOfChannels;
+      channel += 1
+    ) {
+      const samples = audioBuffer.getChannelData(channel);
+      for (let index = 0; index < samples.length; index += 1) {
+        mono[index] += samples[index] / audioBuffer.numberOfChannels;
+      }
+    }
+
+    const pcm = new Int16Array(mono.length);
+    for (let index = 0; index < mono.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, mono[index]));
+      pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    }
+
+    const lamejs = await loadBrowserLameJs();
+    const encoder = new lamejs.Mp3Encoder(1, audioBuffer.sampleRate, 64);
+    const mp3Parts: ArrayBuffer[] = [];
+    const blockSize = 1152;
+
+    for (let index = 0; index < pcm.length; index += blockSize) {
+      const encoded = encoder.encodeBuffer(
+        pcm.subarray(index, index + blockSize),
+      );
+      if (encoded.length) mp3Parts.push(Uint8Array.from(encoded).buffer);
+    }
+
+    const finalBuffer = encoder.flush();
+    if (finalBuffer.length) mp3Parts.push(Uint8Array.from(finalBuffer).buffer);
+
+    const mp3Blob = new Blob(mp3Parts, { type: "audio/mpeg" });
+    if (!mp3Blob.size) throw new Error("O áudio gravado ficou vazio.");
+
+    return new File([mp3Blob], `audio-${Date.now()}.mp3`, {
+      type: "audio/mpeg",
+    });
+  } finally {
+    await audioContext.close().catch(() => undefined);
+  }
+}
 
 function Modal({
   title,
@@ -621,6 +722,17 @@ export default function WhatsAppAtendimento() {
     activeRef.current = active;
   }, [active]);
   useEffect(() => {
+    return () => {
+      const recorder = recorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.onstop = null;
+        recorder.stop();
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+  useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs.length, active?.id]);
   useEffect(() => {
@@ -762,8 +874,8 @@ export default function WhatsAppAtendimento() {
                     .update({ unread_count: 0 })
                     .eq("id", row.conversation_id);
                 }
-              }
 
+              }
             },
           )
           .on(
@@ -1034,9 +1146,14 @@ export default function WhatsAppAtendimento() {
   function isBoletoTemplate(name?: string | null) {
     return BOLETO_TEMPLATE_NAMES.has(String(name || ""));
   }
-  async function sendPayload(conv: Conv, body?: string) {
+  async function sendPayload(
+    conv: Conv,
+    body?: string,
+    fileOverride?: File | null,
+  ) {
     const text = String(body ?? messageText).trim();
-    if (!conv?.id || (!text && !file)) return;
+    const selectedFile = fileOverride === undefined ? file : fileOverride;
+    if (!conv?.id || (!text && !selectedFile)) return;
     if (!in24h(conv))
       return alert(
         "Cliente fora da janela de 24h. Envie um modelo aprovado para reabrir.",
@@ -1052,10 +1169,10 @@ export default function WhatsAppAtendimento() {
         reply_to_body: replyTo?.body || null,
         reply_to_message_type: replyTo?.message_type || null,
       };
-      if (file) {
-        payload.file_base64 = await fileToBase64(file);
-        payload.file_name = file.name;
-        payload.mime_type = file.type || "application/octet-stream";
+      if (selectedFile) {
+        payload.file_base64 = await fileToBase64(selectedFile);
+        payload.file_name = selectedFile.name;
+        payload.mime_type = selectedFile.type || "application/octet-stream";
         payload.caption = text;
       }
       const res = await fetch("/api/whatsapp/send", {
@@ -1071,9 +1188,9 @@ export default function WhatsAppAtendimento() {
             json?.error ||
             "Falha ao enviar mensagem",
         );
-      setMessageText("");
+      if (fileOverride === undefined) setMessageText("");
       setReplyTo(null);
-      setFile(null);
+      if (fileOverride === undefined) setFile(null);
       setQuickRepliesOpen(false);
       await loadMessages(conv.id);
       await load(false, true);
@@ -1245,10 +1362,15 @@ export default function WhatsAppAtendimento() {
     if (recording) {
       recorderRef.current?.stop();
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
       setRecording(false);
       return;
     }
+    if (sending) return;
     try {
+      void loadBrowserLameJs().catch((error) =>
+        console.error("WHATSAPP_AUDIO_ENCODER_PRELOAD_ERROR", error),
+      );
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       audioChunksRef.current = [];
@@ -1260,27 +1382,33 @@ export default function WhatsAppAtendimento() {
       recorder.ondataavailable = (event) => {
         if (event.data?.size) audioChunksRef.current.push(event.data);
       };
-      recorder.onstop = () => {
-        const finalType = recorder.mimeType?.includes("ogg")
-          ? "audio/ogg"
-          : recorder.mimeType?.includes("mp4")
-            ? "audio/mp4"
-            : recorder.mimeType?.includes("aac")
-              ? "audio/aac"
-              : "audio/ogg";
-        const ext =
-          finalType === "audio/mp4"
-            ? "m4a"
-            : finalType === "audio/aac"
-              ? "aac"
-              : "ogg";
-        const blob = new Blob(audioChunksRef.current, { type: finalType });
-        const audioFile = new File([blob], `audio-${Date.now()}.${ext}`, {
-          type: finalType,
-        });
-        setFile(audioFile);
+      recorder.onstop = async () => {
+        const conversation = activeRef.current;
+        const recordedType = recorder.mimeType || mime || "audio/webm";
+        const blob = new Blob(audioChunksRef.current, { type: recordedType });
+        audioChunksRef.current = [];
+        recorderRef.current = null;
+
+        if (!conversation?.id || !blob.size) {
+          alert("Não foi possível preparar o áudio gravado.");
+          return;
+        }
+
+        setSending(true);
+        try {
+          const audioFile = await convertRecordedAudioToMp3(blob);
+          await sendPayload(conversation, "", audioFile);
+        } catch (error: any) {
+          console.error("WHATSAPP_AUDIO_CONVERSION_ERROR", error);
+          alert(
+            error?.message ||
+              "Não foi possível converter e enviar o áudio gravado.",
+          );
+        } finally {
+          setSending(false);
+        }
       };
-      recorder.start();
+      recorder.start(250);
       setRecording(true);
     } catch {
       alert(
@@ -1474,7 +1602,11 @@ export default function WhatsAppAtendimento() {
               <WhatsAppMessageBubble
                 key={message.id}
                 message={message}
-                mediaUrl={mediaUrls[message.id]}
+                mediaUrl={
+                  mediaUrls[message.id] ||
+                  getStoredMedia(message)?.link ||
+                  undefined
+                }
                 repliedMessage={repliedMessage}
                 onReply={setReplyTo}
                 onRetry={retryMessage}
@@ -1607,8 +1739,9 @@ export default function WhatsAppAtendimento() {
             </button>
             <button
               onClick={toggleRecording}
-              className={`rounded-full p-3 hover:bg-slate-100 ${recording ? "bg-red-100 text-red-700" : ""}`}
-              title={recording ? "Parar gravação" : "Gravar áudio"}
+              disabled={sending && !recording}
+              className={`rounded-full p-3 hover:bg-slate-100 disabled:opacity-40 ${recording ? "bg-red-100 text-red-700" : ""}`}
+              title={recording ? "Parar e enviar áudio" : "Gravar áudio"}
             >
               <Mic className="h-5 w-5" />
             </button>
@@ -1655,7 +1788,7 @@ export default function WhatsAppAtendimento() {
           </div>
           {recording && (
             <p className="mt-2 text-xs font-bold text-red-700">
-              Gravando áudio... clique no microfone para parar e anexar.
+              Gravando áudio... clique no microfone para parar e enviar.
             </p>
           )}
         </div>

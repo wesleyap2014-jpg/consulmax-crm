@@ -874,8 +874,8 @@ export default function WhatsAppAtendimento() {
                     .update({ unread_count: 0 })
                     .eq("id", row.conversation_id);
                 }
-
               }
+
             },
           )
           .on(

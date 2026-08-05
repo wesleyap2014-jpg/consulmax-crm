@@ -27,12 +27,36 @@ replace(
   `const [boletoOverlay, setBoletoOverlay] = useState<{ conv: Conv; templateName: string } | null>(null), [boletoFile, setBoletoFile] = useState<File | null>(null), [boletoDueDate, setBoletoDueDate] = useState("");`
 );
 
-replace(
-  "helper data boleto",
-  `function fileToBase64(f: File): Promise<string> { return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result || "")); r.onerror = reject; r.readAsDataURL(f); }); }`,
-  `function fileToBase64(f: File): Promise<string> { return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result || "")); r.onerror = reject; r.readAsDataURL(f); }); }
+if (src.includes("function isBoletoTemplate(")) {
+  log("helper identificação boleto", "já aplicado");
+} else {
+  const fileToBase64Regex = /(function fileToBase64\(f: File\): Promise<string>\s*\{[\s\S]*?\n  \})/;
+  if (!fileToBase64Regex.test(src)) {
+    throw new Error(
+      "[patch-whatsapp-boleto-template-pdf-v42] Não foi possível inserir isBoletoTemplate: helper fileToBase64 não encontrado.",
+    );
+  }
+  src = src.replace(
+    fileToBase64Regex,
+    `$1
   const BOLETO_TEMPLATE_NAMES = new Set(["lembrete_boleto_vencimento", "regularizacao_parcela_consorcio"]);
-  function isBoletoTemplate(name?: string | null) { return BOLETO_TEMPLATE_NAMES.has(String(name || "")); }
+  function isBoletoTemplate(name?: string | null) { return BOLETO_TEMPLATE_NAMES.has(String(name || "")); }`,
+  );
+  changed = true;
+  log("helper identificação boleto", "aplicado");
+}
+
+if (!src.includes("function formatDateBRInput(")) {
+  const boletoHelperAnchor =
+    /function isBoletoTemplate\(name\?: string \| null\)\s*\{[\s\S]*?\n  \}/;
+  if (!boletoHelperAnchor.test(src)) {
+    throw new Error(
+      "[patch-whatsapp-boleto-template-pdf-v42] Não foi possível inserir os helpers de boleto.",
+    );
+  }
+  src = src.replace(
+    boletoHelperAnchor,
+    `$&
   function formatDateBRInput(value?: string | null) {
     const raw = String(value || "").slice(0, 10);
     const parts = raw.split("-");
@@ -41,8 +65,13 @@ replace(
   }
   function boletoTemplateTitle(name?: string | null) {
     return String(name || "") === "regularizacao_parcela_consorcio" ? "Regularização de parcela" : "Lembrete de vencimento";
-  }`
-);
+  }`,
+  );
+  changed = true;
+  log("helpers de data e título do boleto", "aplicado");
+} else {
+  log("helpers de data e título do boleto", "já aplicado");
+}
 
 replace(
   "assinatura template values overrides",

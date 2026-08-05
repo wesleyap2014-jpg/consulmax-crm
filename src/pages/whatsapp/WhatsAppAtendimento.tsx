@@ -1027,6 +1027,13 @@ export default function WhatsAppAtendimento() {
       r.readAsDataURL(f);
     });
   }
+  const BOLETO_TEMPLATE_NAMES = new Set([
+    "lembrete_boleto_vencimento",
+    "regularizacao_parcela_consorcio",
+  ]);
+  function isBoletoTemplate(name?: string | null) {
+    return BOLETO_TEMPLATE_NAMES.has(String(name || ""));
+  }
   async function sendPayload(conv: Conv, body?: string) {
     const text = String(body ?? messageText).trim();
     if (!conv?.id || (!text && !file)) return;

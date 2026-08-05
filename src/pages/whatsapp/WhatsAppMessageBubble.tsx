@@ -28,15 +28,44 @@ export type StoredMedia = {
   storage_path?: string | null;
   mime_type?: string | null;
   original_file_name?: string | null;
+  link?: string | null;
+  type?: string | null;
 };
 
 export function getStoredMedia(message: WhatsAppMessage): StoredMedia | null {
-  return (
+  const stored =
     message.raw_payload?._consulmax_media ||
     message.raw_payload?.consulmax_media ||
-    message.raw_payload?.media ||
-    null
-  );
+    message.raw_payload?.media;
+
+  if (stored) return stored;
+
+  const templateMedia = message.raw_payload?.template_header_media;
+  if (templateMedia) {
+    return {
+      bucket: templateMedia.bucket || null,
+      storage_path: templateMedia.storage_path || null,
+      mime_type: templateMedia.mime_type || null,
+      original_file_name:
+        templateMedia.original_file_name || templateMedia.filename || null,
+      link: templateMedia.link || null,
+      type: templateMedia.type || null,
+    };
+  }
+
+  if (message.raw_payload?.storage_path || message.raw_payload?.media_link) {
+    return {
+      bucket: message.raw_payload.bucket || "whatsapp-media",
+      storage_path: message.raw_payload.storage_path || null,
+      mime_type:
+        message.raw_payload.mime_type || message.media_mime_type || null,
+      original_file_name: message.raw_payload.original_file_name || null,
+      link: message.raw_payload.media_link || null,
+      type: message.raw_payload.media_type || null,
+    };
+  }
+
+  return null;
 }
 
 export function getReplyMetaMessageId(message: WhatsAppMessage) {
@@ -118,9 +147,24 @@ function MessageContent({
   message: WhatsAppMessage;
   mediaUrl?: string;
 }) {
-  const type = String(message.message_type || "text").toLowerCase();
   const storedMedia = getStoredMedia(message);
   const mime = storedMedia?.mime_type || message.media_mime_type || "";
+  const messageType = String(message.message_type || "text").toLowerCase();
+  const storedType = String(storedMedia?.type || "").toLowerCase();
+  const mimeType = mime.toLowerCase();
+  const inferredType =
+    storedType ||
+    (mimeType.startsWith("image/")
+      ? "image"
+      : mimeType.startsWith("video/")
+        ? "video"
+        : mimeType.startsWith("audio/")
+          ? "audio"
+          : mimeType
+            ? "document"
+            : "");
+  const type =
+    messageType === "template" && inferredType ? inferredType : messageType;
   const fileName = storedMedia?.original_file_name || messageFallback(message);
   const isMedia =
     ["audio", "voice", "image", "video", "document", "sticker"].includes(

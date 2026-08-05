@@ -58,6 +58,19 @@ type Partner = {
   updated_at: string;
 };
 
+type PartnerMetrics = {
+  indications: number;
+  converted: number;
+  commission: number;
+};
+
+type PartnerMetricsRow = {
+  partner_id: string;
+  indications: number | string | null;
+  converted: number | string | null;
+  commission_generated: number | string | null;
+};
+
 type PartnerForm = {
   nome: string;
   telefone: string;
@@ -80,6 +93,12 @@ const EMPTY_FORM: PartnerForm = {
   comissao_pct: "",
   pix_tipo: "cpf_cnpj",
   pix_chave: "",
+};
+
+const EMPTY_METRICS: PartnerMetrics = {
+  indications: 0,
+  converted: 0,
+  commission: 0,
 };
 
 const PIX_KEY_LABELS: Record<PixKeyType, string> = {
@@ -209,6 +228,9 @@ function todayLocalDate() {
 
 export default function MeusParceiros() {
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [metricsByPartner, setMetricsByPartner] = useState<
+    Record<string, PartnerMetrics>
+  >({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -223,15 +245,32 @@ export default function MeusParceiros() {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: queryError } = await supabase
-        .from("partners")
-        .select(
-          "id,nome,telefone,email,tipo,cpf_cnpj,data_nascimento_constituicao,comissao_pct,pix_tipo,pix_chave,created_by,unit_id,created_at,updated_at",
-        )
-        .order("nome", { ascending: true });
+      const [partnersResult, metricsResult] = await Promise.all([
+        supabase
+          .from("partners")
+          .select(
+            "id,nome,telefone,email,tipo,cpf_cnpj,data_nascimento_constituicao,comissao_pct,pix_tipo,pix_chave,created_by,unit_id,created_at,updated_at",
+          )
+          .order("nome", { ascending: true }),
+        supabase.rpc("get_partner_metrics"),
+      ]);
 
-      if (queryError) throw queryError;
-      setPartners((data || []) as Partner[]);
+      if (partnersResult.error) throw partnersResult.error;
+      if (metricsResult.error) throw metricsResult.error;
+
+      const nextMetrics = Object.fromEntries(
+        ((metricsResult.data || []) as PartnerMetricsRow[]).map((row) => [
+          row.partner_id,
+          {
+            indications: Number(row.indications) || 0,
+            converted: Number(row.converted) || 0,
+            commission: Number(row.commission_generated) || 0,
+          },
+        ]),
+      );
+
+      setPartners((partnersResult.data || []) as Partner[]);
+      setMetricsByPartner(nextMetrics);
     } catch (caught: any) {
       setError(caught?.message || "Não foi possível carregar os parceiros.");
     } finally {
@@ -260,12 +299,25 @@ export default function MeusParceiros() {
     );
   }, [partners, search]);
 
-  const summary = {
-    total: partners.length,
-    indications: 0,
-    converted: 0,
-    commission: 0,
-  };
+  const summary = useMemo(
+    () =>
+      partners.reduce(
+        (current, partner) => {
+          const metrics = metricsByPartner[partner.id] ?? EMPTY_METRICS;
+          current.indications += metrics.indications;
+          current.converted += metrics.converted;
+          current.commission += metrics.commission;
+          return current;
+        },
+        {
+          total: partners.length,
+          indications: 0,
+          converted: 0,
+          commission: 0,
+        },
+      ),
+    [metricsByPartner, partners],
+  );
 
   function openCreate() {
     setEditingId(null);
@@ -637,6 +689,7 @@ export default function MeusParceiros() {
                       <PartnerTableRow
                         key={partner.id}
                         partner={partner}
+                        metrics={metricsByPartner[partner.id] ?? EMPTY_METRICS}
                         deleting={deletingId === partner.id}
                         onCopyPix={() => copyPixKey(partner)}
                         onEdit={() => openEdit(partner)}
@@ -652,6 +705,7 @@ export default function MeusParceiros() {
                   <PartnerMobileCard
                     key={partner.id}
                     partner={partner}
+                    metrics={metricsByPartner[partner.id] ?? EMPTY_METRICS}
                     deleting={deletingId === partner.id}
                     onCopyPix={() => copyPixKey(partner)}
                     onEdit={() => openEdit(partner)}
@@ -965,12 +1019,14 @@ function SummaryCard({
 
 function PartnerTableRow({
   partner,
+  metrics,
   deleting,
   onCopyPix,
   onEdit,
   onDelete,
 }: {
   partner: Partner;
+  metrics: PartnerMetrics;
   deleting: boolean;
   onCopyPix: () => void;
   onEdit: () => void;
@@ -1029,10 +1085,14 @@ function PartnerTableRow({
       <td className="px-4 py-4 text-right font-black text-[#A11C27]">
         {formatPercent(partner.comissao_pct)}
       </td>
-      <td className="px-4 py-4 text-center font-bold text-slate-700">0</td>
-      <td className="px-4 py-4 text-center font-bold text-slate-700">0</td>
+      <td className="px-4 py-4 text-center font-bold text-slate-700">
+        {metrics.indications}
+      </td>
+      <td className="px-4 py-4 text-center font-bold text-slate-700">
+        {metrics.converted}
+      </td>
       <td className="px-4 py-4 text-right font-bold text-slate-700">
-        {formatCurrency(0)}
+        {formatCurrency(metrics.commission)}
       </td>
       <td className="px-5 py-4">
         <div className="flex justify-end gap-1">
@@ -1066,12 +1126,14 @@ function PartnerTableRow({
 
 function PartnerMobileCard({
   partner,
+  metrics,
   deleting,
   onCopyPix,
   onEdit,
   onDelete,
 }: {
   partner: Partner;
+  metrics: PartnerMetrics;
   deleting: boolean;
   onCopyPix: () => void;
   onEdit: () => void;
@@ -1126,9 +1188,8 @@ function PartnerMobileCard({
           <QrCode className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1">
             <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">
-              PIX · {partner.pix_tipo
-                ? PIX_KEY_LABELS[partner.pix_tipo]
-                : "Pendente"}
+              PIX ·{" "}
+              {partner.pix_tipo ? PIX_KEY_LABELS[partner.pix_tipo] : "Pendente"}
             </span>
             <span className="block truncate">{formatPixKey(partner)}</span>
           </span>
@@ -1137,9 +1198,12 @@ function PartnerMobileCard({
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-3 text-center">
-        <MobileMetric label="Indicações" value="0" />
-        <MobileMetric label="Convertidas" value="0" />
-        <MobileMetric label="Gerada" value={formatCurrency(0)} />
+        <MobileMetric label="Indicações" value={String(metrics.indications)} />
+        <MobileMetric label="Convertidas" value={String(metrics.converted)} />
+        <MobileMetric
+          label="Gerada"
+          value={formatCurrency(metrics.commission)}
+        />
       </div>
 
       <div className="mt-3 flex justify-end gap-2">

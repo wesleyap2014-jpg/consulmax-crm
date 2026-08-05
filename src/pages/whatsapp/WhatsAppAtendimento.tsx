@@ -1010,7 +1010,8 @@ export default function WhatsAppAtendimento() {
       setTemplateFallbackMessage("");
       await load(true);
       await open(conv as Conv);
-      if (startMessage.trim() && in24h(conv as Conv))
+      if (startTemplate) await sendTemplate(conv as Conv);
+      else if (startMessage.trim() && in24h(conv as Conv))
         await sendPayload(conv as Conv, startMessage.trim());
     } catch (e: any) {
       alert(e?.message || "Não foi possível criar ticket.");
@@ -1108,10 +1109,76 @@ export default function WhatsAppAtendimento() {
       setRetryingId(null);
     }
   }
+  function normalizeTemplateVarKey(value?: string | null) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  }
+
+  function templateVariableNamesFromBody(body?: string | null) {
+    const matches = Array.from(
+      String(body || "").matchAll(/{{\s*([^}]+)\s*}}/g),
+    ).map((match) => String(match[1] || "").trim());
+    return Array.from(new Set(matches));
+  }
+
+  function defaultTemplateValue(conv: Conv, variableName: string) {
+    const key = normalizeTemplateVarKey(variableName);
+    const fullName = nameOf(conv) || "Cliente";
+    const firstName = fullName.split(/\s+/)[0] || fullName;
+    const phone = onlyDigits(phoneOf(conv));
+    if (["1", "nome", "nomecliente", "cliente", "primeironome"].includes(key))
+      return firstName;
+    if (["nomecompleto", "nomeclientecompleto"].includes(key)) return fullName;
+    if (["telefone", "celular", "whatsapp"].includes(key)) return phone;
+    if (["consultor", "nomeconsultor"].includes(key)) return "Wesley";
+    return "";
+  }
+
+  function templateVariableValues(conv: Conv) {
+    const selected = templates.find(
+      (template) => template.name === startTemplate,
+    );
+    const variables = templateVariableNamesFromBody(selected?.body);
+    return variables.map((variableName) => {
+      const automaticValue = defaultTemplateValue(conv, variableName);
+      const value =
+        automaticValue ||
+        window.prompt(
+          `Informe o valor de {{${variableName}}} para o modelo ${startTemplate}:`,
+          "",
+        ) ||
+        "";
+      if (!String(value).trim())
+        throw new Error(
+          `Envio cancelado. A variável {{${variableName}}} não foi preenchida.`,
+        );
+      return {
+        name: variableName,
+        parameter_name: variableName,
+        type: "text",
+        text: String(value).trim(),
+      };
+    });
+  }
+
   async function sendTemplate(conv: Conv) {
     if (!startTemplate) return alert("Selecione um modelo aprovado.");
+    let params: any[] = [];
+    try {
+      params = templateVariableValues(conv);
+    } catch (e: any) {
+      return alert(
+        e?.message || "Não foi possível preencher as variáveis do modelo.",
+      );
+    }
     setSending(true);
     try {
+      const selected = templates.find(
+        (template) => template.name === startTemplate,
+      );
       const res = await fetch("/api/whatsapp/template", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1119,7 +1186,8 @@ export default function WhatsAppAtendimento() {
           conversation_id: conv.id,
           to: phoneOf(conv),
           template_name: startTemplate,
-          template_language: "pt_BR",
+          template_language: selected?.language || "pt_BR",
+          template_params: params,
         }),
       });
       const json = await res.json().catch(() => null);

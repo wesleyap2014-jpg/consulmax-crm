@@ -35,6 +35,41 @@
     <!-- (Opcional, mas ajuda no Android/Chrome) -->
     <meta name="mobile-web-app-capable" content="yes" />
 
+    <!--
+      Compatibilidade da integração de contempladas:
+      a tela antiga consulta diretamente o domínio externo. Redirecionamos somente
+      essa chamada para uma rota interna sem cache, evitando CORS e estoque congelado.
+    -->
+    <script>
+      (() => {
+        const externalStockUrl =
+          "https://fragaebitelloconsorcios.com.br/api/json/contemplados";
+        const nativeFetch = window.fetch.bind(window);
+
+        window.fetch = (input, init) => {
+          const requestUrl =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input instanceof Request
+                  ? input.url
+                  : "";
+
+          const normalizedUrl = requestUrl.replace(/\?.*$/, "").replace(/\/$/, "");
+
+          if (normalizedUrl === externalStockUrl) {
+            return nativeFetch(`/api/contempladas?refresh=${Date.now()}`, {
+              ...init,
+              cache: "no-store",
+            });
+          }
+
+          return nativeFetch(input, init);
+        };
+      })();
+    </script>
+
     <!-- Meta Pixel: mantém os dois conjuntos de dados ativos durante a unificação -->
     <script>
       !(function (f, b, e, v, n, t, s) {

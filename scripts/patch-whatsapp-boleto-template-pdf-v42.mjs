@@ -130,18 +130,37 @@ replace(
       params = templateVariableValues(conv, boletoOverrides);`
 );
 
-const modalRegex = /\{boletoOverlay && <Modal title="Anexar boleto em PDF"[\s\S]*?\}\{finishOpen && <Modal title="Finalizar conversa"/;
-const newModal = `{boletoOverlay && <Modal title="Anexar boleto e vencimento" subtitle="O modelo selecionado exige o PDF do boleto e a data de vencimento." onClose={() => { if (!sending) { setBoletoOverlay(null); setBoletoFile(null); setBoletoDueDate(""); } }}><div className="space-y-4"><div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-black">Modelo selecionado: {boletoTemplateTitle(boletoOverlay.templateName)}</p><p className="mt-1">Selecione o boleto em PDF e informe a data de vencimento para preencher o modelo automaticamente.</p></div><div><label className="mb-1 block text-xs font-black uppercase tracking-[0.14em] text-slate-500">Data de vencimento do boleto</label><input type="date" value={boletoDueDate} onChange={(e) => setBoletoDueDate(e.target.value)} className="w-full rounded-2xl border px-4 py-3 text-sm font-bold text-slate-700" /></div><label className="block cursor-pointer rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center hover:bg-slate-100"><input type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => setBoletoFile(e.target.files?.[0] || null)} /><Paperclip className="mx-auto mb-2 h-6 w-6 text-slate-500" /><p className="text-sm font-black text-slate-800">Selecionar PDF do boleto</p><p className="mt-1 text-xs text-slate-500">Apenas arquivo .pdf</p></label>{boletoFile && <div className="flex items-center justify-between rounded-2xl bg-slate-100 px-4 py-3 text-sm"><span className="truncate font-bold text-slate-700">📎 {boletoFile.name}</span><button className="text-xs font-black text-[#A11C27]" onClick={() => setBoletoFile(null)}>remover</button></div>}<div className="flex justify-end gap-2"><button disabled={sending} onClick={() => { setBoletoOverlay(null); setBoletoFile(null); setBoletoDueDate(""); }} className="rounded-2xl border px-4 py-3 text-sm font-black text-slate-600 disabled:opacity-50">Cancelar</button><button disabled={sending || !boletoFile || !boletoDueDate} onClick={async () => { if (!boletoOverlay?.conv || !boletoFile || !boletoDueDate) return; await sendTemplate(boletoOverlay.conv, boletoFile, boletoDueDate); setBoletoOverlay(null); setBoletoFile(null); setBoletoDueDate(""); }} className="rounded-2xl bg-[#A11C27] px-4 py-3 text-sm font-black text-white disabled:opacity-50">{sending ? "Enviando..." : "Enviar modelo com boleto"}</button></div></div></Modal>}{finishOpen && <Modal title="Finalizar conversa"`;
+const newBoletoModal = `{boletoOverlay && <Modal title="Anexar boleto e vencimento" subtitle="O modelo selecionado exige o PDF do boleto e a data de vencimento." onClose={() => { if (!sending) { setBoletoOverlay(null); setBoletoFile(null); setBoletoDueDate(""); } }}><div className="space-y-4"><div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-black">Modelo selecionado: {boletoTemplateTitle(boletoOverlay.templateName)}</p><p className="mt-1">Selecione o boleto em PDF e informe a data de vencimento para preencher o modelo automaticamente.</p></div><div><label className="mb-1 block text-xs font-black uppercase tracking-[0.14em] text-slate-500">Data de vencimento do boleto</label><input type="date" value={boletoDueDate} onChange={(e) => setBoletoDueDate(e.target.value)} className="w-full rounded-2xl border px-4 py-3 text-sm font-bold text-slate-700" /></div><label className="block cursor-pointer rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center hover:bg-slate-100"><input type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => setBoletoFile(e.target.files?.[0] || null)} /><Paperclip className="mx-auto mb-2 h-6 w-6 text-slate-500" /><p className="text-sm font-black text-slate-800">Selecionar PDF do boleto</p><p className="mt-1 text-xs text-slate-500">Apenas arquivo .pdf</p></label>{boletoFile && <div className="flex items-center justify-between rounded-2xl bg-slate-100 px-4 py-3 text-sm"><span className="truncate font-bold text-slate-700">📎 {boletoFile.name}</span><button className="text-xs font-black text-[#A11C27]" onClick={() => setBoletoFile(null)}>remover</button></div>}<div className="flex justify-end gap-2"><button disabled={sending} onClick={() => { setBoletoOverlay(null); setBoletoFile(null); setBoletoDueDate(""); }} className="rounded-2xl border px-4 py-3 text-sm font-black text-slate-600 disabled:opacity-50">Cancelar</button><button disabled={sending || !boletoFile || !boletoDueDate} onClick={async () => { if (!boletoOverlay?.conv || !boletoFile || !boletoDueDate) return; await sendTemplate(boletoOverlay.conv, boletoFile, boletoDueDate); setBoletoOverlay(null); setBoletoFile(null); setBoletoDueDate(""); }} className="rounded-2xl bg-[#A11C27] px-4 py-3 text-sm font-black text-white disabled:opacity-50">{sending ? "Enviando..." : "Enviar modelo com boleto"}</button></div></div></Modal>}`;
 
-if (modalRegex.test(src)) {
-  src = src.replace(modalRegex, newModal);
-  changed = true;
-  log("modal boleto com vencimento", "aplicado");
-} else if (src.includes("title=\"Anexar boleto e vencimento\"")) {
+if (src.includes(`title="Anexar boleto e vencimento"`)) {
   log("modal boleto com vencimento", "já aplicado");
 } else {
-  log("modal boleto com vencimento", "trecho não encontrado");
+  const boletoModalRegex = /\{boletoOverlay\s*&&\s*<Modal\s+title="Anexar boleto em PDF"[\s\S]*?<\/Modal>\}/;
+  if (!boletoModalRegex.test(src)) {
+    throw new Error(
+      "[patch-whatsapp-boleto-template-pdf-v42] Não foi possível localizar o modal simples do boleto para adicionar o vencimento.",
+    );
+  }
+  src = src.replace(boletoModalRegex, newBoletoModal);
+  changed = true;
+  log("modal boleto com vencimento", "aplicado");
+}
+
+for (const [label, pattern] of [
+  ["estado vencimento", /\[\s*boletoDueDate\s*,\s*setBoletoDueDate\s*\]\s*=\s*useState\(""\)/],
+  ["modal PDF + vencimento", /title="Anexar boleto e vencimento"/],
+  ["campo vencimento", /value=\{boletoDueDate\}/],
+  ["envio com vencimento", /sendTemplate\(boletoOverlay\.conv,\s*boletoFile,\s*boletoDueDate\)/],
+  ["overlay com template", /setBoletoOverlay\(\{\s*conv,\s*templateName:\s*startTemplate\s*\}\)/],
+]) {
+  if (!pattern.test(src)) {
+    throw new Error(
+      `[patch-whatsapp-boleto-template-pdf-v42] Fluxo PDF + vencimento incompleto: ${label} ausente.`,
+    );
+  }
 }
 
 fs.writeFileSync(file, src);
-console.log("[patch-whatsapp-boleto-template-pdf-v42] concluído");
+console.log(
+  `[patch-whatsapp-boleto-template-pdf-v42] concluído${changed ? " com alterações" : " sem alterações"}`,
+);

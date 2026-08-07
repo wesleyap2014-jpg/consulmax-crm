@@ -44,6 +44,55 @@ if (
   );
 }
 
+const boletoStateChecks = [
+  {
+    used: source.includes("setBoletoFile("),
+    defined:
+      /\[\s*boletoFile\s*,\s*setBoletoFile\s*\]\s*=\s*useState<File\s*\|\s*null>\(null\)/.test(
+        source,
+      ),
+    label: "setBoletoFile",
+  },
+  {
+    used: source.includes("setBoletoOverlay("),
+    defined:
+      /\[\s*boletoOverlay\s*,\s*setBoletoOverlay\s*\]\s*=\s*useState/.test(
+        source,
+      ),
+    label: "setBoletoOverlay",
+  },
+  {
+    used: source.includes("setBoletoDueDate("),
+    defined:
+      /\[\s*boletoDueDate\s*,\s*setBoletoDueDate\s*\]\s*=\s*useState\(""\)/.test(
+        source,
+      ),
+    label: "setBoletoDueDate",
+  },
+];
+
+for (const check of boletoStateChecks) {
+  if (check.used && !check.defined) {
+    throw new Error(
+      `[validate-whatsapp-template-ticket-flow] ${check.label} é usado, mas o estado correspondente não está definido.`,
+    );
+  }
+}
+
+if (source.includes("BOLETO_TEMPLATE_NAMES")) {
+  for (const required of [
+    "mediaPayload.file_base64",
+    "fileToBase64(boletoPdf)",
+    "...mediaPayload",
+  ]) {
+    if (!sendTemplate.includes(required)) {
+      throw new Error(
+        `[validate-whatsapp-template-ticket-flow] Fluxo de PDF do boleto incompleto: ${required} ausente.`,
+      );
+    }
+  }
+}
+
 if (
   !/if\s*\(\s*startTemplate\s*\)\s*await\s+sendTemplate\(conv\s+as\s+Conv\)/m.test(
     createTicket,
@@ -68,5 +117,5 @@ for (const required of [
 }
 
 console.log(
-  "[validate-whatsapp-template-ticket-flow] ticket e envio do modelo validados",
+  "[validate-whatsapp-template-ticket-flow] ticket, template e anexo de boleto validados",
 );

@@ -4,10 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       run_login_diagnostic:
-        description: Abrir a página inicial e gerar diagnóstico seguro
+        description: Fazer login seguro e mapear a navegação do Convert+
         required: true
         default: true
         type: boolean
+  push:
+    branches:
+      - agent/preparar-robos-embracon
+    paths:
+      - .github/workflows/embracon-robot-lab.yml
+      - workers/embracon-worker/**
 
 permissions:
   contents: read
@@ -18,7 +24,7 @@ concurrency:
 
 jobs:
   diagnostic:
-    name: Preparar ambiente Embracon
+    name: Mapear Convert+ autenticado
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -40,15 +46,25 @@ jobs:
         working-directory: workers/embracon-worker
         run: test -f dist/index.js
 
-      - name: Diagnosticar página inicial da Embracon
-        if: ${{ inputs.run_login_diagnostic }}
+      - name: Validar secrets do Convert+
+        env:
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
+        run: |
+          test -n "$CONVERT_ROBOT_USERNAME" || (echo "Secret CONVERT_ROBOT_USERNAME ausente" && exit 1)
+          test -n "$CONVERT_ROBOT_PASSWORD" || (echo "Secret CONVERT_ROBOT_PASSWORD ausente" && exit 1)
+
+      - name: Fazer login e mapear navegação do Convert+
+        if: ${{ github.event_name == 'push' || inputs.run_login_diagnostic }}
         working-directory: workers/embracon-worker
         env:
           EMBRACON_ROBOT_PORTAL_URL: https://www.convertmais.com.br/AdminConvertMais/ConvertMaisWeb/login/
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
         run: node scripts/run-login-diagnostic.mjs
 
       - name: Salvar diagnóstico para análise
-        if: ${{ always() && inputs.run_login_diagnostic }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: embracon-login-diagnostic

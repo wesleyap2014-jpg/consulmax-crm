@@ -1,6 +1,8 @@
 import { chromium } from "playwright";
 
-const DEFAULT_PORTAL_URL = "https://www.convertmais.com.br/AdminConvertMais/ConvertMaisWeb/login/";
+// Diagnóstico temporário solicitado: abre exatamente a URL de autorização
+// Microsoft capturada no fluxo real do Convert+, sem usar credenciais.
+const DEFAULT_PORTAL_URL = "https://login.microsoftonline.com/d3b1fece-6695-49c0-8903-60fd690d0941/oauth2/v2.0/authorize?client_id=cfafb6bf-75bd-483b-8df2-dfdc568bbd1f&scope=openid%20profile%20offline_access&redirect_uri=https%3A%2F%2Fwww.convertmais.com.br%2FAdminConvertMais%2FConvertMaisWeb%2Flogin&client-request-id=029595db-37a9-4330-9de1-67344fff32c9&response_mode=fragment&response_type=code&x-client-SKU=msal.js.browser&x-client-VER=2.31.0&client_info=1&code_challenge=ihu1qzL8bmXN0vsSxFblF_2SMjzlv7YzzTjCUVqkB_4&code_challenge_method=S256&prompt=select_account&nonce=0b9189db-c66e-4c49-b486-1e4d63e9456b&state=eyJpZCI6IjFkMmEyMGExLTVhMTUtNGU2MC05MDQ4LWUzMDVlNWNiYTY1NiIsIm1ldGEiOnsiaW50ZXJhY3Rpb25UeXBlIjoicmVkaXJlY3QifX0%3D";
 const CHROME_BIN = process.env.AREA_RESTRITA_CHROME_BIN || "/usr/bin/google-chrome-stable";
 
 function cleanText(value) {
@@ -8,7 +10,7 @@ function cleanText(value) {
 }
 
 export async function checkConvertAccess(options = {}) {
-  const portalUrl = String(options.portalUrl || process.env.CONVERT_ROBOT_PORTAL_URL || DEFAULT_PORTAL_URL).trim();
+  const portalUrl = String(options.portalUrl || DEFAULT_PORTAL_URL).trim();
   const timeoutMs = Math.max(10_000, Number(options.timeoutMs || 45_000));
   let browser = null;
 
@@ -45,7 +47,7 @@ export async function checkConvertAccess(options = {}) {
         placeholder: input.getAttribute("placeholder") || null,
         visible: Boolean(input.offsetWidth || input.offsetHeight || input.getClientRects().length),
       }));
-      const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]')).map((button) => ({
+      const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')).map((button) => ({
         text: String(button.innerText || button.value || button.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().slice(0, 120),
         visible: Boolean(button.offsetWidth || button.offsetHeight || button.getClientRects().length),
       }));
@@ -60,16 +62,22 @@ export async function checkConvertAccess(options = {}) {
     const finalUrl = page.url();
     const bodyText = cleanText(snapshot.bodyText);
     const accessDenied = /access denied|acesso negado|request rejected|forbidden|not authorized/i.test(`${title} ${bodyText}`);
+    const microsoftDetected = /login\.microsoftonline\.com/i.test(finalUrl) && (
+      /entrar em sua conta|escolha uma conta|use outra conta|sign in|pick an account|use another account/i.test(`${title} ${bodyText}`) ||
+      snapshot.inputs.some((input) => input.visible && /loginfmt|passwd|email|password/i.test(`${input.name || ""} ${input.id || ""} ${input.type || ""}`))
+    );
     const loginDetected = snapshot.inputs.some((input) => input.visible && (
       input.type === "password" ||
       /user|usuario|usuário|login|email|cpf|senha|password/i.test(`${input.name || ""} ${input.id || ""} ${input.placeholder || ""}`)
-    )) || snapshot.buttons.some((button) => button.visible && /entrar|login|acessar/i.test(button.text));
+    )) || snapshot.buttons.some((button) => button.visible && /entrar|login|acessar|avançar|next/i.test(button.text));
 
     const state = accessDenied
       ? "access_denied"
-      : loginDetected
-        ? "login_page_available"
-        : "page_loaded_but_login_not_detected";
+      : microsoftDetected
+        ? "microsoft_login_available"
+        : loginDetected
+          ? "login_page_available"
+          : "page_loaded_but_login_not_detected";
 
     return {
       ok: !accessDenied,
@@ -78,6 +86,7 @@ export async function checkConvertAccess(options = {}) {
       httpStatus: response?.status() || null,
       title: title || null,
       finalUrl,
+      microsoftDetected,
       loginDetected,
       inputCount: snapshot.inputs.length,
       buttonCount: snapshot.buttons.length,

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { checkConvertAccess } from "./convert-access-check.mjs";
 
 const PORT = Number(process.env.AREA_RESTRITA_CONTROL_PORT || 3100);
 const HOST = "127.0.0.1";
@@ -25,8 +26,16 @@ const chainPollMs = Math.max(10_000, Number(process.env.AREA_RESTRITA_CHAIN_POLL
 const chainMaxAgeHours = Math.max(1, Number(process.env.AREA_RESTRITA_CHAIN_MAX_AGE_HOURS || 48));
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+const convertUsernameConfigured = Boolean(String(process.env.CONVERT_ROBOT_USERNAME || "").trim());
+const convertPasswordConfigured = Boolean(String(process.env.CONVERT_ROBOT_PASSWORD || "").trim());
 
 let activeSync = null;
+let convertAccessPromise = null;
+let convertAccessState = {
+  ok: null,
+  state: "not_checked",
+  checkedAt: null,
+};
 let lastWeeklyKey = null;
 let chainState = {
   lastJobId: null,
@@ -65,6 +74,51 @@ function bearerToken(request) {
 
 function authorized(request) {
   return Boolean(robotSecret) && bearerToken(request) === robotSecret;
+}
+
+async function runConvertAccessCheck(source = "manual") {
+  if (convertAccessPromise) {
+    return {
+      ...convertAccessState,
+      running: true,
+      source,
+    };
+  }
+
+  convertAccessState = {
+    ok: null,
+    state: "checking",
+    checkedAt: null,
+    source,
+  };
+
+  convertAccessPromise = checkConvertAccess()
+    .then((result) => {
+      convertAccessState = {
+        ...result,
+        source,
+      };
+      console.log(
+        `[embracon] Convert+ access-check: ${result.state}; HTTP ${result.httpStatus ?? "—"}; URL ${result.finalUrl || "—"}`,
+      );
+      return convertAccessState;
+    })
+    .catch((error) => {
+      convertAccessState = {
+        ok: false,
+        state: "request_error",
+        checkedAt: new Date().toISOString(),
+        source,
+        error: String(error?.message || error).replace(/\s+/g, " ").trim().slice(0, 500),
+      };
+      console.error(`[embracon] falha no access-check Convert+: ${convertAccessState.error}`);
+      return convertAccessState;
+    })
+    .finally(() => {
+      convertAccessPromise = null;
+    });
+
+  return convertAccessPromise;
 }
 
 function localParts(date = new Date()) {
@@ -273,6 +327,7 @@ const server = http.createServer(async (request, response) => {
       service: "consulmax-area-restrita-worker",
       startedAt,
       syncRunning: Boolean(activeSync && activeSync.exitCode === null),
+      embraconAccessState: convertAccessState.state,
     });
   }
 
@@ -300,6 +355,11 @@ const server = http.createServer(async (request, response) => {
       usernameConfigured: Boolean(process.env.AREA_RESTRITA_USERNAME),
       passwordConfigured: Boolean(process.env.AREA_RESTRITA_PASSWORD),
       remoteAccessConfigured: Boolean(process.env.AREA_RESTRITA_VNC_PASSWORD),
+      embracon: {
+        usernameConfigured: convertUsernameConfigured,
+        passwordConfigured: convertPasswordConfigured,
+        accessCheck: convertAccessState,
+      },
       autoChain: {
         enabled: maggiChainEnabled,
         supabaseConfigured: Boolean(supabaseUrl && supabaseServiceRoleKey),
@@ -330,6 +390,14 @@ const server = http.createServer(async (request, response) => {
     });
   }
 
+  if (request.method === "POST" && url.pathname === "/embracon/access-check") {
+    const result = await runConvertAccessCheck("manual");
+    return sendJson(response, result.ok ? 200 : 502, {
+      ...result,
+      credentialsUsed: false,
+    });
+  }
+
   return sendJson(response, 404, { ok: false, error: "not_found" });
 });
 
@@ -340,6 +408,14 @@ server.listen(PORT, HOST, () => {
   setTimeout(() => checkMaggiCompletionChain().catch((error) => {
     console.error(`[area-restrita] falha no primeiro encadeamento Maggi: ${String(error?.message || error)}`);
   }), 8_000).unref();
+
+  if (convertUsernameConfigured && convertPasswordConfigured) {
+    setTimeout(() => runConvertAccessCheck("startup").catch((error) => {
+      console.error(`[embracon] falha no teste inicial do Convert+: ${String(error?.message || error)}`);
+    }), 12_000).unref();
+  } else {
+    console.log("[embracon] access-check inicial não executado: CONVERT_ROBOT_USERNAME/PASSWORD ainda não configurados.");
+  }
 
   if (String(process.env.AREA_RESTRITA_RUN_ON_START || "false") === "true") {
     setTimeout(() => startSync("startup").catch((error) => {

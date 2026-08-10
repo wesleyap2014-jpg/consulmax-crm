@@ -8,12 +8,6 @@ on:
         required: true
         default: true
         type: boolean
-  push:
-    branches:
-      - agent/preparar-robos-embracon
-    paths:
-      - .github/workflows/embracon-robot-lab.yml
-      - workers/embracon-worker/**
 
 permissions:
   contents: read
@@ -55,7 +49,7 @@ jobs:
           test -n "$CONVERT_ROBOT_PASSWORD" || (echo "Secret CONVERT_ROBOT_PASSWORD ausente" && exit 1)
 
       - name: Fazer login e mapear navegação do Convert+
-        if: ${{ github.event_name == 'push' || inputs.run_login_diagnostic }}
+        if: ${{ inputs.run_login_diagnostic }}
         working-directory: workers/embracon-worker
         env:
           EMBRACON_ROBOT_PORTAL_URL: https://www.convertmais.com.br/AdminConvertMais/ConvertMaisWeb/login/

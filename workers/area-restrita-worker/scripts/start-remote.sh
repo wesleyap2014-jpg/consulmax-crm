@@ -19,7 +19,7 @@ rm -f "${PROFILE_DIR}/SingletonLock" "${PROFILE_DIR}/SingletonSocket" "${PROFILE
 
 cleanup() {
   local code=$?
-  kill "${MICROSOFT_DIAG_PID:-}" "${CONTROL_PID:-}" "${NGINX_PID:-}" "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
+  kill "${CONTROL_PID:-}" "${NGINX_PID:-}" "${BROWSER_PID:-}" "${WEBSOCKIFY_PID:-}" "${VNC_PID:-}" "${FLUXBOX_PID:-}" "${XVFB_PID:-}" 2>/dev/null || true
   wait 2>/dev/null || true
   exit "$code"
 }
@@ -89,18 +89,6 @@ done
 echo "[area-restrita] navegador remoto protegido iniciado."
 echo "[area-restrita] usuário do acesso remoto: consulmax"
 echo "[area-restrita] API de controle disponível internamente na porta ${AREA_RESTRITA_CONTROL_PORT}."
-
-# Diagnóstico temporário da Embracon: executa uma única tentativa após este deploy.
-# Não registra usuário, senha, cookies, códigos OAuth ou tokens nos logs.
-if [[ -n "${CONVERT_ROBOT_USERNAME:-}" && -n "${CONVERT_ROBOT_PASSWORD:-}" ]]; then
-  (
-    sleep 20
-    node /app/scripts/run-convert-microsoft-login-check.mjs
-  ) &
-  MICROSOFT_DIAG_PID=$!
-else
-  echo "[embracon] Microsoft login-check não executado: CONVERT_ROBOT_USERNAME/PASSWORD ausentes."
-fi
 
 # Reinicia o serviço se qualquer processo essencial encerrar.
 wait -n "${XVFB_PID}" "${VNC_PID}" "${WEBSOCKIFY_PID}" "${BROWSER_PID}" "${CONTROL_PID}" "${NGINX_PID}"

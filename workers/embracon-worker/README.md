@@ -42,17 +42,17 @@ O diagnóstico não envia usuário/senha, não lê valores digitados e não seri
 
 ## Credenciais
 
-Como o Playwright roda no GitHub Actions, as credenciais da Embracon devem ficar em **GitHub → Settings → Secrets and variables → Actions → Secrets**, e não na Vercel:
+Como o Playwright roda no GitHub Actions, as credenciais do Convert+ devem ficar em **GitHub → Settings → Secrets and variables → Actions → Secrets**, e não na Vercel:
 
-- `EMBRACON_ROBOT_USERNAME`
-- `EMBRACON_ROBOT_PASSWORD`
+- `CONVERT_ROBOT_USERNAME`
+- `CONVERT_ROBOT_PASSWORD`
 
 Quando o robô começar a gravar grupos, poderá reutilizar os secrets de Supabase já usados pelos demais robôs:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
-As credenciais da Embracon não devem ser expostas em variáveis públicas nem enviadas ao frontend.
+As credenciais do Convert+ não devem ser expostas em variáveis públicas nem enviadas ao frontend.
 
 ## Vercel
 
@@ -63,7 +63,7 @@ A Vercel continua responsável pelo CRM e pelo endpoint que aciona os workflows.
 1. Executar o laboratório contra a URL real da área restrita Embracon.
 2. Ler o JSON e a screenshot gerados pelo artifact `embracon-login-diagnostic`.
 3. Mapear o fluxo real de login e navegação até os grupos existentes.
-4. Implementar o login usando secrets do GitHub Actions.
+4. Implementar o login usando `CONVERT_ROBOT_USERNAME` e `CONVERT_ROBOT_PASSWORD`.
 5. Implementar leitura/paginação dos grupos.
 6. Definir a tabela `sim_embracon_groups` com base nos dados reais encontrados.
 7. Integrar a Embracon a `robot_sync_jobs` e à Central de Grupos após a primeira sincronização real ser validada.

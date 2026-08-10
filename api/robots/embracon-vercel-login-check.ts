@@ -21,10 +21,11 @@ function safeUrl(value: string) {
   }
 }
 
-function isTechnicalVercelHost(req: VercelRequest) {
+function isExactDeploymentHost(req: VercelRequest) {
   const forwarded = String(req.headers["x-forwarded-host"] || "");
-  const host = forwarded || String(req.headers.host || "");
-  return /\.vercel\.app(?::\d+)?$/i.test(host);
+  const host = (forwarded || String(req.headers.host || "")).split(":")[0].toLowerCase();
+  const deploymentHost = String(process.env.VERCEL_URL || "").split(":")[0].toLowerCase();
+  return Boolean(deploymentHost) && host === deploymentHost;
 }
 
 async function bodyText(page: any) {
@@ -60,9 +61,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ ok: false, error: "method_not_allowed" });
   }
 
-  // Diagnóstico temporário: executa somente na URL técnica protegida da Vercel,
-  // nunca pelo domínio público crm.consulmaxconsorcios.com.br.
-  if (!isTechnicalVercelHost(req)) {
+  // Diagnóstico temporário: somente a URL única do deployment atual pode executar.
+  // Aliases públicos e o domínio crm.consulmaxconsorcios.com.br recebem 404.
+  if (!isExactDeploymentHost(req)) {
     return res.status(404).json({ ok: false, error: "not_found" });
   }
 
@@ -139,8 +140,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await page.waitForURL(/login\.microsoftonline\.com/i, { timeout: 20_000 }).catch(() => null);
     await page.waitForTimeout(800);
 
-    // Em contexto limpo normalmente aparece o campo de e-mail. Se aparecer a
-    // escolha de conta, selecionamos "usar outra conta" sem ler dados pessoais.
     const useAnother = page.getByText(/use another account|usar outra conta/i).first();
     if (await useAnother.isVisible().catch(() => false)) {
       await useAnother.click();
@@ -188,7 +187,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (/continuar conectado|stay signed in/i.test(text)) {
-        // "Não" mantém o diagnóstico simples; a aplicação ainda recebe o callback.
         const noButton = page.locator("#idBtn_Back").first();
         if (await noButton.isVisible().catch(() => false)) {
           await noButton.click();

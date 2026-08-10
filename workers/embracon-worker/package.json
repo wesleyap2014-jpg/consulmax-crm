@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "check:access": "node scripts/run-access-check.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

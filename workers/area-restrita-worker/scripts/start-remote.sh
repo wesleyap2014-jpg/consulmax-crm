@@ -71,7 +71,8 @@ BROWSER_PID=$!
 
 # A API de controle dispara a sincronização inicial, os comandos manuais do CRM
 # e a rotina semanal de sexta-feira. Ela também consolida o status do worker.
-node /app/src/server.mjs >/tmp/area-restrita-control.log 2>&1 &
+# Espelha os logs no Railway e mantém a cópia local para diagnóstico.
+node /app/src/server.mjs > >(tee -a /tmp/area-restrita-control.log) 2>&1 &
 CONTROL_PID=$!
 
 nginx -g 'daemon off;' &

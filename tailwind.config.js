@@ -12,6 +12,9 @@ export default {
           gold: "#E0CE8C"
         }
       },
+      fontFamily: {
+        sans: ["Manrope", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"]
+      },
       borderRadius: {
         '2xl': '1rem'
       }

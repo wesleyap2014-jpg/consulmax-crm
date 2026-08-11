@@ -1,15 +1,41 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* =========================
-   Liquid Glass – variáveis
+   Identidade tipográfica Consulmax
    ========================= */
 :root {
+  --font-consulmax: "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --glass-bg: rgba(255, 255, 255, 0.55);
   --glass-brd: rgba(255, 255, 255, 0.35);
   --glass-blur: 10px;
   --gold-rgb: 181, 165, 115; /* B5A573 */
+}
+
+html,
+body,
+#root {
+  font-family: var(--font-consulmax);
+}
+
+button,
+input,
+textarea,
+select,
+option {
+  font-family: inherit;
+}
+
+/*
+ * Algumas telas legadas ainda possuem font-family inline (ex.: Inter/system-ui).
+ * Esta regra garante a nova identidade tipográfica em todas as guias sem alterar
+ * a lógica ou o layout específico de cada módulo.
+ */
+#root [style*="font-family"] {
+  font-family: var(--font-consulmax) !important;
 }
 
 /* =========================

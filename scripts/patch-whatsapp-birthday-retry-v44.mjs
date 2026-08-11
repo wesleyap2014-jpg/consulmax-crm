@@ -64,10 +64,10 @@ const resendTemplateHelper = `async function resendStoredTemplate(params: {
     form.append("type", mimeType);
 
     const uploadResponse = await fetch(
-      \`${GRAPH_BASE}/\${DEFAULT_PHONE_NUMBER_ID}/media\`,
+      GRAPH_BASE + "/" + DEFAULT_PHONE_NUMBER_ID + "/media",
       {
         method: "POST",
-        headers: { Authorization: \`Bearer \${META_TOKEN}\` },
+        headers: { Authorization: "Bearer " + META_TOKEN },
         body: form,
       },
     );
@@ -103,11 +103,11 @@ const resendTemplateHelper = `async function resendStoredTemplate(params: {
   if (components.length) templatePayload.components = components;
 
   const response = await fetch(
-    \`${GRAPH_BASE}/\${DEFAULT_PHONE_NUMBER_ID}/messages\`,
+    GRAPH_BASE + "/" + DEFAULT_PHONE_NUMBER_ID + "/messages",
     {
       method: "POST",
       headers: {
-        Authorization: \`Bearer \${META_TOKEN}\`,
+        Authorization: "Bearer " + META_TOKEN,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

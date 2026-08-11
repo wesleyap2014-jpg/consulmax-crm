@@ -150,7 +150,7 @@ const resendTemplateHelper = `async function resendStoredTemplate(params: {
     sender_type: "usuario",
     user_id: params.user_id || null,
     message_type: params.message.message_type || "template",
-    body: params.message.body || raw.template_rendered_body || `[Modelo enviado: \${templateName}]`,
+    body: params.message.body || raw.template_rendered_body || ("[Modelo enviado: " + templateName + "]"),
     media_mime_type: params.message.media_mime_type || storedMedia?.mime_type || null,
     meta_message_id: metaMessageId,
     raw_payload: nextRawPayload,
@@ -159,7 +159,7 @@ const resendTemplateHelper = `async function resendStoredTemplate(params: {
   await supabaseAdmin
     .from("whatsapp_conversations")
     .update({
-      last_message: params.message.body || raw.template_rendered_body || `[Modelo enviado: \${templateName}]`,
+      last_message: params.message.body || raw.template_rendered_body || ("[Modelo enviado: " + templateName + "]"),
       last_message_at: sentAt,
       unread_count: 0,
       status: "humano",

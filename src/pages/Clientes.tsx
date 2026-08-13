@@ -1,5 +1,11 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  getCountries,
+  getCountryCallingCode,
+  parsePhoneNumberFromString,
+  type CountryCode,
+} from "libphonenumber-js";
 import { supabase } from "@/lib/supabaseClient";
 import { Pencil, CalendarPlus, Eye, Send, Check, Loader2, X, Plus, Search, Download } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -87,6 +93,7 @@ type CadastroExtra = {
   conjuge_sexo: Sexo | "";
 
   chamado_como: string;
+  telefone_pais?: CountryCode;
 
   endereco_cep: string;
   logradouro: string;
@@ -153,8 +160,64 @@ const REGIMES_CASAMENTO: RegimeCasamento[] = [
   "Outro",
 ];
 
+const countryNames =
+  typeof Intl.DisplayNames === "function"
+    ? new Intl.DisplayNames(["pt-BR"], { type: "region" })
+    : null;
+const phoneCountries = getCountries()
+  .map((code) => ({
+    code,
+    name: countryNames?.of(code) || code,
+    dialCode: getCountryCallingCode(code),
+  }))
+  .sort((a, b) => {
+    if (a.code === "BR") return -1;
+    if (b.code === "BR") return 1;
+    return a.name.localeCompare(b.name, "pt-BR");
+  });
+const PHONE_COUNTRY_SET = new Set<string>(phoneCountries.map((c) => c.code));
+
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
 const clamp = (s: string, n: number) => (s || "").slice(0, n);
+
+const normalizeCountryCode = (v?: string | null): CountryCode =>
+  PHONE_COUNTRY_SET.has(String(v || "").toUpperCase()) ? (String(v).toUpperCase() as CountryCode) : "BR";
+
+const parseStoredPhone = (phone?: string | null, countryHint?: CountryCode | null) => {
+  const raw = String(phone || "").trim();
+  if (!raw) return null;
+
+  if (raw.startsWith("+")) return parsePhoneNumberFromString(raw) || null;
+
+  const digits = onlyDigits(raw);
+  if (digits.length > 11) {
+    const international = parsePhoneNumberFromString(`+${digits}`);
+    if (international?.isValid()) return international;
+  }
+
+  return parsePhoneNumberFromString(raw, countryHint || "BR") || null;
+};
+
+const formatPhone = (phone?: string | null, countryHint?: CountryCode | null) =>
+  parseStoredPhone(phone, countryHint)?.formatInternational() || String(phone || "") || "—";
+
+const phoneInputValue = (phone?: string | null, countryHint?: CountryCode | null) =>
+  parseStoredPhone(phone, countryHint)?.formatNational() || String(phone || "");
+
+const phoneCountryFromStored = (phone?: string | null, countryHint?: CountryCode | null): CountryCode =>
+  parseStoredPhone(phone, countryHint)?.country || countryHint || "BR";
+
+const parseClientPhone = (country: CountryCode, phone: string) => {
+  const raw = String(phone || "").trim();
+  if (!raw) return null;
+  const parsed = raw.startsWith("+")
+    ? parsePhoneNumberFromString(raw)
+    : parsePhoneNumberFromString(raw, country);
+  return parsed?.isValid() ? parsed.number : null;
+};
+
+const waNumber = (phone?: string | null) =>
+  parseStoredPhone(phone)?.number.replace("+", "") || onlyDigits(String(phone || ""));
 
 const splitSegments = (v: string) =>
   (v || "")
@@ -192,20 +255,6 @@ const normalizeSegmentList = (raw: any): string[] => {
   }
 
   return out.filter((x, i, arr) => arr.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i);
-};
-
-const maskPhone = (v: string) => {
-  const d = onlyDigits(v).slice(0, 11);
-  const p1 = d.slice(0, 2),
-    p2 = d.slice(2, 3),
-    p3 = d.slice(3, 7),
-    p4 = d.slice(7, 11);
-  let out = "";
-  if (p1) out += `(${p1}) `;
-  if (p2) out += p2 + (p3 ? " " : "");
-  if (p3) out += p3;
-  if (p4) out += "-" + p4;
-  return out.trim();
 };
 
 const formatBRDate = (iso?: string | null) => {
@@ -258,6 +307,7 @@ const emptyExtra = (): CadastroExtra => ({
   conjuge_sexo: "",
 
   chamado_como: "",
+  telefone_pais: "BR",
 
   endereco_cep: "",
   logradouro: "",
@@ -310,6 +360,7 @@ function normalizeExtra(raw?: any): CadastroExtra {
 
   return {
     ...merged,
+    telefone_pais: normalizeCountryCode(raw?.telefone_pais),
     segmentos,
     preferencias_envio,
     conteudos: Array.isArray(raw?.conteudos) ? raw.conteudos.filter((x: any) => CONTEUDOS.includes(x)) : [],
@@ -764,6 +815,7 @@ export default function ClientesPage() {
   const [chamadoComo, setChamadoComo] = useState("");
   const [cpf, setCpf] = useState("");
   const [birth, setBirth] = useState<string>("");
+  const [phoneCountry, setPhoneCountry] = useState<CountryCode>("BR");
   const [telefone, setTelefone] = useState("");
   const [email, setEmail] = useState("");
 
@@ -795,6 +847,13 @@ export default function ClientesPage() {
     loadDemografia();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  function hydratePhone(raw?: string | null, countryHint?: CountryCode | null) {
+    const hint = countryHint || undefined;
+    const country = phoneCountryFromStored(raw, hint);
+    setPhoneCountry(country);
+    setTelefone(phoneInputValue(raw, country));
+  }
 
   async function getLeadIdsBySearch(term: string): Promise<string[] | null> {
     const t = term.trim();
@@ -915,7 +974,9 @@ export default function ClientesPage() {
         const lid = c.lead_id ? String(c.lead_id) : "";
         if (!lid) return;
         const { extra } = safeParseExtraFromObservacoes(c.observacoes);
-        confirmedByLead.set(lid, { id: String(c.id), extra: extra || null, uf: c.uf ?? null, cidade: c.cidade ?? null });
+        const resolvedUf = normalizeUF(extra?.uf || c.uf || "") || null;
+        const resolvedCidade = String(extra?.cidade || c.cidade || "").trim() || null;
+        confirmedByLead.set(lid, { id: String(c.id), extra: extra || null, uf: resolvedUf, cidade: resolvedCidade });
       });
 
       const base: ClienteBase[] = [];
@@ -996,6 +1057,7 @@ export default function ClientesPage() {
     setChamadoComo("");
     setCpf("");
     setBirth("");
+    setPhoneCountry("BR");
     setTelefone("");
     setEmail("");
     setExtra(emptyExtra());
@@ -1011,7 +1073,7 @@ export default function ClientesPage() {
     setNome(c.nome || "");
     setCpf(c.cpf_dig || "");
     setBirth(c.data_nascimento || "");
-    setTelefone(c.telefone ? maskPhone(c.telefone) : "");
+    hydratePhone(c.telefone);
     setEmail(c.email || "");
 
     if (mode !== "novo") {
@@ -1029,7 +1091,6 @@ export default function ClientesPage() {
           setNome(row.nome || c.nome || "");
           setCpf(row.cpf || c.cpf_dig || "");
           setBirth(row.data_nascimento || c.data_nascimento || "");
-          setTelefone(row.telefone ? maskPhone(row.telefone) : c.telefone ? maskPhone(c.telefone) : "");
           setEmail(row.email || c.email || "");
 
           const { extra: parsedExtra, legacyText } = safeParseExtraFromObservacoes(row.observacoes);
@@ -1041,8 +1102,11 @@ export default function ClientesPage() {
           merged.logradouro = (row as any).logradouro || merged.logradouro;
           merged.numero = (row as any).numero || merged.numero;
           merged.bairro = (row as any).bairro || merged.bairro;
-          merged.cidade = (row as any).cidade || merged.cidade;
-          merged.uf = (row as any).uf || merged.uf;
+          merged.cidade = merged.cidade || (row as any).cidade || "";
+          merged.uf = normalizeUF(merged.uf || (row as any).uf || "");
+
+          hydratePhone(row.telefone || c.telefone, merged.telefone_pais || "BR");
+          merged.telefone_pais = phoneCountryFromStored(row.telefone || c.telefone, merged.telefone_pais || "BR");
 
           setExtra(merged);
           setChamadoComo(merged.chamado_como || "");
@@ -1115,6 +1179,7 @@ export default function ClientesPage() {
     if (!onlyDigits(cpf)) return "Informe o CPF/CNPJ.";
     if (!nome.trim()) return "Nome é obrigatório.";
     if (!telefone.trim()) return "Telefone é obrigatório.";
+    if (!parseClientPhone(phoneCountry, telefone)) return "Informe um telefone válido para o país selecionado.";
 
     if (!extra.tipo) return "Selecione o tipo (PF/PJ).";
     if (!extra.perfil) return "Selecione o perfil do cliente.";
@@ -1141,20 +1206,29 @@ export default function ClientesPage() {
       setSaving(true);
 
       const latestVendaId = active.vendas_ids?.[0];
+      const normalizedPhone = parseClientPhone(phoneCountry, telefone);
+      if (!normalizedPhone) throw new Error("Telefone inválido para o país selecionado.");
 
       const fotoUrl = await uploadFotoIfAny();
       const extraToSave: CadastroExtra = {
         ...extra,
+        telefone_pais: phoneCountry,
         foto_url: fotoUrl,
         chamado_como: chamadoComo || "",
         conjuge_cpf: onlyDigits(extra.conjuge_cpf || ""),
+        endereco_cep: onlyDigits(extra.endereco_cep || "").slice(0, 8),
+        logradouro: extra.logradouro?.trim() || "",
+        numero: extra.numero?.trim() || "",
+        bairro: extra.bairro?.trim() || "",
+        cidade: extra.cidade?.trim() || "",
+        uf: normalizeUF(extra.uf),
       };
 
       const { error: eLead } = await supabase
         .from("leads")
         .update({
           nome: nome.trim() || active.nome,
-          telefone: onlyDigits(telefone) || null,
+          telefone: normalizedPhone,
           email: email.trim() || null,
         })
         .eq("id", active.lead_id);
@@ -1168,7 +1242,7 @@ export default function ClientesPage() {
             descricao: legacyObs?.trim() ? legacyObs.trim() : null,
             cpf: onlyDigits(cpf) || null,
             email: email.trim() || null,
-            telefone: onlyDigits(telefone) || null,
+            telefone: normalizedPhone,
           })
           .eq("id", latestVendaId);
         if (eVenda) throw eVenda;
@@ -1179,17 +1253,17 @@ export default function ClientesPage() {
       const payload: any = {
         nome: nome.trim() || active.nome,
         cpf: onlyDigits(cpf) || null,
-        telefone: onlyDigits(telefone) || null,
+        telefone: normalizedPhone,
         email: email.trim() || null,
         data_nascimento: birth || null,
         lead_id: active.lead_id,
 
-        endereco_cep: onlyDigits(extraToSave.endereco_cep) || null,
-        logradouro: extraToSave.logradouro?.trim() || null,
-        numero: extraToSave.numero?.trim() || null,
-        bairro: extraToSave.bairro?.trim() || null,
-        cidade: extraToSave.cidade?.trim() || null,
-        uf: extraToSave.uf?.trim() || null,
+        endereco_cep: extraToSave.endereco_cep || null,
+        logradouro: extraToSave.logradouro || null,
+        numero: extraToSave.numero || null,
+        bairro: extraToSave.bairro || null,
+        cidade: extraToSave.cidade || null,
+        uf: extraToSave.uf || null,
 
         observacoes: obsSerialized,
       };
@@ -1212,10 +1286,7 @@ export default function ClientesPage() {
       closeOverlay();
 
       await load(page, debounced);
-
-      if (tab === "demografia") {
-        await loadDemografia();
-      }
+      await loadDemografia();
 
       alert(overlayMode === "novo" ? "Cliente confirmado!" : "Cliente atualizado!");
     } catch (e: any) {
@@ -1257,10 +1328,15 @@ export default function ClientesPage() {
         const lid = r?.lead_id ? String(r.lead_id) : "";
         if (!lid) return;
         if (clienteByLead.has(lid)) return;
+
+        const { extra } = safeParseExtraFromObservacoes(r.observacoes ?? null);
+        const resolvedUf = normalizeUF(extra?.uf || r.uf || "");
+        const resolvedCidade = String(extra?.cidade || r.cidade || "").trim();
+
         clienteByLead.set(lid, {
           lead_id: lid,
-          uf: normalizeUF(r.uf),
-          cidade: String(r.cidade || "").trim(),
+          uf: resolvedUf,
+          cidade: resolvedCidade,
           data_nascimento: r.data_nascimento ?? null,
           observacoes: r.observacoes ?? null,
         });
@@ -1427,7 +1503,7 @@ export default function ClientesPage() {
                     </thead>
                     <tbody>
                       {novos.map((c, idx) => {
-                        const phone = c.telefone ? maskPhone(c.telefone) : "—";
+                        const phone = c.telefone ? formatPhone(c.telefone) : "—";
                         return (
                           <tr key={c.lead_id} className={idx % 2 ? "bg-slate-50/60" : "bg-white"}>
                             <td className="p-2">
@@ -1504,8 +1580,8 @@ export default function ClientesPage() {
                     )}
 
                     {clientes.map((c, i) => {
-                      const phone = c.telefone ? maskPhone(c.telefone) : "";
-                      const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
+                      const phone = c.telefone ? formatPhone(c.telefone) : "";
+                      const wa = c.telefone && waNumber(c.telefone) ? `https://wa.me/${waNumber(c.telefone)}` : "";
                       const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""}`;
 
                       return (
@@ -1716,7 +1792,7 @@ export default function ClientesPage() {
                     </div>
 
                     <div className="text-xs text-slate-500 px-1">
-                      Dica: estados tingidos = UFs com pelo menos 1 venda ativa (código 00) e <b>cliente.uf</b> preenchido.
+                      Dica: estados tingidos = UFs com pelo menos 1 venda ativa (código 00) e endereço do cliente preenchido.
                     </div>
                   </div>
                 </div>
@@ -2009,12 +2085,37 @@ export default function ClientesPage() {
                   <input className="input" type="date" value={birth} onChange={(e) => setBirth(e.target.value)} disabled={readOnly} />
                 </div>
 
-                <div>
+                <div className="md:col-span-2">
                   <div className="label">Telefone</div>
-                  <input className="input" value={telefone} onChange={(e) => setTelefone(e.target.value)} disabled={readOnly} />
+                  <div className="grid grid-cols-1 md:grid-cols-[minmax(180px,0.9fr)_minmax(0,1.4fr)] gap-2">
+                    <select
+                      className="input"
+                      value={phoneCountry}
+                      onChange={(e) => setPhoneCountry(e.target.value as CountryCode)}
+                      disabled={readOnly}
+                      title="País do telefone"
+                    >
+                      {phoneCountries.map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.name} (+{country.dialCode})
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="input"
+                      value={telefone}
+                      onChange={(e) => setTelefone(e.target.value)}
+                      disabled={readOnly}
+                      inputMode="tel"
+                      placeholder="Telefone"
+                    />
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    O país é identificado automaticamente quando o número já está salvo no padrão internacional. Cadastros antigos permanecem como Brasil até você alterar.
+                  </div>
                 </div>
 
-                <div>
+                <div className="md:col-span-2">
                   <div className="label">E-mail</div>
                   <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} disabled={readOnly} />
                 </div>

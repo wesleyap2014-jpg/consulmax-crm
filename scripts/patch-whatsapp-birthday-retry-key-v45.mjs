@@ -22,3 +22,9 @@ if (!src.includes("automation_key: raw.automation_key || null")) {
 } else {
   console.log("[patch-whatsapp-birthday-retry-key-v45] já aplicado");
 }
+
+await import("./patch-carteira-sale-seller-profile-v1.mjs");
+await import("./patch-carteira-sale-seller-visibility-v1.mjs");
+await import("./patch-carteira-sale-seller-save-v1.mjs");
+await import("./patch-carteira-sale-seller-button-v1.mjs");
+await import("./patch-carteira-sale-seller-field-v1.mjs");

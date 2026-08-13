@@ -1,0 +1,1 @@
+Cadastro simplificado de Clientes: Identidade + Contato e Endereço.

@@ -8,9 +8,3 @@ const conjuge=`    if (needsConjuge(extra.estado_civil)) {\n      if (!extra.reg
 src=src.replace(conjuge,"");
 fs.writeFileSync(file,src);
 console.log('[clientes-cadastro] validação simplificada aplicada');
-
-await import("./patch-carteira-sale-seller-profile-v1.mjs");
-await import("./patch-carteira-sale-seller-visibility-v1.mjs");
-await import("./patch-carteira-sale-seller-save-v1.mjs");
-await import("./patch-carteira-sale-seller-button-v1.mjs");
-await import("./patch-carteira-sale-seller-field-v1.mjs");

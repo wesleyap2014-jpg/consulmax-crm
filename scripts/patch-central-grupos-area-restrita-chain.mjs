@@ -47,3 +47,4 @@ if (changed) {
 }
 
 await import("./patch-area-restrita-reliable-status.mjs");
+await import("./patch-sidebar-hide-admin-links-v1.mjs");

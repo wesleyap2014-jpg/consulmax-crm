@@ -781,7 +781,7 @@ function BrazilImageMap({
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1">
             <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#A11C27" }} />
-            Ativos: {Array.from(activeUFs || []).length}
+            UFs com clientes: {Array.from(activeUFs || []).length}
           </span>
           <span>
             Arquivo: <b>public</b> <span className="font-mono">{src}</span>
@@ -1308,20 +1308,13 @@ export default function ClientesPage() {
   async function loadDemografia() {
     setDemoLoading(true);
     try {
-      const { data: activeVend, error: e1 } = await supabase.from("vendas").select("lead_id,produto").eq("codigo", "00").not("lead_id", "is", null).range(0, 20000);
+      // A base da demografia é a tabela clientes. O status da cota não exclui mais ninguém.
+      const { data: cli, error: e1 } = await supabase
+        .from("clientes")
+        .select("lead_id,data_nascimento,uf,cidade,observacoes")
+        .not("lead_id", "is", null)
+        .range(0, 20000);
       if (e1) throw e1;
-
-      const vendasAtivas = (activeVend || []).filter((r: any) => r?.lead_id);
-      const activeLeadIds = Array.from(new Set(vendasAtivas.map((r: any) => String(r.lead_id)).filter(Boolean)));
-
-      if (!activeLeadIds.length) {
-        const empty = createEmptyStats();
-        setDemo({ statsBrasil: empty, statsPorUF: {}, activeUFs: [] });
-        return;
-      }
-
-      const { data: cli, error: e2 } = await supabase.from("clientes").select("lead_id,data_nascimento,uf,cidade,observacoes").in("lead_id", activeLeadIds).range(0, 20000);
-      if (e2) throw e2;
 
       const clienteByLead = new Map<string, { lead_id: string; uf: string; cidade: string; data_nascimento?: string | null; observacoes?: string | null }>();
       (cli || []).forEach((r: any) => {
@@ -1342,11 +1335,18 @@ export default function ClientesPage() {
         });
       });
 
+      const clientLeadIds = Array.from(clienteByLead.keys());
+      if (!clientLeadIds.length) {
+        const empty = createEmptyStats();
+        setDemo({ statsBrasil: empty, statsPorUF: {}, activeUFs: [] });
+        return;
+      }
+
       const statsBrasil = cloneStatsBase();
       const statsPorUF: Record<string, DemoStats> = {};
       const activeUFsSet = new Set<string>();
 
-      for (const lid of activeLeadIds) {
+      for (const lid of clientLeadIds) {
         const c = clienteByLead.get(lid);
         const uf = c?.uf ? normalizeUF(c.uf) : "";
         const cidade = c?.cidade ? String(c.cidade).trim() : "";
@@ -1414,9 +1414,18 @@ export default function ClientesPage() {
         }
       }
 
-      (vendasAtivas || []).forEach((v: any) => {
+      // Produtos continuam vindo do histórico de vendas, sem filtro de status da cota.
+      const clientLeadSet = new Set(clientLeadIds);
+      const { data: vendasHistorico, error: e2 } = await supabase
+        .from("vendas")
+        .select("lead_id,produto")
+        .not("lead_id", "is", null)
+        .range(0, 20000);
+      if (e2) throw e2;
+
+      (vendasHistorico || []).forEach((v: any) => {
         const lid = v?.lead_id ? String(v.lead_id) : "";
-        if (!lid) return;
+        if (!lid || !clientLeadSet.has(lid)) return;
 
         const uf = normalizeUF(clienteByLead.get(lid)?.uf || "");
         const produto = String(v?.produto || "—").trim() || "—";
@@ -1659,7 +1668,7 @@ export default function ClientesPage() {
             <div className="rounded-2xl bg-white p-4 border shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <div className="text-sm text-slate-600">Demografia (Clientes Ativos)</div>
+                  <div className="text-sm text-slate-600">Demografia (Todos os Clientes)</div>
                   <div className="font-semibold">Resumo e mapa por UF</div>
                 </div>
                 <button className="btn" onClick={loadDemografia} disabled={demoLoading}>
@@ -1678,9 +1687,9 @@ export default function ClientesPage() {
                   <div className="xl:col-span-5 space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-2xl border p-4">
-                        <div className="text-xs text-slate-600">Clientes ativos {demoUF ? `(${normalizeUF(demoUF)})` : "(Brasil)"}</div>
+                        <div className="text-xs text-slate-600">Clientes cadastrados {demoUF ? `(${normalizeUF(demoUF)})` : "(Brasil)"}</div>
                         <div className="text-2xl font-extrabold">{currentStats.activeCount}</div>
-                        <div className="text-xs text-slate-500 mt-1">Base: vendas com código 00 cruzadas com clientes.uf.</div>
+                        <div className="text-xs text-slate-500 mt-1">Base: todos os clientes cadastrados, independentemente do status da cota.</div>
                       </div>
                       <div className="rounded-2xl border p-4">
                         <div className="text-xs text-slate-600">Idade média</div>
@@ -1722,7 +1731,7 @@ export default function ClientesPage() {
                     <div className="rounded-2xl border p-4">
                       <div className="font-semibold mb-2">Persona (auto) {demoUF ? `• ${normalizeUF(demoUF)}` : "• Brasil"}</div>
                       <div className="text-sm text-slate-700 leading-relaxed">
-                        Base ativa com <b>{currentStats.activeCount}</b> clientes. Predomina <b>{topKey(currentStats.tipoCount)}</b> e o perfil mais comum é{" "}
+                        Base com <b>{currentStats.activeCount}</b> clientes cadastrados. Predomina <b>{topKey(currentStats.tipoCount)}</b> e o perfil mais comum é{" "}
                         <b>{topKey(currentStats.perfilCount)}</b>. Idade média <b>{demoStats.idadeMedia ?? "—"}</b> anos. Segmento PF mais comum:{" "}
                         <b>{topKey(currentStats.segPFCount)}</b>.
                       </div>
@@ -1754,7 +1763,7 @@ export default function ClientesPage() {
                         </div>
 
                         <div className="rounded-2xl border p-3 bg-slate-50">
-                          <div className="text-xs text-slate-600 mb-2">Produtos (vendas ativas)</div>
+                          <div className="text-xs text-slate-600 mb-2">Produtos (histórico de vendas)</div>
                           {Object.keys(currentStats.produtoCount).length === 0 ? (
                             <div className="text-sm text-slate-600">Sem dados.</div>
                           ) : (
@@ -1792,7 +1801,7 @@ export default function ClientesPage() {
                     </div>
 
                     <div className="text-xs text-slate-500 px-1">
-                      Dica: estados tingidos = UFs com pelo menos 1 venda ativa (código 00) e endereço do cliente preenchido.
+                      Dica: estados tingidos = UFs com pelo menos 1 cliente cadastrado e endereço preenchido.
                     </div>
                   </div>
                 </div>

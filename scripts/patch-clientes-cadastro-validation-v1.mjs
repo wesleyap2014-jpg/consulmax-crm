@@ -1,0 +1,10 @@
+import fs from "node:fs";
+const file="src/pages/Clientes.tsx";
+let src=fs.readFileSync(file,"utf8");
+src=src.replace('    if (!extra.segmentos.length) return "Selecione ao menos um segmento.";','    if (!extra.segmentos.length) return "Selecione a fonte de renda.";');
+const origem=`    if ((extra.como_conheceu === "Outro" || extra.como_conheceu === "Indicação") && !extra.como_conheceu_detalhe.trim()) {\n      return "Preencha o detalhe de como nos conheceu.";\n    }\n\n`;
+src=src.replace(origem,"");
+const conjuge=`    if (needsConjuge(extra.estado_civil)) {\n      if (!extra.regime_casamento) return "Selecione o regime de casamento.";\n      if (!extra.conjuge_nome.trim()) return "Informe o nome do cônjuge.";\n    }\n\n`;
+src=src.replace(conjuge,"");
+fs.writeFileSync(file,src);
+console.log('[clientes-cadastro] validação simplificada aplicada');

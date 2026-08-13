@@ -1,5 +1,9 @@
 import fs from "node:fs";
 
+await import("./patch-clientes-cadastro-core-v1.mjs");
+await import("./patch-clientes-cadastro-form-v1.mjs");
+await import("./patch-clientes-cadastro-validation-v1.mjs");
+
 const filePath = "src/pages/Propostas.tsx";
 let source = fs.readFileSync(filePath, "utf8");
 

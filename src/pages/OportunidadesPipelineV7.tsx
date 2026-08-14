@@ -95,6 +95,20 @@ export default function OportunidadesPipelineV7() {
     if (open) loadData();
   }, [open]);
 
+  useEffect(() => {
+    const handleCardReassign = (event: Event) => {
+      const opportunityId = (event as CustomEvent<{ opportunityId?: string }>).detail?.opportunityId;
+      if (!opportunityId) return;
+      setSelectedOppId(opportunityId);
+      setSelectedUserId("");
+      setQ("");
+      setOpen(true);
+    };
+
+    window.addEventListener("crm:reassign-opportunity", handleCardReassign as EventListener);
+    return () => window.removeEventListener("crm:reassign-opportunity", handleCardReassign as EventListener);
+  }, []);
+
   const userMap = useMemo(() => new Map(users.map((u) => [u.auth_user_id, u.nome])), [users]);
 
   const filteredOpps = useMemo(() => {

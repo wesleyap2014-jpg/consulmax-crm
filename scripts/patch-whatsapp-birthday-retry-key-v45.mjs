@@ -40,6 +40,13 @@ if (!home.includes("const csFollowUpRows =")) {
   home = home.replace(agendaAnchor, agendaAnchor + followQuery);
 }
 
+if (!home.includes("const csPendingSalesRows =")) {
+  const pendingAnchor = `    const csFollowUpRows = (csFollowUpRaw || []) as any[];\n\n`;
+  if (!home.includes(pendingAnchor)) throw new Error("[cs-pending-home] âncora do follow-up não encontrada");
+  const pendingQuery = `    let csPendingSalesQ = supabase\n      .from("vendas")\n      .select("id,lead_id,data_venda,vendedor_id,administradora,grupo,cota,valor_venda,cancelada_em")\n      .gte("data_venda", "2026-08-01")\n      .is("cancelada_em", null)\n      .not("lead_id", "is", null)\n      .order("data_venda", { ascending: true })\n      .limit(500);\n    csPendingSalesQ = scope.isGlobal\n      ? csPendingSalesQ\n      : scope.vendedorIds.length\n        ? csPendingSalesQ.in("vendedor_id", scope.vendedorIds)\n        : csPendingSalesQ.eq("vendedor_id", noRowsId);\n    const { data: csPendingSalesRaw, error: csPendingSalesErr } = await csPendingSalesQ;\n    if (csPendingSalesErr) console.warn("[Inicio] Não foi possível carregar vendas pendentes do Sucesso do Cliente:", csPendingSalesErr);\n    const csPendingSalesBase = (csPendingSalesRaw || []) as any[];\n    const csPendingLeadIds = Array.from(new Set(csPendingSalesBase.map((v) => String(v.lead_id || "")).filter(Boolean)));\n    let csPendingClients: any[] = [];\n    let csPendingLeads: any[] = [];\n    if (csPendingLeadIds.length) {\n      const [clientsRes, leadsRes] = await Promise.all([\n        supabase.from("clientes").select("id,lead_id,nome,observacoes").in("lead_id", csPendingLeadIds),\n        supabase.from("leads").select("id,nome").in("id", csPendingLeadIds),\n      ]);\n      if (clientsRes.error) console.warn("[Inicio] Não foi possível carregar clientes do Sucesso do Cliente:", clientsRes.error);\n      if (leadsRes.error) console.warn("[Inicio] Não foi possível carregar leads do Sucesso do Cliente:", leadsRes.error);\n      csPendingClients = (clientsRes.data || []) as any[];\n      csPendingLeads = (leadsRes.data || []) as any[];\n    }\n    const csPendingClientMap = new Map(csPendingClients.map((c) => [String(c.lead_id || ""), c]));\n    const csPendingLeadMap = new Map(csPendingLeads.map((l) => [String(l.id || ""), l]));\n    const csPendingSalesRows = csPendingSalesBase.filter((v) => {\n      const cliente = csPendingClientMap.get(String(v.lead_id || ""));\n      const raw = String(cliente?.observacoes || "").trim();\n      const json = raw.startsWith("CMX_JSON:") ? raw.slice(9).trim() : raw;\n      let payload: any = {};\n      if (json) { try { payload = JSON.parse(json); } catch { payload = {}; } }\n      const record = payload?.customer_success_by_venda?.[v.id];\n      return normalizeText(record?.status || "pendente") === "pendente";\n    }).map((v) => ({ ...v, cliente: csPendingClientMap.get(String(v.lead_id || "")) || null, lead: csPendingLeadMap.get(String(v.lead_id || "")) || null }));\n\n`;
+  home = home.replace(pendingAnchor, pendingAnchor + pendingQuery);
+}
+
 if (!home.includes('id: "cs-followup:" + e.id')) {
   const myDayAnchor = `    const myDay: MeuDiaAlert[] = [];\n`;
   if (!home.includes(myDayAnchor)) throw new Error("[cs-followup-home] âncora Meu Dia não encontrada");
@@ -47,5 +54,12 @@ if (!home.includes('id: "cs-followup:" + e.id')) {
   home = home.replace(myDayAnchor, myDayAnchor + myDayBlock);
 }
 
+if (!home.includes('id: "cs-pending:" + v.id')) {
+  const pendingDayAnchor = `    for (const e of csFollowUpRows) {\n      const dueYmd = ymdFromDateInOffset(new Date(e.inicio_at), PV_OFFSET_MIN);\n      const overdue = dueYmd < today;\n      const detail = String(e.descricao || "").trim();\n      myDay.push({\n        id: "cs-followup:" + e.id,\n        priority: 15,\n        icon: "bell",\n        title: e.titulo || "Follow-up Sucesso do Cliente",\n        desc: (overdue ? "Follow-up vencido em " + fmtDateBRFromYMD(dueYmd) + "." : "Retorno agendado para hoje.") + (detail ? " " + detail : ""),\n        action: { label: "Abrir Sucesso do Cliente", to: "/clientes" },\n      });\n    }\n`;
+  if (!home.includes(pendingDayAnchor)) throw new Error("[cs-pending-home] bloco de follow-up no Meu Dia não encontrado");
+  const pendingDayBlock = `    for (const v of csPendingSalesRows) {\n      const clientName = String(v.cliente?.nome || v.lead?.nome || "Cliente").trim() || "Cliente";\n      const saleDate = toYMD(v.data_venda);\n      const saleInfo = [v.administradora || null, v.grupo ? "G " + v.grupo : null, v.cota ? "C " + v.cota : null].filter(Boolean).join(" • ");\n      myDay.push({\n        id: "cs-pending:" + v.id,\n        priority: 14,\n        icon: "bell",\n        title: "Sucesso do Cliente pendente — " + clientName,\n        desc: (saleInfo ? saleInfo + ". " : "") + "Venda registrada" + (saleDate ? " em " + fmtDateBRFromYMD(saleDate) : "") + ".",\n        action: { label: "Realizar Sucesso do Cliente", to: "/clientes" },\n      });\n    }\n`;
+  home = home.replace(pendingDayAnchor, pendingDayAnchor + pendingDayBlock);
+}
+
 fs.writeFileSync(homeFile, home);
-console.log("[cs-followup-home] follow-ups adicionados ao Meu Dia");
+console.log("[cs-followup-home] follow-ups e pendências adicionados ao Meu Dia");

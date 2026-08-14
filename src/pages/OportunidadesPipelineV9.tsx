@@ -1,10 +1,10 @@
+// Organização visual final da tela Tratar.
 import { useEffect } from "react";
 import OportunidadesPipelineV8 from "./OportunidadesPipelineV8";
 
 const C = {
   navy: "#1E293F",
   gold: "#B5A573",
-  slate: "#64748b",
 };
 
 const normalizeText = (value?: string | null) =>

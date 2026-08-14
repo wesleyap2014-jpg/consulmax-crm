@@ -119,6 +119,13 @@ function patchInicio() {
 
   source = replaceOnce(
     source,
+    `    openOppQ = applyAuthScope(openOppQ, "vendedor_id");`,
+    `    openOppQ = applyVendedorScope(openOppQ);`,
+    "escopo das oportunidades com IDs de perfil e autenticação",
+  );
+
+  source = replaceOnce(
+    source,
     `    const overdueComputed = openOppRows\n      .map((o) => ({ row: o, due: toYMD(o.expected_close_at || o.fechamento_previsto_em) }))\n      .filter((o) => Boolean(o.due) && (o.due as string) < today)\n      .map(({ row, due }) => ({ ...row, daysWaiting: Math.max(0, daysDiffYMD(today, due as string)) }))\n      .sort((a, b) => (b.daysWaiting || 0) - (a.daysWaiting || 0))\n      .slice(0, 10);`,
     `    const overdueComputed = openOppRows\n      .map((o) => ({ row: o, due: toYMD(o.next_follow_up_at) }))\n      .filter((o) => Boolean(o.due))\n      .sort((a, b) => String(a.due).localeCompare(String(b.due)))\n      .slice(0, 10)\n      .map(({ row, due }) => ({ ...row, followUpYMD: due as string, daysWaiting: daysDiffYMD(today, due as string) }));`,
     "lista de follow-ups por data crescente",

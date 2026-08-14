@@ -40,10 +40,10 @@ if (!home.includes("const csFollowUpRows =")) {
   home = home.replace(agendaAnchor, agendaAnchor + followQuery);
 }
 
-if (!home.includes("cs-followup:${e.id}")) {
+if (!home.includes('id: "cs-followup:" + e.id')) {
   const myDayAnchor = `    const myDay: MeuDiaAlert[] = [];\n`;
   if (!home.includes(myDayAnchor)) throw new Error("[cs-followup-home] âncora Meu Dia não encontrada");
-  const myDayBlock = `    for (const e of csFollowUpRows) {\n      const dueYmd = ymdFromDateInOffset(new Date(e.inicio_at), PV_OFFSET_MIN);\n      const overdue = dueYmd < today;\n      const detail = String(e.descricao || "").trim();\n      myDay.push({\n        id: \`cs-followup:\${e.id}\`,\n        priority: 15,\n        icon: "bell",\n        title: e.titulo || "Follow-up Sucesso do Cliente",\n        desc: \`${overdue ? \`Follow-up vencido em \${fmtDateBRFromYMD(dueYmd)}.\` : "Retorno agendado para hoje."}\${detail ? \` \${detail}\` : ""}\`,\n        action: { label: "Abrir Sucesso do Cliente", to: "/clientes" },\n      });\n    }\n`;
+  const myDayBlock = `    for (const e of csFollowUpRows) {\n      const dueYmd = ymdFromDateInOffset(new Date(e.inicio_at), PV_OFFSET_MIN);\n      const overdue = dueYmd < today;\n      const detail = String(e.descricao || "").trim();\n      myDay.push({\n        id: "cs-followup:" + e.id,\n        priority: 15,\n        icon: "bell",\n        title: e.titulo || "Follow-up Sucesso do Cliente",\n        desc: (overdue ? "Follow-up vencido em " + fmtDateBRFromYMD(dueYmd) + "." : "Retorno agendado para hoje.") + (detail ? " " + detail : ""),\n        action: { label: "Abrir Sucesso do Cliente", to: "/clientes" },\n      });\n    }\n`;
   home = home.replace(myDayAnchor, myDayAnchor + myDayBlock);
 }
 

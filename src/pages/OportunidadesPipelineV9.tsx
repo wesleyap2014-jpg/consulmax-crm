@@ -1,10 +1,10 @@
-// Organização visual final da tela Tratar.
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import OportunidadesPipelineV8 from "./OportunidadesPipelineV8";
 
 const C = {
   navy: "#1E293F",
   gold: "#B5A573",
+  slate: "#64748b",
 };
 
 const normalizeText = (value?: string | null) =>
@@ -100,6 +100,49 @@ function ensureAndamentoCard(contextCard: HTMLElement) {
   }
 }
 
+function ensureAiPlaceholder(enhancement: HTMLElement) {
+  let card = enhancement.querySelector(
+    '[data-crm-ai-placeholder="true"]',
+  ) as HTMLElement | null;
+  if (card) return card;
+
+  card = document.createElement("section");
+  card.dataset.crmAiPlaceholder = "true";
+  applyCardStyle(card);
+
+  const eyebrow = document.createElement("div");
+  eyebrow.textContent = "Direção da IA";
+  Object.assign(eyebrow.style, {
+    color: C.gold,
+    fontSize: "10px",
+    textTransform: "uppercase",
+    letterSpacing: "1px",
+    fontWeight: "900",
+  });
+
+  const title = document.createElement("h3");
+  title.textContent = "Aguardando qualificação";
+  Object.assign(title.style, {
+    margin: "2px 0 5px",
+    color: C.navy,
+    fontSize: "16px",
+    lineHeight: "1.2",
+    fontWeight: "800",
+  });
+
+  const text = document.createElement("p");
+  text.textContent = "Qualifique o lead para receber score, diagnóstico comercial, abordagem recomendada e próximo passo.";
+  Object.assign(text.style, {
+    margin: "0",
+    color: C.slate,
+    fontSize: "12px",
+    lineHeight: "1.45",
+  });
+
+  card.append(eyebrow, title, text);
+  return card;
+}
+
 function ensureLayoutStyles() {
   if (document.getElementById("crm-treatment-v9-layout")) return;
   const style = document.createElement("style");
@@ -121,7 +164,51 @@ function ensureLayoutStyles() {
   document.head.appendChild(style);
 }
 
+function modalExists(title: string) {
+  return Array.from(document.querySelectorAll("h2")).some(
+    (node) => normalizeText(node.textContent) === normalizeText(title),
+  );
+}
+
 export default function OportunidadesPipelineV9() {
+  useLayoutEffect(() => {
+    let timer: number | null = null;
+
+    const handleCreate = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest("button") as HTMLButtonElement | null;
+      if (!button) return;
+
+      const text = normalizeText(button.textContent);
+      const creatingOpportunity = text === "criar oportunidade";
+      const creatingLead = text === "criar lead";
+      if (!creatingOpportunity && !creatingLead) return;
+
+      const modalTitle = creatingOpportunity ? "Nova Oportunidade" : "Novo Lead";
+      let attempts = 0;
+      if (timer) window.clearInterval(timer);
+      timer = window.setInterval(() => {
+        attempts += 1;
+        if (!modalExists(modalTitle)) {
+          if (timer) window.clearInterval(timer);
+          timer = null;
+          window.location.reload();
+          return;
+        }
+        if (attempts >= 20 && timer) {
+          window.clearInterval(timer);
+          timer = null;
+        }
+      }, 250);
+    };
+
+    document.addEventListener("click", handleCreate, true);
+    return () => {
+      document.removeEventListener("click", handleCreate, true);
+      if (timer) window.clearInterval(timer);
+    };
+  }, []);
+
   useEffect(() => {
     ensureLayoutStyles();
 
@@ -142,8 +229,13 @@ export default function OportunidadesPipelineV9() {
       if (!enhancement) return;
 
       const aiCard = Array.from(enhancement.querySelectorAll("section")).find((section) =>
-        normalizeText(section.textContent).includes("direcao da ia"),
+        normalizeText(section.textContent).includes("direcao da ia") &&
+        section.getAttribute("data-crm-ai-placeholder") !== "true",
       ) as HTMLElement | undefined;
+
+      const aiPlaceholder = ensureAiPlaceholder(enhancement);
+      aiPlaceholder.style.display = aiCard ? "none" : "block";
+      const directionCard = aiCard || aiPlaceholder;
 
       const followUpCard = Array.from(enhancement.querySelectorAll("section")).find((section) =>
         normalizeText(section.querySelector("h3")?.textContent) === "follow up",
@@ -168,9 +260,9 @@ export default function OportunidadesPipelineV9() {
         );
       }) as HTMLElement | undefined;
 
-      if (!aiCard || !followUpCard || !simulationsCard || !contextCard) return;
+      if (!followUpCard || !simulationsCard || !contextCard) return;
 
-      applyCardStyle(aiCard);
+      applyCardStyle(directionCard);
       applyCardStyle(dataCard);
       ensureAndamentoCard(contextCard);
       applyCardStyle(followUpCard);
@@ -210,7 +302,7 @@ export default function OportunidadesPipelineV9() {
       if (historyCard && historyCard.parentElement !== followRow) followRow.appendChild(historyCard);
 
       const desired: HTMLElement[] = [
-        aiCard,
+        directionCard,
         ...(dataCard ? [dataCard] : []),
         contextCard,
         followRow,
@@ -221,13 +313,6 @@ export default function OportunidadesPipelineV9() {
       desired.forEach((node, index) => {
         const current = enhancement.children[index] as HTMLElement | undefined;
         if (current !== node) enhancement.insertBefore(node, current || null);
-      });
-
-      Array.from(enhancement.children).forEach((child) => {
-        const element = child as HTMLElement;
-        if (desired.includes(element)) return;
-        const hasVisibleContent = normalizeText(element.textContent).length > 0;
-        if (!hasVisibleContent) element.style.display = "none";
       });
     };
 

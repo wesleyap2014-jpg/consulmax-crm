@@ -288,6 +288,16 @@ const fmtDateBR = (iso?: string | null) => {
   const d = new Date(iso.length <= 10 ? `${iso}T00:00:00` : iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 };
+const fmtDateShortBR = (iso?: string | null) => {
+  if (!iso) return "—";
+  const d = new Date(iso.length <= 10 ? `${iso}T00:00:00` : iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
+};
 const fmtDateTimeBR = (iso?: string | null) => {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -1108,7 +1118,6 @@ export default function OportunidadesPipelineV5() {
                       op={op}
                       lead={leadMap.get(op.lead_id)}
                       vendor={vendorMap.get(op.vendedor_id)}
-                      notes={noteMap.get(op.id) || []}
                       onEdit={() => openEdit(op)}
                       onDragStart={(e) =>
                         e.dataTransfer.setData("text/plain", op.id)
@@ -1828,7 +1837,6 @@ function OppCard({
   op,
   lead,
   vendor,
-  notes,
   onEdit,
   onDragStart,
   whatsapp,
@@ -1836,30 +1844,32 @@ function OppCard({
   op: Opp;
   lead?: Lead;
   vendor?: string;
-  notes: Note[];
   onEdit: () => void;
   onDragStart: (e: React.DragEvent<HTMLDivElement>) => void;
   whatsapp: string;
 }) {
   const t = tempLabel(op.score);
   const u = urgencyLabel(op);
-  const last = notes[0]?.note || op.observacao || "Sem histórico recente.";
+  const followUpAt = op.expected_close_at || op.fechamento_previsto_em || null;
+  const phone = storedPhone(lead?.telefone)?.number || "";
+  const phoneHref = phone ? `tel:${phone}` : "";
+
+  const openReassign = () => {
+    window.dispatchEvent(
+      new CustomEvent("crm:reassign-opportunity", {
+        detail: { opportunityId: op.id },
+      }),
+    );
+  };
+
   return (
     <div style={cardStyle} draggable onDragStart={onDragStart}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <strong style={{ color: C.navy }}>
-          {lead?.nome || "Lead não localizado"}
-        </strong>
-        <span
-          style={{ ...tagStyle, background: `${u.color}18`, color: u.color }}
-        >
-          {u.label}
-        </span>
-      </div>
-      <div style={muted}>
-        {formatPhone(lead?.telefone)} • {vendor || "—"}
-      </div>
+      <strong style={{ color: C.navy, display: "block" }}>
+        {lead?.nome || "Lead não localizado"}
+      </strong>
+
       <div style={cardMoney}>{fmtBRLCompact(moneyBase(op))}</div>
+
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <span
           style={{ ...tagStyle, background: `${t.color}16`, color: t.color }}
@@ -1868,22 +1878,65 @@ function OppCard({
         </span>
         <span style={tagStyle}>{op.segmento || "—"}</span>
       </div>
-      <p style={lastNote}>
-        {last.length > 120 ? `${last.slice(0, 120)}...` : last}
-      </p>
-      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+
+      <div style={followUpLine}>
+        <span>Follow Up: {fmtDateShortBR(followUpAt)}</span>
+        <span style={followUpDivider}>|</span>
+        <span>Dias:</span>
+        <span
+          style={{ ...tagStyle, background: `${u.color}18`, color: u.color }}
+        >
+          {u.label}
+        </span>
+      </div>
+
+      <div style={muted}>{vendor || "—"}</div>
+
+      <div style={cardActions}>
         <button style={miniBtn} onClick={onEdit}>
           Tratar
         </button>
-        {whatsapp && (
+
+        {whatsapp ? (
           <a
             style={miniBtnLink}
             href={whatsapp}
             target="_blank"
             rel="noreferrer"
           >
-            WhatsApp
+            Whats
           </a>
+        ) : (
+          <span style={{ ...miniBtnLink, ...miniDisabled }}>Whats</span>
+        )}
+
+        <button
+          type="button"
+          style={miniIconBtn}
+          title="Reatribuir"
+          aria-label="Reatribuir"
+          onClick={openReassign}
+        >
+          ⇄
+        </button>
+
+        {phoneHref ? (
+          <a
+            style={miniIconLink}
+            href={phoneHref}
+            title="Ligar"
+            aria-label="Ligar"
+          >
+            ☎
+          </a>
+        ) : (
+          <span
+            style={{ ...miniIconLink, ...miniDisabled }}
+            title="Telefone não disponível"
+            aria-label="Telefone não disponível"
+          >
+            ☎
+          </span>
         )}
       </div>
     </div>
@@ -2214,7 +2267,8 @@ const cardStyle: React.CSSProperties = {
 const muted: React.CSSProperties = {
   color: C.slate,
   fontSize: 12,
-  marginTop: 4,
+  marginTop: 8,
+  fontWeight: 700,
 };
 const tagStyle: React.CSSProperties = {
   borderRadius: 999,
@@ -2230,27 +2284,63 @@ const cardMoney: React.CSSProperties = {
   fontWeight: 950,
   margin: "8px 0",
 };
-const lastNote: React.CSSProperties = {
+const followUpLine: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 5,
+  flexWrap: "wrap",
   color: C.ink2,
-  fontSize: 12,
+  fontSize: 11,
   lineHeight: 1.35,
-  margin: "8px 0 0",
+  marginTop: 9,
+};
+const followUpDivider: React.CSSProperties = {
+  color: C.slate,
+};
+const cardActions: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) 38px 38px",
+  gap: 7,
+  marginTop: 10,
+  alignItems: "stretch",
 };
 const miniBtn: React.CSSProperties = {
   border: 0,
   borderRadius: 12,
-  padding: "8px 10px",
+  padding: "8px 8px",
   background: C.navy,
   color: "white",
   fontWeight: 800,
   cursor: "pointer",
-  flex: 1,
+  minWidth: 0,
 };
 const miniBtnLink: React.CSSProperties = {
   ...miniBtn,
   textDecoration: "none",
   textAlign: "center",
   background: C.ok,
+  display: "grid",
+  placeItems: "center",
+};
+const miniIconBtn: React.CSSProperties = {
+  border: "1px solid rgba(30,41,63,.14)",
+  borderRadius: 12,
+  background: "#f8fafc",
+  color: C.navy,
+  fontSize: 18,
+  fontWeight: 900,
+  cursor: "pointer",
+  display: "grid",
+  placeItems: "center",
+};
+const miniIconLink: React.CSSProperties = {
+  ...miniIconBtn,
+  textDecoration: "none",
+  boxSizing: "border-box",
+};
+const miniDisabled: React.CSSProperties = {
+  opacity: 0.4,
+  cursor: "not-allowed",
 };
 const btnPrimary: React.CSSProperties = {
   border: 0,

@@ -1,5 +1,9 @@
 import fs from "node:fs";
 
+// Este hook roda depois da cadeia principal de patches. Mantém as pendências
+// operacionais de Clientes sincronizadas com o Meu Dia antes da validação/build.
+await import("./patch-clientes-novos-meu-dia-v1.mjs");
+
 const file = "src/pages/whatsapp/WhatsAppAtendimento.tsx";
 const source = fs.readFileSync(file, "utf8");
 

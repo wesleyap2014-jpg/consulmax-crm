@@ -28,3 +28,4 @@ await import("./patch-carteira-sale-seller-visibility-v1.mjs");
 await import("./patch-carteira-sale-seller-save-v1.mjs");
 await import("./patch-carteira-sale-seller-button-v1.mjs");
 await import("./patch-carteira-sale-seller-field-v1.mjs");
+await import("./patch-customer-success-final-clean-v1.mjs");

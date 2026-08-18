@@ -110,15 +110,71 @@ async function buildAudience(sources: AudienceSource[]) {
   return { loaded, recipients, duplicates, invalid };
 }
 
+const DISPATCH_FIELDS = "id,status,source_types,hourly_limit,daily_limit,total_recipients,sent_count,failed_count,skipped_count,duplicate_count,invalid_count,created_at,started_at,completed_at,last_run_at";
+
 async function latestDispatch(newsletterId: string) {
   const { data } = await db
     .from("marketing_newsletter_dispatches")
-    .select("id,status,source_types,hourly_limit,daily_limit,total_recipients,sent_count,failed_count,skipped_count,duplicate_count,invalid_count,created_at,started_at,completed_at")
+    .select(DISPATCH_FIELDS)
     .eq("newsletter_id", newsletterId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   return data || null;
+}
+
+async function getDispatch(newsletterId: string, dispatchId?: string) {
+  let query = db
+    .from("marketing_newsletter_dispatches")
+    .select(`${DISPATCH_FIELDS},newsletter_id`)
+    .eq("newsletter_id", newsletterId);
+  if (dispatchId) query = query.eq("id", dispatchId);
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function dispatchAction(action: "start" | "pause" | "resume", newsletterId: string, dispatchId?: string) {
+  const dispatch = await getDispatch(newsletterId, dispatchId);
+  if (!dispatch) throw new Error("Fila de envio não encontrada.");
+
+  const now = new Date().toISOString();
+  if (action === "start") {
+    if (!["pronta", "pausada"].includes(dispatch.status)) {
+      throw new Error("Esta fila não está pronta para iniciar.");
+    }
+    const { data, error } = await db
+      .from("marketing_newsletter_dispatches")
+      .update({ status: "em_envio", started_at: dispatch.started_at || now })
+      .eq("id", dispatch.id)
+      .select(DISPATCH_FIELDS)
+      .single();
+    if (error) throw error;
+    await db.from("marketing_newsletters").update({ status: "programada" }).eq("id", newsletterId).neq("status", "enviada");
+    return data;
+  }
+
+  if (action === "pause") {
+    if (dispatch.status !== "em_envio") throw new Error("A fila não está em envio.");
+    const { data, error } = await db
+      .from("marketing_newsletter_dispatches")
+      .update({ status: "pausada" })
+      .eq("id", dispatch.id)
+      .select(DISPATCH_FIELDS)
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  if (dispatch.status !== "pausada") throw new Error("A fila não está pausada.");
+  const { data, error } = await db
+    .from("marketing_newsletter_dispatches")
+    .update({ status: "em_envio" })
+    .eq("id", dispatch.id)
+    .select(DISPATCH_FIELDS)
+    .single();
+  if (error) throw error;
+  return data;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -146,6 +202,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const action = String(req.body?.action || "preview");
+    const newsletterId = String(req.body?.newsletter_id || "").trim();
+
+    if (["start", "pause", "resume"].includes(action)) {
+      if (!newsletterId) return json(res, 400, { ok: false, message: "Newsletter não informada." });
+      const dispatch = await dispatchAction(action as "start" | "pause" | "resume", newsletterId, String(req.body?.dispatch_id || "").trim() || undefined);
+      return json(res, 200, { ok: true, dispatch });
+    }
+
     const sources = normalizeSources(req.body?.sources);
     if (!sources.length) return json(res, 400, { ok: false, message: "Selecione pelo menos uma origem de contatos." });
 
@@ -170,16 +234,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (action !== "queue") return json(res, 400, { ok: false, message: "Ação inválida." });
 
-    const newsletterId = String(req.body?.newsletter_id || "").trim();
     if (!newsletterId) return json(res, 400, { ok: false, message: "Newsletter não informada." });
     if (!audience.recipients.length) return json(res, 400, { ok: false, message: "Nenhum e-mail válido encontrado nas origens selecionadas." });
 
     const { data: newsletter, error: newsletterError } = await db
       .from("marketing_newsletters")
-      .select("id,title,subject")
+      .select("id,title,subject,content")
       .eq("id", newsletterId)
       .maybeSingle();
     if (newsletterError || !newsletter) return json(res, 404, { ok: false, message: "Newsletter não encontrada." });
+    if (!String(newsletter.subject || "").trim() || !String(newsletter.content || "").trim()) {
+      return json(res, 400, { ok: false, message: "Preencha o assunto e o conteúdo da newsletter antes de preparar o envio." });
+    }
+
+    const { data: activeDispatches, error: activeError } = await db
+      .from("marketing_newsletter_dispatches")
+      .select("id,status")
+      .eq("newsletter_id", newsletterId)
+      .in("status", ["em_envio", "pausada"])
+      .limit(1);
+    if (activeError) throw activeError;
+    if (activeDispatches?.length) {
+      return json(res, 409, { ok: false, message: "Já existe uma fila ativa ou pausada para esta newsletter. Conclua essa fila antes de criar outra." });
+    }
 
     const { data: oldDispatches } = await db
       .from("marketing_newsletter_dispatches")
@@ -229,7 +306,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from("marketing_newsletter_dispatches")
       .update({ status: "pronta" })
       .eq("id", dispatch.id)
-      .select("id,status,source_types,hourly_limit,daily_limit,total_recipients,sent_count,failed_count,duplicate_count,invalid_count,created_at")
+      .select(DISPATCH_FIELDS)
       .single();
     if (readyError) throw readyError;
 

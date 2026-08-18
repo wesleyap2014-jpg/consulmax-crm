@@ -5,12 +5,21 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_KEY = process.env["SUPABASE" + "_SERVICE" + "_ROLE" + "_KEY"]!;
 const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
 
-type AudienceSource = "clientes" | "parceiros";
+type AudienceSource = "clientes" | "parceiros" | "leads" | "usuarios";
+type RecipientSourceType = "cliente" | "parceiro" | "lead" | "usuario" | "arquivo" | "manual";
 type Recipient = {
-  source_type: "cliente" | "parceiro";
+  source_type: RecipientSourceType;
   source_record_id: string | null;
   name: string;
   email: string;
+};
+
+type SourceLoad = {
+  source: string;
+  totalRecords: number;
+  validEmails: number;
+  invalidEmails: number;
+  recipients: Recipient[];
 };
 
 function json(res: VercelResponse, status: number, body: any) {
@@ -34,14 +43,14 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
   }
   const { data: profile, error } = await db
     .from("users")
-    .select("role")
+    .select("role,email,nome,is_active")
     .eq("auth_user_id", user.id)
     .maybeSingle();
   if (error || profile?.role !== "admin") {
     json(res, 403, { ok: false, message: "Apenas administradores podem preparar disparos de newsletter." });
     return null;
   }
-  return user;
+  return { user, profile };
 }
 
 function normalizeEmail(value: unknown) {
@@ -53,29 +62,80 @@ function validEmail(value: string) {
 }
 
 function normalizeSources(value: unknown): AudienceSource[] {
+  const allowed: AudienceSource[] = ["clientes", "parceiros", "leads", "usuarios"];
   const input = Array.isArray(value) ? value : [];
-  return Array.from(new Set(input.filter((item): item is AudienceSource => item === "clientes" || item === "parceiros")));
+  return Array.from(new Set(input.filter((item): item is AudienceSource => allowed.includes(item as AudienceSource))));
 }
 
-async function loadSource(source: AudienceSource) {
-  const table = source === "clientes" ? "clientes" : "partners";
-  const sourceType = source === "clientes" ? "cliente" : "parceiro";
-  const { data, error } = await db.from(table).select("id,nome,email").order("nome", { ascending: true });
-  if (error) throw error;
-
-  const rows = data || [];
+function rowsToRecipients(rows: any[], source: string, sourceType: RecipientSourceType): SourceLoad {
   let invalid = 0;
   const recipients: Recipient[] = [];
-  for (const row of rows) {
-    const email = normalizeEmail(row.email);
+  for (const row of rows || []) {
+    const email = normalizeEmail(row?.email);
     if (!email || !validEmail(email)) {
-      if (String(row.email || "").trim()) invalid += 1;
+      if (String(row?.email || "").trim()) invalid += 1;
       continue;
     }
     recipients.push({
       source_type: sourceType,
-      source_record_id: row.id || null,
-      name: String(row.nome || "").trim(),
+      source_record_id: row?.id || null,
+      name: String(row?.nome || row?.name || "").trim(),
+      email,
+    });
+  }
+  return {
+    source,
+    totalRecords: (rows || []).length,
+    validEmails: recipients.length,
+    invalidEmails: invalid,
+    recipients,
+  };
+}
+
+async function loadSource(source: AudienceSource): Promise<SourceLoad> {
+  if (source === "clientes") {
+    const { data, error } = await db.from("clientes").select("id,nome,email").order("nome", { ascending: true });
+    if (error) throw error;
+    return rowsToRecipients(data || [], source, "cliente");
+  }
+
+  if (source === "parceiros") {
+    const { data, error } = await db.from("partners").select("id,nome,email").order("nome", { ascending: true });
+    if (error) throw error;
+    return rowsToRecipients(data || [], source, "parceiro");
+  }
+
+  if (source === "leads") {
+    const { data, error } = await db.from("leads").select("id,nome,email").order("nome", { ascending: true });
+    if (error) throw error;
+    return rowsToRecipients(data || [], source, "lead");
+  }
+
+  const { data, error } = await db
+    .from("users")
+    .select("id,nome,email,is_active")
+    .eq("is_active", true)
+    .order("nome", { ascending: true });
+  if (error) throw error;
+  return rowsToRecipients(data || [], source, "usuario");
+}
+
+function normalizeExtraRecipients(value: unknown, sourceType: "arquivo" | "manual", source: string): SourceLoad {
+  const rows = Array.isArray(value) ? value : value ? [value] : [];
+  let invalid = 0;
+  const recipients: Recipient[] = [];
+
+  for (const item of rows.slice(0, 5000)) {
+    const email = normalizeEmail((item as any)?.email ?? item);
+    const name = String((item as any)?.name || (item as any)?.nome || "").trim();
+    if (!email || !validEmail(email)) {
+      if (String((item as any)?.email ?? item ?? "").trim()) invalid += 1;
+      continue;
+    }
+    recipients.push({
+      source_type: sourceType,
+      source_record_id: null,
+      name,
       email,
     });
   }
@@ -84,18 +144,27 @@ async function loadSource(source: AudienceSource) {
     source,
     totalRecords: rows.length,
     validEmails: recipients.length,
-    invalidEmails: invalid,
+    invalidEmails: invalid + Math.max(0, rows.length - 5000),
     recipients,
   };
 }
 
-async function buildAudience(sources: AudienceSource[]) {
+async function buildAudience(sources: AudienceSource[], imported: unknown, manual: unknown) {
   const loaded = await Promise.all(sources.map(loadSource));
+  const extra: SourceLoad[] = [];
+
+  const importedLoad = normalizeExtraRecipients(imported, "arquivo", "arquivo");
+  if (importedLoad.totalRecords) extra.push(importedLoad);
+
+  const manualLoad = normalizeExtraRecipients(manual, "manual", "manual");
+  if (manualLoad.totalRecords) extra.push(manualLoad);
+
+  const allSources = [...loaded, ...extra];
   const byEmail = new Map<string, Recipient>();
   let duplicates = 0;
   let invalid = 0;
 
-  for (const source of loaded) {
+  for (const source of allSources) {
     invalid += source.invalidEmails;
     for (const recipient of source.recipients) {
       if (byEmail.has(recipient.email)) {
@@ -106,8 +175,12 @@ async function buildAudience(sources: AudienceSource[]) {
     }
   }
 
-  const recipients = Array.from(byEmail.values());
-  return { loaded, recipients, duplicates, invalid };
+  return {
+    loaded: allSources,
+    recipients: Array.from(byEmail.values()),
+    duplicates,
+    invalid,
+  };
 }
 
 const DISPATCH_FIELDS = "id,status,source_types,hourly_limit,daily_limit,total_recipients,sent_count,failed_count,skipped_count,duplicate_count,invalid_count,created_at,started_at,completed_at,last_run_at";
@@ -178,19 +251,28 @@ async function dispatchAction(action: "start" | "pause" | "resume", newsletterId
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const user = await requireAdmin(req, res);
-  if (!user) return;
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
 
   try {
     if (req.method === "GET") {
-      const [clientes, parceiros] = await Promise.all([loadSource("clientes"), loadSource("parceiros")]);
+      const [clientes, parceiros, leads, usuarios] = await Promise.all([
+        loadSource("clientes"),
+        loadSource("parceiros"),
+        loadSource("leads"),
+        loadSource("usuarios"),
+      ]);
       const newsletterId = String(req.query.newsletter_id || "").trim();
       return json(res, 200, {
         ok: true,
         sources: {
           clientes: { total: clientes.totalRecords, valid: clientes.validEmails, invalid: clientes.invalidEmails },
           parceiros: { total: parceiros.totalRecords, valid: parceiros.validEmails, invalid: parceiros.invalidEmails },
+          leads: { total: leads.totalRecords, valid: leads.validEmails, invalid: leads.invalidEmails },
+          usuarios: { total: usuarios.totalRecords, valid: usuarios.validEmails, invalid: usuarios.invalidEmails },
         },
+        current_user_email: normalizeEmail(auth.profile?.email || auth.user.email || ""),
+        current_user_name: String(auth.profile?.nome || "").trim(),
         latest_dispatch: newsletterId ? await latestDispatch(newsletterId) : null,
         limits: { hourly: 50, daily: 100 },
       });
@@ -211,9 +293,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const sources = normalizeSources(req.body?.sources);
-    if (!sources.length) return json(res, 400, { ok: false, message: "Selecione pelo menos uma origem de contatos." });
+    const importedRecipients = req.body?.imported_recipients || [];
+    const manualRecipient = req.body?.manual_recipient || null;
 
-    const audience = await buildAudience(sources);
+    if (!sources.length && !Array.isArray(importedRecipients) && !manualRecipient) {
+      return json(res, 400, { ok: false, message: "Selecione pelo menos uma origem de contatos." });
+    }
+
+    const audience = await buildAudience(sources, importedRecipients, manualRecipient);
+    if (!audience.loaded.length) {
+      return json(res, 400, { ok: false, message: "Selecione pelo menos uma lista, importe um arquivo ou informe um e-mail de teste." });
+    }
+
     const sourceSummary = Object.fromEntries(audience.loaded.map((source) => [source.source, {
       total: source.totalRecords,
       valid: source.validEmails,
@@ -227,7 +318,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         duplicates_removed: audience.duplicates,
         invalid_removed: audience.invalid,
         sources: sourceSummary,
-        sample: audience.recipients.slice(0, 12).map(({ name, email, source_type }) => ({ name, email, source_type })),
+        sample: audience.recipients.slice(0, 20).map(({ name, email, source_type }) => ({ name, email, source_type })),
         limits: { hourly: 50, daily: 100 },
       });
     }
@@ -235,7 +326,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (action !== "queue") return json(res, 400, { ok: false, message: "Ação inválida." });
 
     if (!newsletterId) return json(res, 400, { ok: false, message: "Newsletter não informada." });
-    if (!audience.recipients.length) return json(res, 400, { ok: false, message: "Nenhum e-mail válido encontrado nas origens selecionadas." });
+    if (!audience.recipients.length) return json(res, 400, { ok: false, message: "Nenhum e-mail válido encontrado no público selecionado." });
 
     const { data: newsletter, error: newsletterError } = await db
       .from("marketing_newsletters")
@@ -267,18 +358,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await db.from("marketing_newsletter_dispatches").delete().in("id", oldDispatches.map((item) => item.id));
     }
 
+    const sourceTypes = [
+      ...sources,
+      ...(audience.loaded.some((source) => source.source === "arquivo") ? ["arquivo"] : []),
+      ...(audience.loaded.some((source) => source.source === "manual") ? ["manual"] : []),
+    ];
+
     const { data: dispatch, error: dispatchError } = await db
       .from("marketing_newsletter_dispatches")
       .insert({
         newsletter_id: newsletterId,
         status: "preparando",
-        source_types: sources,
+        source_types: sourceTypes,
         hourly_limit: 50,
         daily_limit: 100,
         total_recipients: audience.recipients.length,
         duplicate_count: audience.duplicates,
         invalid_count: audience.invalid,
-        created_by: user.id,
+        created_by: auth.user.id,
       })
       .select("id")
       .single();

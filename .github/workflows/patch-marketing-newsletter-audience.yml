@@ -1,0 +1,89 @@
+name: Wire Newsletter Audience Selector
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/patch-marketing-newsletter-audience.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch newsletter panel
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/pages/MarketingNewsletterPanel.tsx")
+          text = path.read_text(encoding="utf-8")
+
+          import_anchor = 'import React, { useEffect, useMemo, useState } from "react";\n'
+          import_line = 'import MarketingNewsletterAudienceDialog from "./MarketingNewsletterAudienceDialog";\n'
+          if import_line not in text:
+              if import_anchor not in text:
+                  raise SystemExit("Import anchor not found")
+              text = text.replace(import_anchor, import_anchor + import_line, 1)
+
+          state_anchor = '  const [dialogOpen, setDialogOpen] = useState(false);\n'
+          state_line = '  const [audienceNewsletter, setAudienceNewsletter] = useState<Newsletter | null>(null);\n'
+          if state_line not in text:
+              if state_anchor not in text:
+                  raise SystemExit("State anchor not found")
+              text = text.replace(state_anchor, state_anchor + state_line, 1)
+
+          old_desc = '          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Crie, revise e organize as newsletters da Consulmax. O envio por e-mail será integrado em uma etapa posterior; aqui ficam o conteúdo e o histórico editorial.</p>'
+          new_desc = '          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Crie, revise e organize as newsletters da Consulmax, selecione Clientes e Meus Parceiros e prepare a fila individual de disparo.</p>'
+          if old_desc in text:
+              text = text.replace(old_desc, new_desc, 1)
+
+          copy_anchor = '                    <Button size="icon" variant="outline" title="Copiar conteúdo" disabled={!item.content} onClick={() => item.content && navigator.clipboard.writeText(item.content).catch(() => undefined)}><Copy className="h-4 w-4" /></Button>'
+          audience_button = '                    <Button size="sm" variant="outline" title="Selecionar público" onClick={() => setAudienceNewsletter(item)}><Users className="mr-1.5 h-4 w-4" />Público</Button>\n'
+          if audience_button.strip() not in text:
+              if copy_anchor not in text:
+                  raise SystemExit("Card action anchor not found")
+              text = text.replace(copy_anchor, audience_button + copy_anchor, 1)
+
+          if '  Users,\n' not in text:
+              icon_anchor = '  Upload,\n'
+              if icon_anchor not in text:
+                  raise SystemExit("Icon anchor not found")
+              text = text.replace(icon_anchor, icon_anchor + '  Users,\n', 1)
+
+          dialog_anchor = '      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>'
+          audience_dialog = '''      <MarketingNewsletterAudienceDialog
+        newsletter={audienceNewsletter}
+        open={Boolean(audienceNewsletter)}
+        onOpenChange={(nextOpen) => { if (!nextOpen) setAudienceNewsletter(null); }}
+      />
+
+'''
+          if '<MarketingNewsletterAudienceDialog' not in text:
+              if dialog_anchor not in text:
+                  raise SystemExit("Dialog anchor not found")
+              text = text.replace(dialog_anchor, audience_dialog + dialog_anchor, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes required"
+            exit 0
+          fi
+          git config user.name "consulmax-automation"
+          git config user.email "automation@consulmax.local"
+          git add src/pages/MarketingNewsletterPanel.tsx
+          git commit -m "feat(marketing): add newsletter audience selection"
+          git push origin main

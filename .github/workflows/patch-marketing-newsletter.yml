@@ -1,0 +1,65 @@
+name: Wire Marketing Newsletter
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/patch-marketing-newsletter.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch Marketing tabs
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/pages/Marketing.tsx")
+          text = path.read_text(encoding="utf-8")
+
+          import_anchor = 'import React, { useEffect, useMemo, useState } from "react";\n'
+          import_line = 'import MarketingNewsletterPanel from "./MarketingNewsletterPanel";\n'
+          if import_line not in text:
+              if import_anchor not in text:
+                  raise SystemExit("Import anchor not found")
+              text = text.replace(import_anchor, import_anchor + import_line, 1)
+
+          trigger_anchor = '            <TabsTrigger value="criativos"><ImageIcon className="mr-2 h-4 w-4" />Central de criativos</TabsTrigger>'
+          newsletter_trigger = '            {canManage && <TabsTrigger value="newsletter"><Megaphone className="mr-2 h-4 w-4" />Newsletter</TabsTrigger>}\n'
+          if 'value="newsletter"' not in text:
+              if trigger_anchor not in text:
+                  raise SystemExit("Tabs trigger anchor not found")
+              text = text.replace(trigger_anchor, newsletter_trigger + trigger_anchor, 1)
+
+          content_anchor = '        <TabsContent value="criativos" className="mt-5 space-y-5">'
+          newsletter_content = '        {canManage && <TabsContent value="newsletter" className="mt-5"><MarketingNewsletterPanel /></TabsContent>}\n\n'
+          if '<MarketingNewsletterPanel />' not in text:
+              if content_anchor not in text:
+                  raise SystemExit("Tabs content anchor not found")
+              text = text.replace(content_anchor, newsletter_content + content_anchor, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes required"
+            exit 0
+          fi
+          git config user.name "consulmax-automation"
+          git config user.email "automation@consulmax.local"
+          git add src/pages/Marketing.tsx
+          git commit -m "feat(marketing): add newsletter tab"
+          git push origin main

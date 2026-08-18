@@ -14,6 +14,9 @@ import {
   Handshake,
   Loader2,
   Mail,
+  Pause,
+  Play,
+  RotateCcw,
   Users,
   UserRoundSearch,
 } from "lucide-react";
@@ -45,9 +48,23 @@ type Dispatch = {
   total_recipients: number;
   sent_count: number;
   failed_count: number;
+  skipped_count?: number;
   duplicate_count: number;
   invalid_count: number;
   created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  last_run_at?: string | null;
+};
+
+const DISPATCH_LABEL: Record<string, string> = {
+  preparando: "Preparando",
+  pronta: "Pronta para iniciar",
+  em_envio: "Em envio",
+  pausada: "Pausada",
+  concluida: "Concluída",
+  cancelada: "Cancelada",
+  erro: "Erro",
 };
 
 export default function MarketingNewsletterAudienceDialog({
@@ -66,6 +83,8 @@ export default function MarketingNewsletterAudienceDialog({
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [queueing, setQueueing] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const selectedSources = useMemo(() => [
@@ -76,6 +95,7 @@ export default function MarketingNewsletterAudienceDialog({
   useEffect(() => {
     if (!open || !newsletter) return;
     setPreview(null);
+    setNotice(null);
     setError(null);
     void loadCounts();
   }, [open, newsletter?.id]);
@@ -124,6 +144,7 @@ export default function MarketingNewsletterAudienceDialog({
     if (!selectedSources.length) return setError("Selecione pelo menos uma lista.");
     setPreviewing(true);
     setError(null);
+    setNotice(null);
     try {
       const body = await api("/api/marketing/newsletter-audience", {
         method: "POST",
@@ -141,6 +162,7 @@ export default function MarketingNewsletterAudienceDialog({
     if (!newsletter || !preview) return;
     setQueueing(true);
     setError(null);
+    setNotice(null);
     try {
       const body = await api("/api/marketing/newsletter-audience", {
         method: "POST",
@@ -148,12 +170,55 @@ export default function MarketingNewsletterAudienceDialog({
       });
       setDispatch(body.dispatch as Dispatch);
       setPreview((current) => current ? { ...current, total_unique: body.total_unique } : current);
+      setNotice("Fila preparada. Revise os números e clique em Iniciar disparo.");
     } catch (err: any) {
       setError(err?.message || "Não foi possível criar a fila de envio.");
     } finally {
       setQueueing(false);
     }
   }
+
+  async function runNow() {
+    return api("/api/marketing/newsletter-dispatch-run", { method: "POST", body: JSON.stringify({}) });
+  }
+
+  async function changeDispatch(action: "start" | "pause" | "resume") {
+    if (!newsletter || !dispatch) return;
+    setActing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const body = await api("/api/marketing/newsletter-audience", {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          newsletter_id: newsletter.id,
+          dispatch_id: dispatch.id,
+        }),
+      });
+      setDispatch(body.dispatch as Dispatch);
+
+      if (action === "pause") {
+        setNotice("Disparo pausado. Nenhum novo destinatário será processado até a retomada.");
+      } else {
+        const result = await runNow();
+        setNotice(result.sent > 0
+          ? `Disparo iniciado. ${result.sent} e-mail${result.sent === 1 ? "" : "s"} enviado${result.sent === 1 ? "" : "s"} nesta execução.`
+          : result.reason === "daily_limit"
+            ? "Fila ativa. O limite de 100 envios em 24h já foi atingido e o CRM retomará automaticamente quando houver cota."
+            : result.reason === "hourly_limit"
+              ? "Fila ativa. O limite da hora já foi atingido e o CRM retomará automaticamente na próxima janela."
+              : "Fila ativa. O CRM continuará processando os destinatários automaticamente.");
+        await loadCounts();
+      }
+    } catch (err: any) {
+      setError(err?.message || "Não foi possível alterar o disparo.");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  const activeQueue = dispatch && ["em_envio", "pausada"].includes(dispatch.status);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -170,6 +235,7 @@ export default function MarketingNewsletterAudienceDialog({
           </div>
         )}
 
+        {notice && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</div>}
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
         <div className="space-y-3">
@@ -233,19 +299,47 @@ export default function MarketingNewsletterAudienceDialog({
         )}
 
         {dispatch && (
-          <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            <div className="flex items-center gap-2 font-semibold"><CheckCircle2 className="h-4 w-4" />Fila de envio preparada</div>
-            <p className="mt-1">{dispatch.total_recipients} destinatários • limite {dispatch.hourly_limit}/hora • {dispatch.daily_limit}/24h.</p>
-            {dispatch.sent_count > 0 && <p className="mt-1 text-xs">Já enviados: {dispatch.sent_count} • falhas: {dispatch.failed_count}.</p>}
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 font-semibold"><CheckCircle2 className="h-4 w-4" />Fila de envio</div>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-blue-700">{DISPATCH_LABEL[dispatch.status] || dispatch.status}</p>
+              </div>
+              <div className="text-right text-xs text-blue-700">
+                <strong className="text-lg text-[#1E293F]">{dispatch.sent_count}</strong> / {dispatch.total_recipients} enviados
+                {dispatch.failed_count > 0 && <p className="text-red-600">{dispatch.failed_count} falha{dispatch.failed_count === 1 ? "" : "s"}</p>}
+              </div>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-blue-100">
+              <div className="h-full rounded-full bg-[#A11C27] transition-all" style={{ width: `${dispatch.total_recipients ? Math.min(100, (dispatch.sent_count / dispatch.total_recipients) * 100) : 0}%` }} />
+            </div>
+            <p className="mt-2 text-xs text-blue-700">Limite operacional: {dispatch.hourly_limit}/hora • {dispatch.daily_limit}/24h.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {dispatch.status === "pronta" && (
+                <Button size="sm" disabled={acting} onClick={() => void changeDispatch("start")}>
+                  {acting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}Iniciar disparo
+                </Button>
+              )}
+              {dispatch.status === "em_envio" && (
+                <Button size="sm" variant="outline" disabled={acting} onClick={() => void changeDispatch("pause")}>
+                  {acting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Pause className="mr-2 h-4 w-4" />}Pausar
+                </Button>
+              )}
+              {dispatch.status === "pausada" && (
+                <Button size="sm" disabled={acting} onClick={() => void changeDispatch("resume")}>
+                  {acting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}Retomar
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
         <DialogFooter className="gap-2 sm:gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
-          <Button variant="outline" disabled={loading || previewing || !selectedSources.length} onClick={() => void previewAudience()}>
+          <Button variant="outline" disabled={loading || previewing || !selectedSources.length || Boolean(activeQueue)} onClick={() => void previewAudience()}>
             {previewing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Conferir lista
           </Button>
-          <Button disabled={!preview || queueing} onClick={() => void prepareQueue()}>
+          <Button disabled={!preview || queueing || Boolean(activeQueue)} onClick={() => void prepareQueue()}>
             {queueing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
             Preparar fila de envio
           </Button>

@@ -87,3 +87,5 @@ jobs:
           git add src/pages/MarketingNewsletterPanel.tsx
           git commit -m "feat(marketing): add newsletter audience selection"
           git push origin main
+
+# Triggered after the workflow was present on main.

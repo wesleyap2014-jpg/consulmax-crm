@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import MarketingNewsletterPanel from "./MarketingNewsletterPanel";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -731,6 +732,7 @@ Responda APENAS em JSON válido, sem markdown, exatamente com estas chaves:
             {canManage && <TabsTrigger value="plano"><CalendarDays className="mr-2 h-4 w-4" />Plano de mídia</TabsTrigger>}
             {canManage && <TabsTrigger value="estudio"><Sparkles className="mr-2 h-4 w-4" />Estúdio de conteúdo</TabsTrigger>}
             {canManage && <TabsTrigger value="campanhas"><FolderKanban className="mr-2 h-4 w-4" />Campanhas</TabsTrigger>}
+            {canManage && <TabsTrigger value="newsletter"><Megaphone className="mr-2 h-4 w-4" />Newsletter</TabsTrigger>}
             <TabsTrigger value="criativos"><ImageIcon className="mr-2 h-4 w-4" />Central de criativos</TabsTrigger>
           </TabsList>
         </div>
@@ -884,6 +886,8 @@ Responda APENAS em JSON válido, sem markdown, exatamente com estas chaves:
             </div>
           ) : <EmptyState icon={FolderKanban} title="Nenhuma campanha criada" description="Crie kits completos para iniciativas como Troca de Chaves, Lance Prime e Agronegócio." action="Criar campanha" onAction={() => setModal("campaign")} />}
         </TabsContent>}
+
+        {canManage && <TabsContent value="newsletter" className="mt-5"><MarketingNewsletterPanel /></TabsContent>}
 
         <TabsContent value="criativos" className="mt-5 space-y-5">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">

@@ -193,6 +193,18 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
         return canViewGuide("rh") && canInfo("rh", "vacancies");
       }
 
+      // Rotas antigas/auxiliares não expostas como item próprio no menu devem herdar
+      // a permissão da guia funcional correspondente.
+      if (pathname.startsWith("/radar-ofertas") || pathname.startsWith("/buscar-ofertas")) {
+        return canViewGuide("central_grupos");
+      }
+      if (pathname.startsWith("/propostas-cadenciado")) {
+        return canViewGuide("propostas");
+      }
+      if (pathname.startsWith("/lgpd")) {
+        return canViewGuide("parametros");
+      }
+
       const guideKey = guideKeyForPath(pathname);
       return guideKey ? canViewGuide(guideKey) : true;
     },

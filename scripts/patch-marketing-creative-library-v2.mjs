@@ -41,6 +41,21 @@ v3Runtime = v3Runtime.replace(
   'const path = `library/${new Date().getFullYear()}/${batch}/${String(index + 1).padStart(2, "0")}-${name}`;',
   'const path = "library/" + new Date().getFullYear() + "/" + batch + "/" + String(index + 1).padStart(2, "0") + "-" + name;',
 );
+
+const noteStart = v3Runtime.indexOf('if (!text.includes("Arquivos atuais")) {');
+const noteEnd = v3Runtime.indexOf('\nconst oldFooter', noteStart);
+if (noteStart < 0 || noteEnd < 0) throw new Error("[creative-library-v2] current files runtime block not found");
+const safeNoteBlock = [
+  'if (!text.includes("Arquivos atuais")) {',
+  '  replaceOnce(',
+  '    selectedFilesBlock,',
+  '    selectedFilesBlock + \'\\n              {editing && selectedFiles.length === 0 && (assetsByCreative[editing.id] || []).length > 0 && <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800"><strong>Arquivos atuais:</strong> {(assetsByCreative[editing.id] || []).map((asset, index) => asset.file_name || ("Arquivo " + (index + 1))).join(" • ")}<br /><span className="text-blue-600">Se não selecionar novos arquivos, os atuais serão mantidos.</span></div>}\',',
+  '    "current files note",',
+  '  );',
+  '}',
+].join("\n");
+v3Runtime = v3Runtime.slice(0, noteStart) + safeNoteBlock + v3Runtime.slice(noteEnd);
+
 const runtimePath = "scripts/.patch-marketing-creative-edit-v3-runtime.mjs";
 fs.writeFileSync(runtimePath, v3Runtime, "utf8");
 await import(`./.patch-marketing-creative-edit-v3-runtime.mjs?build=${Date.now()}`);

@@ -7,6 +7,7 @@ import GiroDeCarteiraV2 from "@/pages/GiroDeCarteiraV2";
 import { WhatsAppNotificationsProvider } from "@/components/whatsapp/WhatsAppNotificationsProvider";
 import { AccessProvider } from "@/access/AccessContext";
 import AccessRouteGuard from "@/access/AccessRouteGuard";
+import GuidePermissionRuntime from "@/access/GuidePermissionRuntime";
 
 export default function App() {
   const location = useLocation();
@@ -51,19 +52,21 @@ export default function App() {
               {/* conteúdo acima do fundo */}
               <div className="relative z-[1]">
                 <AccessRouteGuard>
-                  {isGiroDeCarteira ? (
-                    <GiroDeCarteiraV2 />
-                  ) : (
-                    <React.Suspense
-                      fallback={
-                        <div className="p-4 text-sm text-gray-600">
-                          Carregando conteúdo…
-                        </div>
-                      }
-                    >
-                      <Outlet />
-                    </React.Suspense>
-                  )}
+                  <GuidePermissionRuntime>
+                    {isGiroDeCarteira ? (
+                      <GiroDeCarteiraV2 />
+                    ) : (
+                      <React.Suspense
+                        fallback={
+                          <div className="p-4 text-sm text-gray-600">
+                            Carregando conteúdo…
+                          </div>
+                        }
+                      >
+                        <Outlet />
+                      </React.Suspense>
+                    )}
+                  </GuidePermissionRuntime>
                 </AccessRouteGuard>
               </div>
             </main>

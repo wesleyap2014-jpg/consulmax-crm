@@ -31,4 +31,17 @@ text = text.slice(0, start) + replacement + text.slice(end + endMarker.length);
 fs.writeFileSync(path, text, "utf8");
 console.log("Creative library v2 patch applied");
 
-await import("./patch-marketing-creative-edit-v3.mjs");
+const v3Path = "scripts/patch-marketing-creative-edit-v3.mjs";
+let v3Runtime = fs.readFileSync(v3Path, "utf8");
+v3Runtime = v3Runtime.replaceAll(
+  'return setError(`Selecione pelo menos ${config.min} arquivos para ${config.label}.`);',
+  'return setError("Selecione pelo menos " + config.min + " arquivos para " + config.label + ".");',
+);
+v3Runtime = v3Runtime.replace(
+  'const path = `library/${new Date().getFullYear()}/${batch}/${String(index + 1).padStart(2, "0")}-${name}`;',
+  'const path = "library/" + new Date().getFullYear() + "/" + batch + "/" + String(index + 1).padStart(2, "0") + "-" + name;',
+);
+const runtimePath = "scripts/.patch-marketing-creative-edit-v3-runtime.mjs";
+fs.writeFileSync(runtimePath, v3Runtime, "utf8");
+await import(`./.patch-marketing-creative-edit-v3-runtime.mjs?build=${Date.now()}`);
+fs.rmSync(runtimePath, { force: true });

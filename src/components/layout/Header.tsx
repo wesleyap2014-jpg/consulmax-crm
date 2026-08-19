@@ -396,16 +396,6 @@ export default function Header() {
                 >
                   Meu perfil
                 </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    navigate("/preferencias");
-                  }}
-                  className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
-                >
-                  Preferências
-                </button>
                 <div className="my-1 h-px bg-slate-100 dark:bg-slate-700" aria-hidden />
                 <button
                   role="menuitem"

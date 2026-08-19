@@ -33,6 +33,7 @@ const GestaoDeGrupos = React.lazy(() => import("./pages/GestaoDeGrupos"));
 const Parametros = React.lazy(() => import("./pages/Parametros"));
 const TermsLGPD = React.lazy(() => import("./pages/TermsLGPD"));
 const AlterarSenha = React.lazy(() => import("./pages/AlterarSenha"));
+const MeuPerfil = React.lazy(() => import("./pages/MeuPerfil"));
 const LinksUteis = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));
@@ -105,6 +106,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: withSuspense(<Inicio />) },
           { path: "inicio", element: withSuspense(<Inicio />) },
+          { path: "perfil", element: withSuspense(<MeuPerfil />) },
 
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
           { path: "oportunidades", element: withSuspense(<Oportunidades />) },

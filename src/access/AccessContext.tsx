@@ -25,14 +25,20 @@ type CurrentUserAccess = {
   is_active?: boolean | null;
   unit_id?: string | null;
   hierarchy_level?: string | null;
+};
+
+export type UserAccessAssignment = {
+  user_id: string;
   access_profile_id?: string | null;
   partner_category_id?: string | null;
+  partner_category_since?: string | null;
 };
 
 type AccessContextValue = {
   loading: boolean;
   error: string | null;
   user: CurrentUserAccess | null;
+  assignment: UserAccessAssignment | null;
   accessProfile: AccessProfileRow | null;
   legacyMode: boolean;
   isAdmin: boolean;
@@ -50,6 +56,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CurrentUserAccess | null>(null);
+  const [assignment, setAssignment] = useState<UserAccessAssignment | null>(null);
   const [accessProfile, setAccessProfile] = useState<AccessProfileRow | null>(null);
 
   const refresh = useCallback(async () => {
@@ -61,15 +68,14 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       if (auth.error) throw auth.error;
       if (!authUser) {
         setUser(null);
+        setAssignment(null);
         setAccessProfile(null);
         return;
       }
 
       const userRes = await supabase
         .from("users")
-        .select(
-          "id,auth_user_id,nome,role,scopes,is_active,unit_id,hierarchy_level,access_profile_id,partner_category_id",
-        )
+        .select("id,auth_user_id,nome,role,scopes,is_active,unit_id,hierarchy_level")
         .eq("auth_user_id", authUser.id)
         .maybeSingle();
 
@@ -77,7 +83,23 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       const crmUser = (userRes.data || null) as CurrentUserAccess | null;
       setUser(crmUser);
 
-      if (!crmUser?.access_profile_id) {
+      if (!crmUser?.id) {
+        setAssignment(null);
+        setAccessProfile(null);
+        return;
+      }
+
+      const assignmentRes = await supabase
+        .from("user_access_assignments")
+        .select("user_id,access_profile_id,partner_category_id,partner_category_since")
+        .eq("user_id", crmUser.id)
+        .maybeSingle();
+
+      if (assignmentRes.error) throw assignmentRes.error;
+      const currentAssignment = (assignmentRes.data || null) as UserAccessAssignment | null;
+      setAssignment(currentAssignment);
+
+      if (!currentAssignment?.access_profile_id) {
         setAccessProfile(null);
         return;
       }
@@ -85,7 +107,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       const profileRes = await supabase
         .from("access_profiles")
         .select("id,name,description,permissions,is_active,is_system")
-        .eq("id", crmUser.access_profile_id)
+        .eq("id", currentAssignment.access_profile_id)
         .maybeSingle();
 
       if (profileRes.error) throw profileRes.error;
@@ -94,7 +116,9 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     } catch (e: any) {
       console.error("[AccessProvider]", e);
       setError(e?.message || "Não foi possível carregar o perfil de acesso.");
-      // Falha segura para usuários que já existiam antes do RBAC: não quebra a operação atual.
+      // Compatibilidade: enquanto um usuário não recebeu um Perfil de Acesso,
+      // o CRM mantém exatamente o comportamento anterior.
+      setAssignment(null);
       setAccessProfile(null);
     } finally {
       setLoading(false);
@@ -108,13 +132,13 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("crm:access-updated", handler);
   }, [refresh]);
 
-  const legacyMode = !user?.access_profile_id || !accessProfile;
+  const legacyMode = !assignment?.access_profile_id || !accessProfile;
   const isAdmin = user?.role === "admin";
   const matrix = legacyMode ? FULL_LEGACY : accessProfile?.permissions || {};
 
   const canViewGuide = useCallback(
     (guideKey: string) => {
-      // Administrador nunca pode perder a porta de recuperação do controle de usuários/perfis.
+      // Admin mantém sempre a porta de recuperação da administração de usuários/perfis.
       if (isAdmin && guideKey === "usuarios") return true;
       return permissionAllowed(matrix, guideKey, "view");
     },
@@ -180,6 +204,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       user,
+      assignment,
       accessProfile,
       legacyMode,
       isAdmin,
@@ -193,6 +218,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       user,
+      assignment,
       accessProfile,
       legacyMode,
       isAdmin,

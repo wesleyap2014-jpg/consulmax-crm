@@ -11,6 +11,9 @@
     },
     "api/marketing/newsletter-dispatch-run.ts": {
       "maxDuration": 60
+    },
+    "api/whatsapp/campaign-run.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -21,6 +24,10 @@
     {
       "path": "/api/marketing/newsletter-dispatch-run",
       "schedule": "5 * * * *"
+    },
+    {
+      "path": "/api/whatsapp/campaign-run",
+      "schedule": "* * * * *"
     }
   ],
   "rewrites": [

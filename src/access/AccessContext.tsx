@@ -111,14 +111,10 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle();
 
       if (profileRes.error) throw profileRes.error;
-      const profile = (profileRes.data || null) as AccessProfileRow | null;
-      setAccessProfile(profile?.is_active === false ? null : profile);
+      setAccessProfile((profileRes.data || null) as AccessProfileRow | null);
     } catch (e: any) {
       console.error("[AccessProvider]", e);
       setError(e?.message || "Não foi possível carregar o perfil de acesso.");
-      // Compatibilidade: enquanto um usuário não recebeu um Perfil de Acesso,
-      // o CRM mantém exatamente o comportamento anterior.
-      setAssignment(null);
       setAccessProfile(null);
     } finally {
       setLoading(false);
@@ -132,13 +128,16 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("crm:access-updated", handler);
   }, [refresh]);
 
-  const legacyMode = !assignment?.access_profile_id || !accessProfile;
+  const legacyMode = !assignment?.access_profile_id;
   const isAdmin = user?.role === "admin";
-  const matrix = legacyMode ? FULL_LEGACY : accessProfile?.permissions || {};
+  const matrix = legacyMode
+    ? FULL_LEGACY
+    : accessProfile && accessProfile.is_active !== false
+      ? accessProfile.permissions || {}
+      : {};
 
   const canViewGuide = useCallback(
     (guideKey: string) => {
-      // Admin mantém sempre a porta de recuperação da administração de usuários/perfis.
       if (isAdmin && guideKey === "usuarios") return true;
       return permissionAllowed(matrix, guideKey, "view");
     },
@@ -173,37 +172,15 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
         return true;
       }
 
-      if (pathname.startsWith("/usuarios/perfis")) {
-        return isAdmin || canAction("usuarios", "manage_profiles");
-      }
-
-      if (pathname.startsWith("/whatsapp/campanhas")) {
-        return canViewGuide("whatsapp") && canInfo("whatsapp", "campaigns");
-      }
-      if (pathname.startsWith("/whatsapp/modelos")) {
-        return canViewGuide("whatsapp") && canInfo("whatsapp", "templates");
-      }
-      if (pathname.startsWith("/whatsapp/autorizacoes")) {
-        return canViewGuide("whatsapp") && canInfo("whatsapp", "authorizations");
-      }
-      if (pathname.startsWith("/simuladores/add") || pathname.match(/^\/simuladores\/admin\//)) {
-        return canViewGuide("simuladores") && canAction("simuladores", "manage_admins");
-      }
-      if (pathname.startsWith("/rh/vagas")) {
-        return canViewGuide("rh") && canInfo("rh", "vacancies");
-      }
-
-      // Rotas antigas/auxiliares não expostas como item próprio no menu devem herdar
-      // a permissão da guia funcional correspondente.
-      if (pathname.startsWith("/radar-ofertas") || pathname.startsWith("/buscar-ofertas")) {
-        return canViewGuide("central_grupos");
-      }
-      if (pathname.startsWith("/propostas-cadenciado")) {
-        return canViewGuide("propostas");
-      }
-      if (pathname.startsWith("/lgpd")) {
-        return canViewGuide("parametros");
-      }
+      if (pathname.startsWith("/usuarios/perfis")) return isAdmin;
+      if (pathname.startsWith("/whatsapp/campanhas")) return canViewGuide("whatsapp") && canInfo("whatsapp", "campaigns");
+      if (pathname.startsWith("/whatsapp/modelos")) return canViewGuide("whatsapp") && canInfo("whatsapp", "templates");
+      if (pathname.startsWith("/whatsapp/autorizacoes")) return canViewGuide("whatsapp") && canInfo("whatsapp", "authorizations");
+      if (pathname.startsWith("/simuladores/add") || pathname.match(/^\/simuladores\/admin\//)) return canViewGuide("simuladores") && canAction("simuladores", "manage_admins");
+      if (pathname.startsWith("/rh/vagas")) return canViewGuide("rh") && canInfo("rh", "vacancies");
+      if (pathname.startsWith("/radar-ofertas") || pathname.startsWith("/buscar-ofertas")) return canViewGuide("central_grupos");
+      if (pathname.startsWith("/propostas-cadenciado")) return canViewGuide("propostas");
+      if (pathname.startsWith("/lgpd")) return canViewGuide("parametros");
 
       const guideKey = guideKeyForPath(pathname);
       return guideKey ? canViewGuide(guideKey) : true;
@@ -212,34 +189,8 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<AccessContextValue>(
-    () => ({
-      loading,
-      error,
-      user,
-      assignment,
-      accessProfile,
-      legacyMode,
-      isAdmin,
-      canViewGuide,
-      canInfo,
-      canAction,
-      canAccessPath,
-      refresh,
-    }),
-    [
-      loading,
-      error,
-      user,
-      assignment,
-      accessProfile,
-      legacyMode,
-      isAdmin,
-      canViewGuide,
-      canInfo,
-      canAction,
-      canAccessPath,
-      refresh,
-    ],
+    () => ({ loading, error, user, assignment, accessProfile, legacyMode, isAdmin, canViewGuide, canInfo, canAction, canAccessPath, refresh }),
+    [loading, error, user, assignment, accessProfile, legacyMode, isAdmin, canViewGuide, canInfo, canAction, canAccessPath, refresh],
   );
 
   return <AccessContext.Provider value={value}>{children}</AccessContext.Provider>;

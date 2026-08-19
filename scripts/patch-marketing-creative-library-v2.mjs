@@ -30,3 +30,5 @@ text = text.slice(0, start) + replacement + text.slice(end + endMarker.length);
 
 fs.writeFileSync(path, text, "utf8");
 console.log("Creative library v2 patch applied");
+
+await import("./patch-marketing-creative-edit-v3.mjs");

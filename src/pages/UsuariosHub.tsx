@@ -7,12 +7,11 @@ import { useAccess } from "@/access/AccessContext";
 
 export default function UsuariosHub() {
   const navigate = useNavigate();
-  const { isAdmin, canAction } = useAccess();
-  const canManageProfiles = isAdmin || canAction("usuarios", "manage_profiles");
+  const { isAdmin } = useAccess();
 
   return (
     <div className="space-y-4">
-      {canManageProfiles ? (
+      {isAdmin ? (
         <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm md:flex-row md:items-center md:justify-between">
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#A11C27]/10 text-[#A11C27]">

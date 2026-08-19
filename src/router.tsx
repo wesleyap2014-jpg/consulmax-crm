@@ -28,7 +28,8 @@ const PropostasCadenciado = React.lazy(() => import("./pages/PropostasCadenciado
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
 const Carteira = React.lazy(() => import("./pages/Carteira"));
 const GiroDeCarteira = React.lazy(() => import("./pages/GiroDeCarteiraV2"));
-const Usuarios = React.lazy(() => import("./pages/Usuarios"));
+const Usuarios = React.lazy(() => import("./pages/UsuariosHub"));
+const PerfisUsuarios = React.lazy(() => import("./pages/PerfisUsuarios"));
 const GestaoDeGrupos = React.lazy(() => import("./pages/GestaoDeGrupos"));
 const Parametros = React.lazy(() => import("./pages/Parametros"));
 const TermsLGPD = React.lazy(() => import("./pages/TermsLGPD"));
@@ -177,6 +178,7 @@ export const router = createBrowserRouter([
           { path: "ranking-vendas", element: <Navigate to="/ranking" replace /> },
 
           { path: "usuarios", element: withSuspense(<Usuarios />) },
+          { path: "usuarios/perfis", element: withSuspense(<PerfisUsuarios />) },
           { path: "gestao-de-grupos", element: withSuspense(<GestaoDeGrupos />) },
           { path: "parametros", element: withSuspense(<Parametros />) },
           { path: "lgpd", element: withSuspense(<TermsLGPD />) },

@@ -165,7 +165,7 @@ async function drawBrand(ctx: CanvasRenderingContext2D) {
   const logo = await loadImage("/logo-consulmax.png?v=3");
   fillRoundRect(ctx, 64, 58, 320, 100, 24, "rgba(255,255,255,0.96)");
   if (logo) {
-    drawImageContain(ctx, logo, -26, 45, 500, 126);
+    drawImageContain(ctx, logo, -51, 39, 550, 139);
   } else {
     ctx.fillStyle = NAVY;
     ctx.font = "800 34px Manrope, Arial, sans-serif";

@@ -88,13 +88,6 @@ replaceOnce(
   "const mediaType = headerMediaType || \"document\";",
 );
 
-replaceOnce(
-  "nomes de variáveis de cliente",
-  /    if \(\["1", "nome", "nomecliente", "cliente", "primeironome"\]\.includes\(key\)\)\n      return firstName;\n    if \(\["nomecompleto", "nomeclientecompleto"\]\.includes\(key\)\) return fullName;/,
-  `    if (["1", "nome", "nomecliente", "nomedocliente", "cliente", "primeironome", "primeironomedocliente"].includes(key))\n      return firstName;\n    if (["nomecompleto", "nomeclientecompleto", "nomecompletodocliente"].includes(key)) return fullName;`,
-  "\"nomedocliente\"",
-);
-
 const genericModalMarker = 'title={isBoletoTemplate(boletoOverlay.templateName) ? "Anexar boleto e vencimento" : "Preparar modelo"}';
 if (!src.includes(genericModalMarker)) {
   const modalRegex = /\{boletoOverlay && <Modal title="Anexar boleto e vencimento"[\s\S]*?<\/Modal>\}/;

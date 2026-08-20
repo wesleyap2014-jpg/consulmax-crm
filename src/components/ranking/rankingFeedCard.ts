@@ -175,7 +175,7 @@ async function drawBrand(ctx: CanvasRenderingContext2D) {
 
 function drawFooter(ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = "rgba(255,255,255,0.65)";
-  ctx.font = "400 30px 'Anthony Hunter', cursive";
+  ctx.font = "400 40px 'Anthony Hunter', cursive";
   ctx.fillText("Transformando sonhos em conquistas reais!", 64, 1025);
   ctx.textAlign = "right";
   ctx.fillStyle = GOLD;

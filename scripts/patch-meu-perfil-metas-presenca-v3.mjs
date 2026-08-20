@@ -199,7 +199,7 @@ for (const path of ["src/pages/MeuPerfil.tsx", "src/pages/MeuPerfilCascata.tsx"]
       }
 
       if (!token) throw new Error("Não foi possível gerar o link.");
-      clipboardCopy(`${window.location.origin}/presenca/${token}`);
+      clipboardCopy(window.location.origin + "/presenca/" + token);
     } catch (e: any) {
       alert("Não foi possível gerar o link de presença: " + (e?.message || "erro desconhecido"));
     }

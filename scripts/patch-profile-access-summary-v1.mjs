@@ -37,3 +37,4 @@ await import("./patch-ranking-destaques-v1.mjs");
 await import("./patch-ranking-tabs-v2.mjs");
 await import("./patch-destaques-feed-meu-dia-v1.mjs");
 await import("./patch-ranking-feed-brand-fonts-v1.mjs");
+await import("./patch-ranking-highlights-closeout-v2.mjs");

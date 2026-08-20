@@ -30,3 +30,5 @@ function patchFile(file) {
 
 patchFile("src/pages/MeuPerfil.tsx");
 patchFile("src/pages/MeuPerfilCascata.tsx");
+
+await import("./patch-meu-perfil-metas-presenca-v3.mjs");

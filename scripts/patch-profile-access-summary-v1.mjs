@@ -33,3 +33,4 @@ patchFile("src/pages/MeuPerfilCascata.tsx");
 
 await import("./patch-meu-perfil-metas-presenca-v3.mjs");
 await import("./patch-crm-last-access-agenda-v1.mjs");
+await import("./patch-ranking-destaques-v1.mjs");

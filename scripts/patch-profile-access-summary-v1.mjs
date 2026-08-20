@@ -35,3 +35,4 @@ await import("./patch-meu-perfil-metas-presenca-v3.mjs");
 await import("./patch-crm-last-access-agenda-v1.mjs");
 await import("./patch-ranking-destaques-v1.mjs");
 await import("./patch-ranking-tabs-v2.mjs");
+await import("./patch-destaques-feed-meu-dia-v1.mjs");

@@ -165,7 +165,7 @@ async function drawBrand(ctx: CanvasRenderingContext2D) {
   const logo = await loadImage("/logo-consulmax.png?v=3");
   fillRoundRect(ctx, 64, 58, 320, 100, 24, "rgba(255,255,255,0.96)");
   if (logo) {
-    drawImageContain(ctx, logo, 78, 70, 300, 76);
+    drawImageContain(ctx, logo, 68, 67, 320, 81);
   } else {
     ctx.fillStyle = NAVY;
     ctx.font = "800 34px Manrope, Arial, sans-serif";
@@ -175,8 +175,8 @@ async function drawBrand(ctx: CanvasRenderingContext2D) {
 
 function drawFooter(ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = "rgba(255,255,255,0.65)";
-  ctx.font = "500 24px Manrope, Arial, sans-serif";
-  ctx.fillText("Transformando sonhos em conquistas reais.", 64, 1025);
+  ctx.font = "400 30px 'Anthony Hunter', cursive";
+  ctx.fillText("Transformando sonhos em conquistas reais!", 64, 1025);
   ctx.textAlign = "right";
   ctx.fillStyle = GOLD;
   ctx.font = "800 22px Manrope, Arial, sans-serif";

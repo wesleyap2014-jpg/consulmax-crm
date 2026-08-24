@@ -27,6 +27,7 @@ const PropostasProMax = React.lazy(() => import("./pages/PropostasProMax"));
 const PropostasCadenciado = React.lazy(() => import("./pages/PropostasCadenciado"));
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
 const Carteira = React.lazy(() => import("./pages/Carteira"));
+const Seguros = React.lazy(() => import("./pages/Seguros"));
 const GiroDeCarteira = React.lazy(() => import("./pages/GiroDeCarteiraV2"));
 const Usuarios = React.lazy(() => import("./pages/UsuariosHub"));
 const PerfisUsuarios = React.lazy(() => import("./pages/PerfisUsuarios"));
@@ -163,6 +164,7 @@ export const router = createBrowserRouter([
           { path: "propostas-cadenciado", element: withSuspense(<PropostasCadenciado />) },
           { path: "comissoes", element: withSuspense(<Comissoes />) },
           { path: "carteira", element: withSuspense(<Carteira />) },
+          { path: "seguros", element: withSuspense(<Seguros />) },
           { path: "fluxo-de-caixa", element: withSuspense(<FluxoDeCaixa />) },
           { path: "processos", element: withSuspense(<Processos />) },
           { path: "rh", element: withSuspense(<RH />) },

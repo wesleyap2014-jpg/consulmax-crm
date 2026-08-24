@@ -25,6 +25,7 @@ import {
   Link as LinkIcon,
   MessageCircle,
   Megaphone,
+  ShieldCheck,
   SlidersHorizontal,
   Trophy,
   UserCog,
@@ -278,7 +279,7 @@ function groupForPath(pathname: string): GroupKey {
     return "vendas";
   }
 
-  if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos"])) {
+  if (isAnyPathActive(pathname, ["/carteira", "/seguros", "/giro-de-carteira", "/gestao-de-grupos"])) {
     return "pos";
   }
 
@@ -335,6 +336,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
   const [openGroup, setOpenGroup] = useState<GroupKey | null>(currentGroup);
+  const [openPortfolio, setOpenPortfolio] = useState(
+    () => pathname === "/carteira" || pathname.startsWith("/carteira/") || pathname === "/seguros" || pathname.startsWith("/seguros/"),
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -366,6 +370,17 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   useEffect(() => {
     if (!collapsed) setOpenGroup(currentGroup);
   }, [currentGroup, collapsed]);
+
+  useEffect(() => {
+    if (
+      pathname === "/carteira" ||
+      pathname.startsWith("/carteira/") ||
+      pathname === "/seguros" ||
+      pathname.startsWith("/seguros/")
+    ) {
+      setOpenPortfolio(true);
+    }
+  }, [pathname]);
 
   useEffect(() => {
     if (isSmall) setMobileOpen(false);
@@ -484,7 +499,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         title: "Pós-venda",
         icon: Wallet,
         items: [
-          { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
+          { to: "/carteira", label: "Consórcios", icon: Wallet, end: true },
+          { to: "/seguros", label: "Seguros", icon: ShieldCheck, end: true },
           { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
           { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
         ],
@@ -615,6 +631,54 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     );
   };
 
+  const isPortfolioActive =
+    pathname === "/carteira" ||
+    pathname.startsWith("/carteira/") ||
+    pathname === "/seguros" ||
+    pathname.startsWith("/seguros/");
+
+  const renderGroupItems = (key: GroupKey) => {
+    if (key !== "pos") {
+      return navGroups[key].items.map((item) => renderNavItem(item));
+    }
+
+    const [consorcios, seguros, ...otherPostSalesItems] = navGroups.pos.items;
+
+    return (
+      <>
+        <div className="grid gap-2">
+          <button
+            type="button"
+            onClick={() => setOpenPortfolio((value) => !value)}
+            className={`${pillPadding} py-2.5 rounded-2xl transition-colors w-full flex items-center justify-between
+                        ${mobileTapFx}
+                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
+            style={isPortfolioActive ? activePillStyle : glassHoverPill}
+            aria-expanded={openPortfolio}
+            title="Carteira"
+          >
+            <span className="flex items-center gap-2">
+              <Wallet className="h-4 w-4" />
+              <span className="font-semibold">Carteira</span>
+            </span>
+            <span className="opacity-90" aria-hidden>
+              {openPortfolio ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </span>
+          </button>
+
+          {openPortfolio && (
+            <div className="ml-4 grid gap-2">
+              {renderNavItem(consorcios)}
+              {renderNavItem(seguros)}
+            </div>
+          )}
+        </div>
+
+        {otherPostSalesItems.map((item) => renderNavItem(item))}
+      </>
+    );
+  };
+
   const AsideContent = (
     <aside
       className={`${widthClass} border-r md:shadow md:sticky md:top-14
@@ -703,7 +767,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 {renderSectionPill(key)}
                 {openGroup === key && (
                   <div className="ml-4 grid gap-2">
-                    {navGroups[key].items.map((item) => renderNavItem(item))}
+                    {renderGroupItems(key)}
                   </div>
                 )}
               </div>

@@ -47,4 +47,12 @@ patch("src/pages/AgendaExecutive.tsx", [
     '<button className="cx-action-btn strong" onClick={props.onVideo} disabled={props.videoLoading}><Video size={17} /> {props.videoLoading ? "Preparando…" : "Entrar na reunião"}</button>',
     '{ev.tipo === "reuniao" && <button className="cx-action-btn strong" onClick={props.onVideo} disabled={props.videoLoading}><Video size={17} /> {props.videoLoading ? "Preparando…" : "Entrar na reunião"}</button>}',
   ),
+  (src) => src.includes("async function copyAttendanceLink(ev: AgendaEvent)") ? src : src.replace(
+    '\nexport default function AgendaExecutive() {',
+    `\nasync function copyAttendanceLink(ev: AgendaEvent) {\n  try {\n    const { data: authData, error: authError } = await supabase.auth.getUser();\n    if (authError || !authData.user) throw new Error("Usuário não autenticado.");\n    const { data: existing, error: selectError } = await supabase\n      .from("agenda_attendance_links")\n      .select("token")\n      .eq("event_id", ev.id)\n      .maybeSingle();\n    if (selectError) throw selectError;\n    let token = existing?.token || null;\n    if (!token) {\n      const { data: created, error: insertError } = await supabase\n        .from("agenda_attendance_links")\n        .insert({ event_id: ev.id, created_by: authData.user.id, is_active: true })\n        .select("token")\n        .single();\n      if (insertError) throw insertError;\n      token = created?.token || null;\n    }\n    if (!token) throw new Error("Não foi possível gerar o link.");\n    const url = window.location.origin + "/presenca/" + token;\n    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);\n    else window.prompt("Copie o link de presença:", url);\n    alert("Link de presença copiado.");\n  } catch (e) {\n    const error = e instanceof Error ? e.message : "erro desconhecido";\n    alert("Não foi possível gerar o link de presença: " + error);\n  }\n}\n\nexport default function AgendaExecutive() {`,
+  ),
+  (src) => src.includes('>Link de presença</button>') ? src : src.replace(
+    '{ev.opportunity_id && <button className="cx-action-btn" onClick={() => props.onOpportunity(ev)}><ExternalLink size={17} /> Abrir oportunidade</button>}',
+    '{ev.opportunity_id && <button className="cx-action-btn" onClick={() => props.onOpportunity(ev)}><ExternalLink size={17} /> Abrir oportunidade</button>}{ev.tipo === "reuniao" && <button className="cx-action-btn" onClick={() => copyAttendanceLink(ev)}><Users size={17} /> Link de presença</button>}',
+  ),
 ]);

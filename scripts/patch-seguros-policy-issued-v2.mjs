@@ -9,7 +9,6 @@ if (!/type\s+PolicyStatus\s*=\s*[\s\S]{0,220}\|\s*["']emitida["']/.test(src)) {
   if (typePattern.test(src)) {
     src = src.replace(typePattern, `$1  | "emitida"\n`);
     changed = true;
-    console.log("[seguros-policy-issued-v2] tipo PolicyStatus aceita Emitida");
   }
 }
 if (!/value\s*:\s*["']emitida["']/.test(src)) {
@@ -44,4 +43,4 @@ const uiOk = /\bemitida\s*:\s*["']Emitida["']/.test(src) || /value\s*:\s*["']emi
 if (!typeOk || !uiOk) throw new Error("[seguros-policy-issued-v2] status Emitida incompleto");
 if (changed) fs.writeFileSync(file, src);
 console.log(`[seguros-policy-issued-v2] ${changed ? "concluído com alterações" : "já aplicado"}`);
-await import("./patch-seguros-layout-diagnostics-v5.mjs");
+await import("./patch-seguros-layout-diagnostics-v6.mjs");

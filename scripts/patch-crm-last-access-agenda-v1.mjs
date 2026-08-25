@@ -37,3 +37,14 @@ patch("src/pages/AgendaLiveKit.tsx", [
   (src) => src.replace('user_id: me?.id || null, cliente_id: null, lead_id: null', 'user_id: me?.auth_user_id || null, cliente_id: null, lead_id: null'),
   (src) => src.replaceAll('<option key={u.id} value={u.id}>', '<option key={u.id} value={u.auth_user_id}>'),
 ]);
+
+patch("src/pages/AgendaExecutive.tsx", [
+  (src) => src.replace(
+    'const bStart = new Date(); bStart.setHours(0, 0, 0, 0); const bEnd = addDays(bStart, 90); bEnd.setHours(23, 59, 59, 999);\n      let birthQ = supabase.from("agenda_eventos").select(EVENT_SELECT).eq("tipo", "aniversario").gte("inicio_at", bStart.toISOString()).lte("inicio_at", bEnd.toISOString()).order("inicio_at", { ascending: true }).limit(200);',
+    'const bStartKey = toDateKey(new Date()); const bEndKey = toDateKey(addDays(new Date(), 90));\n      let birthQ = supabase.from("agenda_eventos").select(EVENT_SELECT).eq("tipo", "aniversario").gte("inicio_at", `${bStartKey}T00:00:00.000Z`).lte("inicio_at", `${bEndKey}T23:59:59.999Z`).order("inicio_at", { ascending: true }).limit(200);',
+  ),
+  (src) => src.replace(
+    '<button className="cx-action-btn strong" onClick={props.onVideo} disabled={props.videoLoading}><Video size={17} /> {props.videoLoading ? "Preparando…" : "Entrar na reunião"}</button>',
+    '{ev.tipo === "reuniao" && <button className="cx-action-btn strong" onClick={props.onVideo} disabled={props.videoLoading}><Video size={17} /> {props.videoLoading ? "Preparando…" : "Entrar na reunião"}</button>}',
+  ),
+]);

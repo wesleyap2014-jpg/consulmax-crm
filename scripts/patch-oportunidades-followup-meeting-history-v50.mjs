@@ -115,7 +115,12 @@ v5 = replaceOnce(
   const value = new Date(iso);
   if (Number.isNaN(value.getTime())) return { date: "", hour: "09", minute: "00" };
   return {
-    date: \`${value.getFullYear()}-\${String(value.getMonth() + 1).padStart(2, "0")}-\${String(value.getDate()).padStart(2, "0")}\`,
+    date:
+      String(value.getFullYear()) +
+      "-" +
+      String(value.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(value.getDate()).padStart(2, "0"),
     hour: String(value.getHours()).padStart(2, "0"),
     minute: String(value.getMinutes()).padStart(2, "0"),
   };

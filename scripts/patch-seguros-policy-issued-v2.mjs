@@ -14,7 +14,6 @@ if (!/type\s+PolicyStatus\s*=\s*[\s\S]{0,220}\|\s*["']emitida["']/.test(src)) {
   }
 }
 
-// 2) Se houver uma lista explícita de opções, insere Emitida entre Pré-emissão e Ativa.
 if (!/value\s*:\s*["']emitida["']/.test(src)) {
   const optionPattern = /(\{\s*value\s*:\s*["']pre_emissao["']\s*,\s*label\s*:\s*["'][^"']+["']\s*\}\s*,?)/;
   if (optionPattern.test(src)) {
@@ -24,7 +23,6 @@ if (!/value\s*:\s*["']emitida["']/.test(src)) {
   }
 }
 
-// 3) Mapa de rótulos usado pela UI.
 if (!/\bemitida\s*:\s*["']Emitida["']/.test(src)) {
   const labelPattern = /(\bpre_emissao\s*:\s*["'][^"']+["']\s*,?)/;
   if (labelPattern.test(src)) {
@@ -34,8 +32,6 @@ if (!/\bemitida\s*:\s*["']Emitida["']/.test(src)) {
   }
 }
 
-// 4) Outros mapas exaustivos de PolicyStatus (ex.: cores/badges) recebem Emitida
-// copiando a apresentação visual de Ativa, sem alterar o rótulo textual acima.
 const exhaustiveMapPattern = /(\bpre_emissao\s*:\s*([^,\n]+),\s*\n\s*)(ativa\s*:\s*([^,\n]+),)/g;
 src = src.replace(exhaustiveMapPattern, (match, before, _preValue, activeEntry, activeValue) => {
   if (/\bemitida\s*:/.test(match)) return match;
@@ -44,7 +40,6 @@ src = src.replace(exhaustiveMapPattern, (match, before, _preValue, activeEntry, 
   return `${before}emitida: ${activeValue},\n  ${activeEntry}`;
 });
 
-// 5) Fallback para listas simples de strings.
 if (!/["']pre_emissao["']\s*,\s*["']emitida["']/.test(src)) {
   const pairPattern = /(["']pre_emissao["']\s*,\s*)(["']ativa["'])/;
   if (pairPattern.test(src)) {
@@ -66,4 +61,4 @@ if (!typeOk || !uiOk) {
 if (changed) fs.writeFileSync(file, src);
 console.log(`[seguros-policy-issued-v2] ${changed ? "concluído com alterações" : "já aplicado"}`);
 
-await import("./patch-seguros-layout-sections-v3.mjs");
+await import("./patch-seguros-layout-sections-v4.mjs");

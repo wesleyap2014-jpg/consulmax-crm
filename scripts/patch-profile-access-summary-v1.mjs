@@ -41,3 +41,4 @@ await import("./patch-ranking-highlights-closeout-v2.mjs");
 await import("./patch-meu-perfil-multiselect-v1.mjs");
 await import("./patch-meu-perfil-programa-parceiros-consolidado-v2.mjs");
 await import("./patch-agenda-preference-invites-v2.mjs");
+await import("./patch-agenda-internal-directory-realtime-v3.mjs");

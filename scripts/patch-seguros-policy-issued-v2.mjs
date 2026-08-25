@@ -65,3 +65,5 @@ if (!typeOk || !uiOk) {
 
 if (changed) fs.writeFileSync(file, src);
 console.log(`[seguros-policy-issued-v2] ${changed ? "concluído com alterações" : "já aplicado"}`);
+
+await import("./patch-seguros-layout-sections-v3.mjs");

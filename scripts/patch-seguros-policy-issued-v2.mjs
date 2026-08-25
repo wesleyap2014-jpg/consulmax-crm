@@ -43,4 +43,4 @@ const uiOk = /\bemitida\s*:\s*["']Emitida["']/.test(src) || /value\s*:\s*["']emi
 if (!typeOk || !uiOk) throw new Error("[seguros-policy-issued-v2] status Emitida incompleto");
 if (changed) fs.writeFileSync(file, src);
 console.log(`[seguros-policy-issued-v2] ${changed ? "concluído com alterações" : "já aplicado"}`);
-await import("./patch-seguros-layout-sections-v7.mjs");
+await import("./patch-seguros-layout-sections-v8.mjs");

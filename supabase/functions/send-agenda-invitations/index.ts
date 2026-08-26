@@ -113,13 +113,14 @@ Deno.serve(async (req) => {
         const ics = makeIcs(event, guest, fromEmail, organizerName);
 
         await transporter.sendMail({
-          from:`"${senderName.replaceAll('"',"")}" <${fromEmail}>`, replyTo, envelope:{from:smtpUser,to:guest.email}, to:guest.email, subject, text, html,
-          headers:{"X-Consulmax-Template":`${template.template_key}; v=${template.version}`},
+          from:`"${senderName.replaceAll('"',"")}" <${fromEmail}>`, replyTo, envelope:{from:smtpUser,to:guest.email}, to:guest.email, subject, text,
+          headers:{"X-Consulmax-Template":`${template.template_key}; v=${template.version}`,"X-Consulmax-Mime":"calendar-then-html"},
           icalEvent:{ filename:"convite-consulmax.ics", method:"REQUEST", content:ics },
+          alternatives:[{ contentType:"text/html; charset=utf-8", content:html }],
         });
         const now = new Date().toISOString();
         await admin.from("agenda_event_guests").update({ email_sent_at:now, email_error:null, updated_at:now }).eq("id",guest.id);
-        console.log(`[agenda-invite] sent ${template.template_key} v${template.version} to guest ${guest.id}`);
+        console.log(`[agenda-invite] sent ${template.template_key} v${template.version} to guest ${guest.id} mime=calendar-then-html`);
         sent++;
       } catch (e) {
         const message=e instanceof Error?e.message:"Falha no envio";
@@ -127,7 +128,7 @@ Deno.serve(async (req) => {
         console.error("[agenda-invite] guest send failed",guest.id,message); failed++;
       }
     }
-    return json({ok:true,sent,failed,template_key:template.template_key,template_version:template.version,mime:"icalEvent"});
+    return json({ok:true,sent,failed,template_key:template.template_key,template_version:template.version,mime:"calendar-then-html"});
   } catch(e) {
     console.error("[send-agenda-invitations]",e);
     return json({error:e instanceof Error?e.message:"Erro ao enviar convites."},500);

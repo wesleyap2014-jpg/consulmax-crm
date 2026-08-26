@@ -47,4 +47,5 @@ await import("./patch-agenda-meeting-ai-v5.mjs");
 await import("./patch-agenda-meet-v2.mjs");
 await import("./patch-agenda-meeting-artifacts-v6.mjs");
 await import("./patch-agenda-internal-guest-picker-v7.mjs");
+await import("./patch-agenda-event-overlay-v8.mjs");
 await import("./patch-serverless-esm-imports-v1.mjs");

@@ -45,4 +45,5 @@ await import("./patch-agenda-internal-directory-realtime-v3.mjs");
 await import("./patch-agenda-cancellation-internal-v4.mjs");
 await import("./patch-agenda-meeting-ai-v5.mjs");
 await import("./patch-agenda-meet-v2.mjs");
+await import("./patch-agenda-meeting-artifacts-v6.mjs");
 await import("./patch-serverless-esm-imports-v1.mjs");

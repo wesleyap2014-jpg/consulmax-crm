@@ -59,7 +59,7 @@ function parseCalendarReply(raw: string, fallbackEmail?: string | null) {
     const partstat = String(statusMatch?.[1] || '').trim().toUpperCase()
     const email = String(mailMatch?.[1] || fallbackEmail || '').trim().toLowerCase()
     if (!email || !['ACCEPTED', 'DECLINED', 'TENTATIVE'].includes(partstat)) continue
-    return { eventId: eventMatch[1].toLowerCase(), email, partstat, source: 'calendar' }
+    return { eventId: eventMatch[1].toLowerCase(), email, partstat }
   }
   return null
 }
@@ -91,7 +91,7 @@ async function downloadIcs(url: string) {
   }
 }
 
-async function applyReply(reply: { eventId: string; email: string; partstat: string; source?: string }) {
+async function applyReply(reply: { eventId: string; email: string; partstat: string }) {
   if (reply.partstat === 'TENTATIVE') {
     console.log('[agenda-mail-webhook-v2] tentative reply kept as pending', reply.eventId, reply.email)
     return { matched: false, tentative: true }
@@ -112,20 +112,18 @@ async function applyReply(reply: { eventId: string; email: string; partstat: str
   }
 
   const now = new Date().toISOString()
-  const payload: Record<string, unknown> = {
-    rsvp_status: nextStatus,
-    responded_at: now,
-    updated_at: now,
-    rsvp_source: reply.source || 'calendar',
-  }
-  let update = await admin.from('agenda_event_guests').update(payload).eq('id', guest.id)
-  if (update.error && /rsvp_source/i.test(update.error.message || '')) {
-    delete payload.rsvp_source
-    update = await admin.from('agenda_event_guests').update(payload).eq('id', guest.id)
-  }
-  if (update.error) throw update.error
+  const { error: updateError } = await admin
+    .from('agenda_event_guests')
+    .update({
+      rsvp_status: nextStatus,
+      responded_at: now,
+      updated_at: now,
+      rsvp_source: 'calendar_reply',
+    })
+    .eq('id', guest.id)
 
-  console.log('[agenda-mail-webhook-v2] rsvp updated', guest.id, nextStatus, reply.source || 'calendar')
+  if (updateError) throw updateError
+  console.log('[agenda-mail-webhook-v2] rsvp updated', guest.id, nextStatus, 'calendar_reply')
   return { matched: true, status: nextStatus }
 }
 
@@ -171,7 +169,7 @@ async function applySubjectFallback(subject: string, email: string) {
     return { matched: false, ambiguous: matches.length }
   }
 
-  return applyReply({ eventId: matches[0].id, email, partstat: parsed.partstat, source: 'calendar_subject' })
+  return applyReply({ eventId: matches[0].id, email, partstat: parsed.partstat })
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

@@ -7,6 +7,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
 const TZ = "America/Porto_Velho";
 const PUBLIC_APP_URL = "https://crm.consulmaxconsorcios.com.br";
 
@@ -16,16 +17,16 @@ const json = (data: unknown, status = 200) =>
     headers: { ...cors, "Content-Type": "application/json" },
   });
 
-const esc = (v: unknown) =>
-  String(v ?? "")
+const esc = (value: unknown) =>
+  String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
-const render = (tpl: string | null | undefined, values: Record<string, string>) =>
-  String(tpl || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_m, key) => values[key] ?? "");
+const render = (template: string | null | undefined, values: Record<string, string>) =>
+  String(template || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, key) => values[key] ?? "");
 
 const fmtDateLong = (iso: string) =>
   new Intl.DateTimeFormat("pt-BR", {
@@ -145,8 +146,9 @@ Deno.serve(async (req) => {
     ] = await Promise.all([
       admin
         .from("agenda_event_guests")
-        .select("id,name,email,rsvp_token,rsvp_status")
+        .select("id,name,email,rsvp_token,rsvp_status,email_sent_at")
         .eq("event_id", eventId)
+        .is("email_sent_at", null)
         .order("created_at"),
       admin
         .from("email_templates")
@@ -167,16 +169,14 @@ Deno.serve(async (req) => {
     if (templateError) throw templateError;
     if (!template) throw new Error("Template ativo agenda_invite não encontrado no Supabase.");
     if (!guests?.length) {
-      return json({ ok: true, sent: 0, failed: 0, template_version: template.version });
+      return json({ ok: true, sent: 0, failed: 0, template_version: template.version, only_unsent: true });
     }
 
     const smtpHost = Deno.env.get("SMTP_HOST");
     const smtpPort = Number(Deno.env.get("SMTP_PORT") || 465);
     const smtpUser = Deno.env.get("SMTP_USER");
     const smtpPass = Deno.env.get("SMTP_PASS");
-    if (!smtpHost || !smtpUser || !smtpPass) {
-      throw new Error("SMTP não configurado no Supabase.");
-    }
+    if (!smtpHost || !smtpUser || !smtpPass) throw new Error("SMTP não configurado no Supabase.");
 
     const fromEmail = Deno.env.get("AGENDA_FROM_EMAIL") || "relacionamento@consulmaxconsorcios.com.br";
     const appUrl = PUBLIC_APP_URL;
@@ -264,17 +264,13 @@ Deno.serve(async (req) => {
             "X-Consulmax-Mime": "html-plus-inline-calendar",
             "X-Consulmax-App-Url": appUrl,
           },
-          attachments: [
-            {
-              filename: "convite-consulmax.ics",
-              content: ics,
-              contentType: "text/calendar; charset=utf-8; method=REQUEST",
-              contentDisposition: "inline",
-              headers: {
-                "Content-Class": "urn:content-classes:calendarmessage",
-              },
-            },
-          ],
+          attachments: [{
+            filename: "convite-consulmax.ics",
+            content: ics,
+            contentType: "text/calendar; charset=utf-8; method=REQUEST",
+            contentDisposition: "inline",
+            headers: { "Content-Class": "urn:content-classes:calendarmessage" },
+          }],
         });
 
         const now = new Date().toISOString();
@@ -285,8 +281,8 @@ Deno.serve(async (req) => {
 
         console.log(`[agenda-invite] sent ${template.template_key} v${template.version} guest=${guest.id} mime=html-plus-inline-calendar`);
         sent++;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Falha no envio";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Falha no envio";
         await admin
           .from("agenda_event_guests")
           .update({ email_error: message, updated_at: new Date().toISOString() })
@@ -304,9 +300,10 @@ Deno.serve(async (req) => {
       template_version: template.version,
       mime: "html-plus-inline-calendar",
       app_url: appUrl,
+      only_unsent: true,
     });
-  } catch (e) {
-    console.error("[send-agenda-invitations]", e);
-    return json({ error: e instanceof Error ? e.message : "Erro ao enviar convites." }, 500);
+  } catch (error) {
+    console.error("[send-agenda-invitations]", error);
+    return json({ error: error instanceof Error ? error.message : "Erro ao enviar convites." }, 500);
   }
 });

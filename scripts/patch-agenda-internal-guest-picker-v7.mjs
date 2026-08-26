@@ -1,0 +1,31 @@
+import fs from "node:fs";
+
+const path = "src/pages/AgendaExecutive.tsx";
+let src = fs.readFileSync(path, "utf8");
+const before = src;
+
+if (!src.includes('const [internalSearch, setInternalSearch] = useState("");')) {
+  const anchor = `  const internalCandidates = inviteUsers.filter((u) => u.email && u.auth_user_id !== draft.ownerId);\n  const addExternal = () => setDraft((d) => ({ ...d, externalGuests: [...d.externalGuests, { name: "", email: "" }] }));`;
+  const replacement = `  const internalCandidates = inviteUsers.filter((u) => u.email && u.auth_user_id !== draft.ownerId);\n  const [internalSearch, setInternalSearch] = useState("");\n  const internalSearchKey = normalizeText(internalSearch);\n  const visibleInternalCandidates = internalCandidates.filter((u) => !internalSearchKey || normalizeText(\`\${u.nome || ""} \${u.email || ""}\`).includes(internalSearchKey));\n  const allInternalIds = internalCandidates.map((u) => u.auth_user_id);\n  const selectedInternalCount = allInternalIds.filter((id) => draft.internalGuestIds.includes(id)).length;\n  const allInternalSelected = allInternalIds.length > 0 && selectedInternalCount === allInternalIds.length;\n  const selectAllInternal = () => setDraft((d) => ({ ...d, internalGuestIds: [...new Set([...d.internalGuestIds.filter((id) => id === draft.ownerId), ...allInternalIds])] }));\n  const clearInternal = () => setDraft((d) => ({ ...d, internalGuestIds: d.internalGuestIds.filter((id) => !allInternalIds.includes(id)) }));\n  const addExternal = () => setDraft((d) => ({ ...d, externalGuests: [...d.externalGuests, { name: "", email: "" }] }));`;
+  if (!src.includes(anchor)) throw new Error("Âncora do seletor interno não encontrada.");
+  src = src.replace(anchor, replacement);
+  console.log("[agenda-v7] estado e ações do seletor interno: aplicado");
+}
+
+const startMarker = `<div className="full" style={{ borderTop: "1px solid #e5e7eb", paddingTop: 12 }}><div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><strong style={{ color: C.navy, fontSize: 12 }}>Convidados internos</strong>`;
+const externalMarker = `<div className="full" style={{ borderTop: "1px solid #e5e7eb", paddingTop: 12 }}><div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><strong style={{ color: C.navy, fontSize: 12 }}>Convidados externos</strong>`;
+
+if (!src.includes("Selecionar todos") || !src.includes("selectedInternalCount")) {
+  const start = src.indexOf(startMarker);
+  if (start < 0) throw new Error("Bloco de convidados internos não encontrado.");
+  const end = src.indexOf(externalMarker, start);
+  if (end < 0) throw new Error("Bloco de convidados externos não encontrado.");
+
+  const picker = `<div className="full" style={{ borderTop: "1px solid #e5e7eb", paddingTop: 14 }}><div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 10 }}><div><strong style={{ display: "block", color: C.navy, fontSize: 12 }}>Convidados internos</strong><small style={{ color: C.muted }}>Usuários do CRM receberão o convite no e-mail cadastrado.</small></div><span style={{ flexShrink: 0, border: "1px solid #E0CE8C", background: "#FFFDF6", color: C.navy, borderRadius: 999, padding: "4px 8px", fontSize: 10, fontWeight: 800 }}>{selectedInternalCount} de {internalCandidates.length} selecionado(s)</span></div><div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 7, marginBottom: 9 }}><div style={{ position: "relative" }}><Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} /><input value={internalSearch} onChange={(e) => setInternalSearch(e.target.value)} placeholder="Buscar por nome ou e-mail…" style={{ width: "100%", paddingLeft: 31 }} /></div><button type="button" className="cx-secondary" onClick={selectAllInternal} disabled={allInternalSelected || !internalCandidates.length} style={{ whiteSpace: "nowrap" }}>{allInternalSelected ? "Todos selecionados" : "Selecionar todos"}</button><button type="button" className="cx-secondary" onClick={clearInternal} disabled={!selectedInternalCount} style={{ whiteSpace: "nowrap" }}>Limpar</button></div><div style={{ display: "grid", gap: 6, maxHeight: 240, overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: 12, padding: 7, background: "#fafafa" }}>{visibleInternalCandidates.map((u) => { const checked = draft.internalGuestIds.includes(u.auth_user_id); return <label key={u.auth_user_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", cursor: "pointer", borderRadius: 9, border: checked ? "1px solid #B5A573" : "1px solid transparent", background: checked ? "#FFFDF6" : "#fff", transition: "120ms ease" }}><input type="checkbox" checked={checked} onChange={(e) => setDraft((d) => ({ ...d, internalGuestIds: e.target.checked ? [...new Set([...d.internalGuestIds, u.auth_user_id])] : d.internalGuestIds.filter((id) => id !== u.auth_user_id) }))} style={{ width: 16, height: 16, flexShrink: 0 }} /><span style={{ minWidth: 0, fontSize: 11 }}><strong style={{ display: "block", color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.nome || "Usuário"}</strong><small style={{ display: "block", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</small></span></label>; })}{!visibleInternalCandidates.length && <div style={{ padding: "18px 10px", textAlign: "center" }}><strong style={{ display: "block", color: C.navy, fontSize: 11 }}>{internalCandidates.length ? "Nenhum usuário encontrado" : "Nenhum usuário interno disponível"}</strong><small style={{ color: C.muted }}>{internalCandidates.length ? "Tente buscar por outro nome ou e-mail." : "Os usuários precisam ter e-mail cadastrado no CRM."}</small></div>}</div></div>`;
+
+  src = src.slice(0, start) + picker + src.slice(end);
+  console.log("[agenda-v7] novo seletor visual de convidados internos: aplicado");
+}
+
+if (src !== before) fs.writeFileSync(path, src);
+console.log(`[agenda-v7] AgendaExecutive: ${src !== before ? "atualizado" : "sem alterações"}`);

@@ -8,34 +8,89 @@ const cors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const TZ = "America/Porto_Velho";
+
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 }
+
 function esc(v: unknown) {
-  return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+  return String(v ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
-function fmt(iso?: string | null) {
-  if (!iso) return "";
-  return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Porto_Velho", dateStyle: "full", timeStyle: "short" }).format(new Date(iso));
+
+function render(template: string | null | undefined, values: Record<string, string>) {
+  return String(template || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, key) => values[key] ?? "");
 }
+
+function fmtDateLong(iso: string) {
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
+}
+
+function fmtDateShort(iso: string) {
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(iso));
+}
+
+function fmtTime(iso: string) {
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
+}
+
 function icsDate(iso: string) {
-  const d = new Date(iso); const p = (n:number) => String(n).padStart(2,"0");
-  return `${d.getUTCFullYear()}${p(d.getUTCMonth()+1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
 }
-function makeIcs(event: any) {
+
+function icsText(value: unknown) {
+  return String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r?\n/g, "\\n");
+}
+
+function makeIcs(event: any, guest: any, organizerEmail: string, organizerName: string) {
   const end = event.fim_at || new Date(new Date(event.inicio_at).getTime() + 3600000).toISOString();
-  const description = String(event.descricao || "").replace(/\n/g, "\\n");
-  const location = event.videocall_url || event.meeting_link || "";
-  return ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Consulmax CRM//Agenda//PT-BR","CALSCALE:GREGORIAN","METHOD:REQUEST","BEGIN:VEVENT",`UID:${event.id}@consulmaxcrm`,`DTSTAMP:${icsDate(new Date().toISOString())}`,`DTSTART:${icsDate(event.inicio_at)}`,`DTEND:${icsDate(end)}`,`SUMMARY:${String(event.titulo || "Compromisso Consulmax").replace(/\n/g," ")}`,`DESCRIPTION:${description}`,location ? `URL:${location}` : "","ORGANIZER;CN=Consulmax:mailto:relacionamento@consulmaxconsorcios.com.br","END:VEVENT","END:VCALENDAR"].filter(Boolean).join("\r\n");
+  const meeting = event.videocall_url || event.meeting_link || "";
+  const descriptionParts = [event.descricao || "", meeting ? `Videoconferência: ${meeting}` : ""].filter(Boolean);
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Consulmax CRM//Agenda//PT-BR",
+    "CALSCALE:GREGORIAN",
+    "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    `UID:${event.id}@consulmaxcrm`,
+    `DTSTAMP:${icsDate(new Date().toISOString())}`,
+    `DTSTART:${icsDate(event.inicio_at)}`,
+    `DTEND:${icsDate(end)}`,
+    `SUMMARY:${icsText(event.titulo || "Compromisso Consulmax")}`,
+    descriptionParts.length ? `DESCRIPTION:${icsText(descriptionParts.join("\n\n"))}` : "",
+    meeting ? `URL:${meeting}` : "",
+    meeting ? `LOCATION:${icsText("Videoconferência Consulmax")}` : "",
+    `ORGANIZER;CN=${icsText(organizerName || "Consulmax")}:mailto:${organizerEmail}`,
+    `ATTENDEE;CN=${icsText(guest.name || guest.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${guest.email}`,
+    "SEQUENCE:0",
+    "STATUS:CONFIRMED",
+    "TRANSP:OPAQUE",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].filter(Boolean).join("\r\n");
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
+
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.replace(/^Bearer\s+/i, "");
     const { data: authData } = await admin.auth.getUser(token);
@@ -46,18 +101,33 @@ Deno.serve(async (req) => {
     const eventId = String(body?.event_id || "").trim();
     if (!eventId) return json({ error: "event_id obrigatório." }, 400);
 
-    const [{ data: event, error: eventError }, { data: profile }] = await Promise.all([
+    const [{ data: event, error: eventError }, { data: requesterProfile }] = await Promise.all([
       admin.from("agenda_eventos").select("id,titulo,inicio_at,fim_at,videocall_url,meeting_link,descricao,user_id").eq("id", eventId).maybeSingle(),
       admin.from("users").select("role,is_active").eq("auth_user_id", authId).maybeSingle(),
     ]);
+
     if (eventError) throw eventError;
     if (!event) return json({ error: "Compromisso não encontrado." }, 404);
-    const isAdmin = profile?.role === "admin" && profile?.is_active !== false;
+
+    const isAdmin = requesterProfile?.role === "admin" && requesterProfile?.is_active !== false;
     if (event.user_id !== authId && !isAdmin) return json({ error: "Sem permissão para enviar estes convites." }, 403);
 
-    const { data: guests, error: guestError } = await admin.from("agenda_event_guests").select("id,name,email,rsvp_token,rsvp_status").eq("event_id", eventId).order("created_at");
+    const [{ data: guests, error: guestError }, { data: template, error: templateError }, { data: organizer }] = await Promise.all([
+      admin.from("agenda_event_guests").select("id,name,email,rsvp_token,rsvp_status").eq("event_id", eventId).order("created_at"),
+      admin.from("email_templates")
+        .select("template_key,name,version,subject_template,preheader_template,html_template,text_template,sender_name,reply_to")
+        .eq("template_key", "agenda_invite")
+        .eq("is_active", true)
+        .order("version", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      admin.from("users").select("nome,email").eq("auth_user_id", event.user_id).maybeSingle(),
+    ]);
+
     if (guestError) throw guestError;
-    if (!guests?.length) return json({ ok: true, sent: 0, skipped: 0 });
+    if (templateError) throw templateError;
+    if (!template) throw new Error("Template ativo agenda_invite não encontrado no Supabase.");
+    if (!guests?.length) return json({ ok: true, sent: 0, skipped: 0, template_version: template.version });
 
     const smtpHost = Deno.env.get("SMTP_HOST");
     const smtpPort = Number(Deno.env.get("SMTP_PORT") || 465);
@@ -67,34 +137,112 @@ Deno.serve(async (req) => {
 
     const fromEmail = Deno.env.get("AGENDA_FROM_EMAIL") || "relacionamento@consulmaxconsorcios.com.br";
     const appUrl = (Deno.env.get("PUBLIC_APP_URL") || "https://crm.consulmaxconsorcios.com.br").replace(/\/$/, "");
-    const transporter = nodemailer.createTransport({ host: smtpHost, port: smtpPort, secure: smtpPort === 465, auth: { user: smtpUser, pass: smtpPass } });
-    const ics = makeIcs(event);
-    let sent = 0; let failed = 0;
+    const organizerName = organizer?.nome || "Consulmax";
+    const replyTo = template.reply_to || fromEmail;
+    const senderName = template.sender_name || "Consulmax | Agenda";
+    const logoUrl = `${appUrl}/logo-consulmax.png`;
+    const endIso = event.fim_at || new Date(new Date(event.inicio_at).getTime() + 3600000).toISOString();
+    const meeting = event.videocall_url || event.meeting_link || "";
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+
+    let sent = 0;
+    let failed = 0;
 
     for (const guest of guests) {
       try {
         const yes = `${appUrl}/api/agenda/rsvp?token=${guest.rsvp_token}&response=accepted`;
         const no = `${appUrl}/api/agenda/rsvp?token=${guest.rsvp_token}&response=declined`;
-        const meeting = event.videocall_url || event.meeting_link || "";
-        const html = `<div style="background:#F5F5F5;padding:28px 12px;font-family:Arial,sans-serif;color:#1E293F"><table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center"><table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fff;border:1px solid #e5e7eb;border-radius:20px;overflow:hidden"><tr><td style="background:#1E293F;padding:25px 28px;color:#fff"><div style="color:#E0CE8C;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em">Consulmax • Agenda</div><h1 style="font-size:24px;margin:9px 0 0">${esc(event.titulo || "Novo compromisso")}</h1></td></tr><tr><td style="padding:28px"><p style="font-size:16px">Olá${guest.name ? `, ${esc(guest.name)}` : ""}!</p><p style="line-height:1.6;color:#475569">Você foi convidado(a) para um compromisso da Consulmax.</p><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin:20px 0"><strong style="display:block;color:#1E293F">${esc(event.titulo || "Compromisso")}</strong><span style="display:block;margin-top:7px;color:#64748b">${esc(fmt(event.inicio_at))}</span>${event.fim_at ? `<span style="display:block;margin-top:4px;color:#64748b">Término: ${esc(fmt(event.fim_at))}</span>` : ""}${event.descricao ? `<p style="margin:10px 0 0;color:#475569">${esc(event.descricao)}</p>` : ""}</div><p style="font-weight:700">Confirme sua presença com um clique:</p><div style="margin:18px 0"><a href="${yes}" style="display:inline-block;background:#1E293F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;margin-right:8px">Confirmar presença</a><a href="${no}" style="display:inline-block;background:#fff;color:#A11C27;text-decoration:none;padding:11px 18px;border-radius:10px;border:1px solid #A11C27;font-weight:700">Não poderei participar</a></div>${meeting ? `<p style="margin-top:24px"><a href="${esc(meeting)}" style="color:#A11C27;font-weight:700;text-decoration:none">Abrir sala da reunião</a></p>` : ""}<p style="font-size:12px;color:#94a3b8;margin-top:26px">O arquivo de calendário está anexado para facilitar a inclusão no seu calendário.</p></td></tr></table></td></tr></table></div>`;
+        const title = event.titulo || "Compromisso Consulmax";
+        const guestName = guest.name || "Convidado";
+        const description = String(event.descricao || "").trim();
+
+        const plainValues: Record<string, string> = {
+          titulo: title,
+          nome_convidado: guestName,
+          data_curta: fmtDateShort(event.inicio_at),
+          data_extenso: fmtDateLong(event.inicio_at),
+          hora_inicio: fmtTime(event.inicio_at),
+          hora_fim: fmtTime(endIso),
+          organizador_nome: organizerName,
+          link_confirmar: yes,
+          link_recusar: no,
+          logo_url: logoUrl,
+          preheader: "",
+          descricao_texto: description,
+          videoconferencia_texto: meeting ? `Videoconferência: ${meeting}` : "",
+          descricao_html: "",
+          videoconferencia_html: "",
+        };
+
+        const preheader = render(template.preheader_template, plainValues);
+        plainValues.preheader = preheader;
+
+        const htmlValues: Record<string, string> = {
+          ...plainValues,
+          titulo: esc(title),
+          nome_convidado: esc(guestName),
+          data_curta: esc(plainValues.data_curta),
+          data_extenso: esc(plainValues.data_extenso),
+          hora_inicio: esc(plainValues.hora_inicio),
+          hora_fim: esc(plainValues.hora_fim),
+          organizador_nome: esc(organizerName),
+          link_confirmar: esc(yes),
+          link_recusar: esc(no),
+          logo_url: esc(logoUrl),
+          preheader: esc(preheader),
+          descricao_html: description
+            ? `<div style="margin-top:18px;padding-top:16px;border-top:1px solid #E2E8F0"><div style="font-size:12px;color:#64748B;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Observações</div><div style="margin-top:7px;font-size:14px;line-height:1.65;color:#475569">${esc(description).replace(/\r?\n/g, "<br>")}</div></div>`
+            : "",
+          videoconferencia_html: meeting
+            ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#FFF9F9;border:1px solid #EBC7CA;border-radius:16px"><tr><td style="padding:18px 20px"><div style="font-size:12px;color:#A11C27;font-weight:800;text-transform:uppercase;letter-spacing:.06em">Videoconferência</div><div style="margin-top:5px;font-size:16px;color:#1E293F;font-weight:800">Sala online da reunião</div><a href="${esc(meeting)}" style="display:inline-block;margin-top:13px;background:#A11C27;color:#FFFFFF;text-decoration:none;font-size:14px;font-weight:800;padding:11px 17px;border-radius:10px">Acessar videoconferência</a></td></tr></table>`
+            : "",
+        };
+
+        const subject = render(template.subject_template, plainValues) || `Convite: ${title}`;
+        const html = render(template.html_template, htmlValues);
+        const text = render(template.text_template, plainValues);
+        const ics = makeIcs(event, guest, fromEmail, organizerName);
+
         await transporter.sendMail({
-          from: `"Consulmax | Agenda" <${fromEmail}>`,
-          replyTo: fromEmail,
+          from: `"${senderName.replaceAll('"', "")}" <${fromEmail}>`,
+          replyTo,
           envelope: { from: smtpUser, to: guest.email },
           to: guest.email,
-          subject: `Convite: ${event.titulo || "Compromisso Consulmax"}`,
+          subject,
           html,
-          attachments: [{ filename: "convite-consulmax.ics", content: ics, contentType: "text/calendar; charset=utf-8; method=REQUEST" }],
+          text,
+          attachments: [
+            {
+              filename: "convite-consulmax.ics",
+              content: ics,
+              contentType: "text/calendar; charset=utf-8; method=REQUEST",
+            },
+          ],
         });
-        await admin.from("agenda_event_guests").update({ email_sent_at: new Date().toISOString(), email_error: null, updated_at: new Date().toISOString() }).eq("id", guest.id);
+
+        await admin.from("agenda_event_guests").update({
+          email_sent_at: new Date().toISOString(),
+          email_error: null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", guest.id);
         sent++;
       } catch (e) {
         const message = e instanceof Error ? e.message : "Falha no envio";
-        await admin.from("agenda_event_guests").update({ email_error: message, updated_at: new Date().toISOString() }).eq("id", guest.id);
+        await admin.from("agenda_event_guests").update({
+          email_error: message,
+          updated_at: new Date().toISOString(),
+        }).eq("id", guest.id);
         failed++;
       }
     }
-    return json({ ok: true, sent, failed });
+
+    return json({ ok: true, sent, failed, template_key: template.template_key, template_version: template.version });
   } catch (e) {
     console.error("[send-agenda-invitations]", e);
     return json({ error: e instanceof Error ? e.message : "Erro ao enviar convites." }, 500);

@@ -44,9 +44,10 @@ async function registerResponse(token: string, response: string) {
   if (!guest) return { status: 404, body: { error: 'Convite não encontrado.' } }
 
   const nextStatus = response === 'accepted' ? 'accepted' : 'declined'
+  const now = new Date().toISOString()
   const { error: updateError } = await admin
     .from('agenda_event_guests')
-    .update({ rsvp_status: nextStatus, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({ rsvp_status: nextStatus, rsvp_source: 'email_link', responded_at: now, updated_at: now })
     .eq('id', guest.id)
   if (updateError) throw updateError
 
@@ -81,8 +82,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).send(resultPage('Link inválido', 'Não foi possível identificar esta confirmação.'))
     }
 
-    // O GET não altera dados. A confirmação é feita via POST executado no navegador,
-    // reduzindo o risco de scanners de segurança de e-mail confirmarem presença sozinhos.
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     return res.status(200).send(autoConfirmPage(token, response))

@@ -42,3 +42,4 @@ await import("./patch-meu-perfil-multiselect-v1.mjs");
 await import("./patch-meu-perfil-programa-parceiros-consolidado-v2.mjs");
 await import("./patch-agenda-preference-invites-v2.mjs");
 await import("./patch-agenda-internal-directory-realtime-v3.mjs");
+await import("./patch-agenda-cancellation-internal-v4.mjs");

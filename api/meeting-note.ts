@@ -1,150 +1,80 @@
-// /api/meeting-note.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createClient } from '@supabase/supabase-js'
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { supabaseAdmin } from "./_supabase";
+import { eventModerator, parseBody } from "./_livekit-server";
 
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-
-const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-})
-
-type NoteAction = 'save' | 'finish'
+type NoteAction = "save" | "finish";
 
 function json(res: VercelResponse, status: number, body: unknown) {
-  return res.status(status).json(body)
+  return res.status(status).json(body);
 }
 
-function parseBody(req: VercelRequest) {
-  if (typeof req.body === 'string' && req.body.length) return JSON.parse(req.body)
-  return req.body || {}
-}
-
-function normalizeText(value: unknown) {
-  return String(value || '')
-    .normalize('NFC')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .trim()
-}
-
-async function getAuthUserId(req: VercelRequest) {
-  const authHeader = req.headers.authorization || ''
-  if (!authHeader.startsWith('Bearer ')) return null
-
-  const jwt = authHeader.replace('Bearer ', '')
-  const { data, error } = await admin.auth.getUser(jwt)
-  if (error) return null
-
-  return data?.user?.id ?? null
+function text(value: unknown) {
+  return String(value || "").normalize("NFC").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-
-  if (req.method === 'OPTIONS') return res.status(204).end()
-  if (req.method !== 'POST') return json(res, 405, { error: 'Método não permitido.' })
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.status(204).end();
+  if (req.method !== "POST") return json(res, 405, { error: "Método não permitido." });
 
   try {
-    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-      return json(res, 500, { error: 'Faltam SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY na Vercel.' })
-    }
+    const body = parseBody(req);
+    const eventId = text(body?.agenda_evento_id);
+    const rawNotes = text(body?.raw_notes);
+    const nextSteps = text(body?.next_steps);
+    const action: NoteAction = body?.action === "finish" ? "finish" : "save";
+    if (!eventId) return json(res, 400, { error: "agenda_evento_id é obrigatório." });
+    if (action === "save" && !rawNotes) return json(res, 400, { error: "Digite uma nota antes de salvar." });
 
-    const authUserId = await getAuthUserId(req)
-    if (!authUserId) return json(res, 401, { error: 'Usuário não autenticado ou sessão inválida.' })
+    const moderator = await eventModerator(req, eventId);
+    if (!moderator.ok) return json(res, moderator.status, { error: moderator.error });
+    const evento = moderator.event;
+    const now = new Date().toISOString();
 
-    const body = parseBody(req)
-
-    const agendaEventoId = normalizeText(body?.agenda_evento_id)
-    const rawNotes = normalizeText(body?.raw_notes)
-    const nextSteps = normalizeText(body?.next_steps)
-    const action: NoteAction = body?.action === 'finish' ? 'finish' : 'save'
-
-    if (!agendaEventoId) return json(res, 400, { error: 'agenda_evento_id é obrigatório.' })
-    if (!rawNotes) return json(res, 400, { error: 'Digite uma nota antes de salvar.' })
-
-    const { data: evento, error: evError } = await admin
-      .from('agenda_eventos')
-      .select('id,cliente_id,lead_id,user_id,titulo,tipo,video_room_id')
-      .eq('id', agendaEventoId)
-      .maybeSingle()
-
-    if (evError) return json(res, 500, { error: evError.message })
-    if (!evento) return json(res, 404, { error: 'Evento não encontrado.' })
-
-    const nowIso = new Date().toISOString()
-
-    const { data: note, error: noteError } = await admin
-      .from('meeting_notes')
-      .insert({
+    let note: any = null;
+    if (rawNotes) {
+      const inserted = await supabaseAdmin.from("meeting_notes").insert({
         agenda_evento_id: evento.id,
-        cliente_id: evento.cliente_id,
-        lead_id: evento.lead_id,
+        video_room_id: evento.video_room_id || null,
+        cliente_id: evento.cliente_id || null,
+        lead_id: evento.lead_id || null,
+        user_id: moderator.userId,
         raw_notes: rawNotes,
         next_steps: nextSteps,
-      })
-      .select('*')
-      .single()
-
-    if (noteError) return json(res, 500, { error: noteError.message })
-
-    const eventUpdate: Record<string, any> = {
-      completed_at: nowIso,
-      completion_notes: rawNotes,
+      }).select("*").single();
+      if (inserted.error) throw new Error(inserted.error.message);
+      note = inserted.data;
     }
 
-    if (action === 'finish') {
-      eventUpdate.video_status = 'finished'
-    }
+    if (action === "finish") {
+      const patch: Record<string, unknown> = {
+        completed_at: now,
+        video_status: "finished",
+        updated_at: now,
+      };
+      if (rawNotes) patch.completion_notes = rawNotes;
+      const updated = await supabaseAdmin.from("agenda_eventos").update(patch).eq("id", eventId);
+      if (updated.error) throw new Error(updated.error.message);
 
-    const { error: updateEventError } = await admin
-      .from('agenda_eventos')
-      .update(eventUpdate)
-      .eq('id', evento.id)
-
-    if (updateEventError) return json(res, 500, { error: updateEventError.message })
-
-    if (action === 'finish') {
-      if (evento.video_room_id) {
-        await admin
-          .from('video_rooms')
-          .update({ status: 'finished', updated_at: nowIso })
-          .eq('id', evento.video_room_id)
-      } else {
-        await admin
-          .from('video_rooms')
-          .update({ status: 'finished', updated_at: nowIso })
-          .eq('agenda_evento_id', evento.id)
-      }
-
-      await admin
-        .from('video_sessions')
-        .update({ status: 'finished', ended_at: nowIso })
-        .eq('agenda_evento_id', evento.id)
-    } else {
-      if (evento.video_room_id) {
-        await admin
-          .from('video_rooms')
-          .update({ updated_at: nowIso })
-          .eq('id', evento.video_room_id)
-      } else {
-        await admin
-          .from('video_rooms')
-          .update({ updated_at: nowIso })
-          .eq('agenda_evento_id', evento.id)
-      }
+      await Promise.all([
+        evento.video_room_id
+          ? supabaseAdmin.from("video_rooms").update({ status: "finished", updated_at: now }).eq("id", evento.video_room_id)
+          : supabaseAdmin.from("video_rooms").update({ status: "finished", updated_at: now }).eq("agenda_evento_id", eventId),
+        supabaseAdmin.from("video_sessions").update({ status: "finished", ended_at: now }).eq("agenda_evento_id", eventId).is("ended_at", null),
+      ]);
     }
 
     return json(res, 200, {
       ok: true,
       action,
-      message: action === 'finish' ? 'Atendimento finalizado com sucesso.' : 'Nota salva com sucesso.',
       note,
-      finished: action === 'finish',
-    })
+      finished: action === "finish",
+      message: action === "finish" ? "Reunião finalizada com sucesso." : "Nota salva com sucesso.",
+    });
   } catch (err: any) {
-    return json(res, 500, { error: err?.message || 'Erro inesperado.' })
+    console.error("[meeting-note]", err);
+    return json(res, 500, { error: err?.message || "Erro ao salvar a reunião." });
   }
 }

@@ -63,5 +63,6 @@ replaceOnce(
 if (changed) fs.writeFileSync(file, src);
 console.log(`[access-profile-sidebar] ${changed ? "concluído com alterações" : "já aplicado"}`);
 
+await import("./patch-central-conteudo-v1.mjs");
 await import("./patch-seguros-v1.mjs");
 await import("./patch-seguros-policy-issued-v2.mjs");

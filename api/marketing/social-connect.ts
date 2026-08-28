@@ -22,7 +22,17 @@ function authorizationUrl(provider: SocialProvider, state: string) {
   const redirectUri = callbackUrl();
   const url = new URL(config.authUrl);
 
-  if (provider === "instagram" || provider === "facebook") {
+  if (provider === "instagram") {
+    url.searchParams.set("client_id", config.clientId);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("state", state);
+    url.searchParams.set("scope", config.scopes.join(","));
+    url.searchParams.set("force_reauth", "true");
+    return url.toString();
+  }
+
+  if (provider === "facebook") {
     url.searchParams.set("client_id", config.clientId);
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");

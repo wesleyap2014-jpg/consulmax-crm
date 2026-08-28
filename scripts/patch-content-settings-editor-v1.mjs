@@ -29,3 +29,5 @@ replaceOnce(
 
 if (changed) fs.writeFileSync(file, src);
 console.log(`[content-settings] ${changed ? "concluído com alterações" : "já aplicado"}`);
+
+await import("./patch-brand-kit-assets-v1.mjs");

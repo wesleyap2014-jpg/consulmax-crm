@@ -259,8 +259,6 @@ async function exchangeLinkedIn(code: string, userId: string, fallbackScopes: st
     metadata: { email: profile?.email || null },
     providerPayload: { sub: accountId },
   })];
-
-  return saved;
 }
 
 async function exchangeYouTube(code: string, userId: string, fallbackScopes: string[]) {

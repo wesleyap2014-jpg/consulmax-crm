@@ -28,6 +28,12 @@ type RequestBody = {
   instructions?: string;
 };
 
+type EditorialSetting = {
+  setting_type: string;
+  name: string;
+  payload: Record<string, unknown>;
+};
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const DEFAULT_TARGETS: Target[] = [
@@ -89,7 +95,26 @@ function normalizeTargets(targets?: Target[]) {
   return safe.length ? safe : DEFAULT_TARGETS;
 }
 
-function systemPrompt() {
+async function loadEditorialSettings() {
+  const { data, error } = await supabaseAdmin
+    .from("marketing_content_settings")
+    .select("setting_type,name,payload")
+    .eq("active", true)
+    .order("setting_type", { ascending: true });
+
+  if (error) {
+    console.warn("[content-orchestrator] não foi possível carregar configurações editoriais", error.message);
+    return [] as EditorialSetting[];
+  }
+
+  return (data || []) as EditorialSetting[];
+}
+
+function systemPrompt(settings: EditorialSetting[] = []) {
+  const editorialContext = settings.length
+    ? `\n\nCONFIGURAÇÃO EDITORIAL ATIVA DO CRM:\n${JSON.stringify(settings).slice(0, 18000)}\n\nUse estas configurações como regras e contexto operacional. Brand Kit define identidade; Personas definem para quem falar; Linha Editorial define pilares e cadência; Autonomia define limites de decisão; Community Manager define postura de interação. Em caso de conflito, regras explícitas de segurança e compliance prevalecem.`
+    : "\n\nAinda não há configurações editoriais ativas no CRM; use somente as regras-base abaixo.";
+
   return `Você é o Max Content, Head de Conteúdo da Consulmax Consórcios.
 
 Sua função é transformar uma ideia central em uma operação editorial multicanal profissional.
@@ -105,7 +130,7 @@ Princípios obrigatórios:
 - Artigo do LinkedIn deve ter profundidade própria; Stories devem ser sequenciais e curtos; carrossel deve ter narrativa página a página; vídeo curto deve ter hook falável e roteiro natural.
 - Aprender com mercado não significa copiar concorrentes.
 - Quando houver informação financeira, não invente números, taxas ou resultados.
-- Entregue somente JSON válido quando solicitado.`;
+- Entregue somente JSON válido quando solicitado.${editorialContext}`;
 }
 
 async function callOpenAI(messages: Array<{ role: "system" | "user"; content: string }>) {
@@ -147,20 +172,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const body = (req.body || {}) as RequestBody;
     const action = body.action || "expand";
+    const editorialSettings = await loadEditorialSettings();
 
     if (action === "head") {
       const idea = String(body.idea || "").trim();
       if (!idea) return json(res, 400, { ok: false, message: "Envie uma ideia para o Head de Conteúdo." });
 
       const result = await callOpenAI([
-        { role: "system", content: systemPrompt() },
+        { role: "system", content: systemPrompt(editorialSettings) },
         {
           role: "user",
           content: `Analise a ideia abaixo como Head de Conteúdo e devolva JSON com as chaves: title, theme, thesis, objective, audience, content_pillar, cta, head_recommendation, recommended_targets. recommended_targets deve ser um array de objetos {provider, format, reason}.\n\nIDEIA:\n${idea.slice(0, 12000)}\n\nINSTRUÇÕES ADICIONAIS:\n${String(body.instructions || "").slice(0, 3000)}`,
         },
       ]);
 
-      return json(res, 200, { ok: true, result });
+      return json(res, 200, { ok: true, result, editorial_settings_used: editorialSettings.length });
     }
 
     const content = body.content;
@@ -170,7 +196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const targets = normalizeTargets(body.targets);
     const result = await callOpenAI([
-      { role: "system", content: systemPrompt() },
+      { role: "system", content: systemPrompt(editorialSettings) },
       {
         role: "user",
         content: `Crie os desdobramentos editoriais do conteúdo-mãe abaixo para os destinos solicitados.
@@ -213,7 +239,7 @@ Regras: gere exatamente uma variante por destino; não repita literalmente o tex
       ? result.variants.filter((item: any) => item && ALLOWED_PROVIDERS.has(item.provider) && typeof item.format === "string")
       : [];
 
-    return json(res, 200, { ok: true, result: { ...result, variants } });
+    return json(res, 200, { ok: true, result: { ...result, variants }, editorial_settings_used: editorialSettings.length });
   } catch (error: any) {
     console.error("[content-orchestrator]", error);
     return json(res, 500, {

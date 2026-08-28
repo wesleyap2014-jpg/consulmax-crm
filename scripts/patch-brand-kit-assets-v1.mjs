@@ -53,3 +53,5 @@ replaceOnce(
 );
 
 console.log(`[brand-kit-assets] ${changed ? "concluído com alterações" : "já aplicado"}`);
+
+await import("./patch-brand-kit-logo-context-v2.mjs");

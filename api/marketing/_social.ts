@@ -17,6 +17,7 @@ type ProviderConfig = {
 
 const SOCIAL_BASE_URL = String(process.env.SOCIAL_OAUTH_BASE_URL || "https://crm.consulmaxconsorcios.com.br").replace(/\/$/, "");
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v21.0";
+const INSTAGRAM_GRAPH_VERSION = process.env.INSTAGRAM_GRAPH_VERSION || META_GRAPH_VERSION;
 
 function firstEnv(names: string[]) {
   for (const name of names) {
@@ -34,20 +35,39 @@ function splitScopes(value?: string) {
 }
 
 export function providerConfig(provider: SocialProvider): ProviderConfig {
-  if (provider === "instagram" || provider === "facebook") {
+  if (provider === "instagram") {
+    const clientId = firstEnv(["INSTAGRAM_APP_ID", "INSTAGRAM_CLIENT_ID"]);
+    const clientSecret = firstEnv(["INSTAGRAM_APP_SECRET", "INSTAGRAM_CLIENT_SECRET"]);
+    const scopes = Array.from(new Set([
+      "instagram_business_basic",
+      "instagram_business_content_publish",
+      ...splitScopes(process.env.INSTAGRAM_EXTRA_SCOPES),
+    ]));
+    const missing: string[] = [];
+    if (!clientId) missing.push("INSTAGRAM_APP_ID");
+    if (!clientSecret) missing.push("INSTAGRAM_APP_SECRET");
+    return {
+      provider,
+      clientId,
+      clientSecret,
+      authUrl: "https://www.instagram.com/oauth/authorize",
+      tokenUrl: "https://api.instagram.com/oauth/access_token",
+      scopes,
+      configured: !missing.length,
+      missing,
+    };
+  }
+
+  if (provider === "facebook") {
     const clientId = firstEnv(["META_SOCIAL_APP_ID", "META_APP_ID", "FACEBOOK_APP_ID"]);
     const clientSecret = firstEnv(["META_SOCIAL_APP_SECRET", "META_APP_SECRET", "FACEBOOK_APP_SECRET"]);
-    const scopes = [
+    const scopes = Array.from(new Set([
       "pages_show_list",
       "pages_read_engagement",
       "pages_manage_posts",
       "pages_manage_engagement",
-      "instagram_basic",
-      "instagram_content_publish",
-      "instagram_manage_insights",
-      "instagram_manage_comments",
       ...splitScopes(process.env.META_SOCIAL_EXTRA_SCOPES),
-    ];
+    ]));
     const missing: string[] = [];
     if (!clientId) missing.push("META_SOCIAL_APP_ID");
     if (!clientSecret) missing.push("META_SOCIAL_APP_SECRET");
@@ -57,7 +77,7 @@ export function providerConfig(provider: SocialProvider): ProviderConfig {
       clientSecret,
       authUrl: `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`,
       tokenUrl: `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`,
-      scopes: Array.from(new Set(scopes)),
+      scopes,
       configured: !missing.length,
       missing,
     };
@@ -268,11 +288,11 @@ export function parseGrantedScopes(value: any, fallback: string[] = []) {
 export function capabilities(provider: SocialProvider, scopes: string[]) {
   const has = (scope: string) => scopes.includes(scope);
   if (provider === "instagram") return {
-    read: has("instagram_basic"),
-    publish: has("instagram_content_publish"),
-    analytics: has("instagram_manage_insights"),
-    comments: has("instagram_manage_comments"),
-    messages: false,
+    read: has("instagram_business_basic") || has("instagram_basic"),
+    publish: has("instagram_business_content_publish") || has("instagram_content_publish"),
+    analytics: has("instagram_business_manage_insights") || has("instagram_manage_insights"),
+    comments: has("instagram_business_manage_comments") || has("instagram_manage_comments"),
+    messages: has("instagram_business_manage_messages"),
   };
   if (provider === "facebook") return {
     read: has("pages_read_engagement"),
@@ -366,4 +386,4 @@ export function addSeconds(seconds?: number | string | null) {
   return new Date(Date.now() + amount * 1000).toISOString();
 }
 
-export { META_GRAPH_VERSION, SOCIAL_BASE_URL, json, supabaseAdmin };
+export { INSTAGRAM_GRAPH_VERSION, META_GRAPH_VERSION, SOCIAL_BASE_URL, json, supabaseAdmin };

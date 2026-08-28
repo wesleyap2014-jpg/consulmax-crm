@@ -32,4 +32,18 @@ if (start >= 0 && end > start && !src.slice(start, end).includes("<ContentStrate
 }
 
 if (changed) fs.writeFileSync(file, src);
+
+const workspaceFile = "src/components/marketing/ContentStrategyWorkspace.tsx";
+if (fs.existsSync(workspaceFile)) {
+  let workspace = fs.readFileSync(workspaceFile, "utf8");
+  const wrong = '{test?.provider || strategy.test?.provider || "Instagram"}';
+  const right = '{strategy.test?.provider || "Instagram"}';
+  if (workspace.includes(wrong)) {
+    workspace = workspace.replace(wrong, right);
+    fs.writeFileSync(workspaceFile, workspace);
+    changed = true;
+    console.log("[content-engine-v2] provedor da peça de teste por conteúdo: corrigido");
+  }
+}
+
 console.log(`[content-engine-v2] ${changed ? "concluído com alterações" : "já aplicado"}`);

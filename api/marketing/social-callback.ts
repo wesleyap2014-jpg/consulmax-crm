@@ -130,13 +130,15 @@ async function exchangeTikTok(code: string, userId: string, fallbackScopes: stri
 
   const accessToken = String(token?.access_token || "");
   if (!accessToken) throw new Error("TikTok não retornou access token.");
-  const profile = await fetchJson("https://open.tiktokapis.com/v2/user/info/?fields=open_id,union_id,avatar_url,display_name,username", {
+  const scopes = parseGrantedScopes(token?.scope, fallbackScopes);
+  const basicFields = ["open_id", "union_id", "avatar_url", "display_name"];
+  const profileFields = scopes.includes("user.info.profile") ? ["username", "profile_deep_link", "bio_description", "is_verified"] : [];
+  const profile = await fetchJson(`https://open.tiktokapis.com/v2/user/info/?fields=${[...basicFields, ...profileFields].join(",")}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const user = profile?.data?.user || {};
   const openId = String(user?.open_id || token?.open_id || "");
   if (!openId) throw new Error("TikTok não retornou o identificador da conta.");
-  const scopes = parseGrantedScopes(token?.scope, fallbackScopes);
 
   return [await saveSocialAccount({
     provider: "tiktok",
@@ -151,7 +153,11 @@ async function exchangeTikTok(code: string, userId: string, fallbackScopes: stri
     refreshToken: token?.refresh_token || null,
     expiresAt: addSeconds(token?.expires_in),
     connectedBy: userId,
-    metadata: { union_id: user?.union_id || null, refresh_expires_in: token?.refresh_expires_in || null },
+    metadata: {
+      union_id: user?.union_id || null,
+      profile_deep_link: user?.profile_deep_link || null,
+      refresh_expires_in: token?.refresh_expires_in || null,
+    },
     providerPayload: { open_id: openId },
   })];
 }

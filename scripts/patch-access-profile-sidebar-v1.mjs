@@ -51,7 +51,7 @@ replaceOnce(
 
 replaceOnce(
   `            {(["vendas", "marketing", "pos", "admin", "fin", "max"] as GroupKey[]).map((key) => (\n              <div key={key} className="grid gap-2">\n                {renderSectionPill(key)}\n                {openGroup === key && (\n                  <div className="ml-4 grid gap-2">\n                    {navGroups[key].items.map((item) => renderNavItem(item))}\n                  </div>\n                )}\n              </div>\n            ))}`,
-  `            {(["vendas", "marketing", "pos", "admin", "fin", "max"] as GroupKey[]).map((key) =>\n              groupHasVisibleItems(key) ? (\n                <div key={key} className="grid gap-2">\n                  {renderSectionPill(key)}\n                  {openGroup === key && (\n                    <div className="ml-4 grid gap-2">\n                      {navGroups[key].items.map((item) => renderNavItem(item))}\n                  </div>\n                )}\n                </div>\n              ) : null,\n            )}`,
+  `            {(["vendas", "marketing", "pos", "admin", "fin", "max"] as GroupKey[]).map((key) =>\n              groupHasVisibleItems(key) ? (\n                <div key={key} className="grid gap-2">\n                  {renderSectionPill(key)}\n                  {openGroup === key && (\n                    <div className="ml-4 grid gap-2">\n                      {navGroups[key].items.map((item) => renderNavItem(item))}\n                    </div>\n                  )}\n                </div>\n              ) : null,\n            )}`,
   "remove seções vazias",
 );
 

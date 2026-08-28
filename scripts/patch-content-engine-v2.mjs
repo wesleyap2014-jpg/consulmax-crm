@@ -17,6 +17,13 @@ if (!src.includes('ContentStrategyWorkspace from "@/components/marketing/Content
   }
 }
 
+const oldOverviewExpand = '<Button size="sm" disabled={saving} onClick={() => expandContent(item)} className="bg-[#1E293F] hover:bg-[#26344f]"><Sparkles className="mr-1.5 h-4 w-4" />Desdobrar com Max</Button>';
+if (src.includes(oldOverviewExpand)) {
+  src = src.replace(oldOverviewExpand, '');
+  changed = true;
+  console.log("[content-engine-v2] atalho antigo Desdobrar com Max removido da Visão Geral");
+}
+
 const startMarker = '          <TabsContent value="conteudos" className="space-y-4">';
 const endMarker = '          <TabsContent value="producao" className="space-y-4">';
 const start = src.indexOf(startMarker);

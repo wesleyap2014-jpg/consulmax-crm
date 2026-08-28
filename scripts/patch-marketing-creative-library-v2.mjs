@@ -60,3 +60,31 @@ const runtimePath = "scripts/.patch-marketing-creative-edit-v3-runtime.mjs";
 fs.writeFileSync(runtimePath, v3Runtime, "utf8");
 await import(`./.patch-marketing-creative-edit-v3-runtime.mjs?build=${Date.now()}`);
 fs.rmSync(runtimePath, { force: true });
+
+// Hotfix do Motor Visual V2: drawAccentWord exige o BrandContext como 5º argumento.
+// Sem ele, o renderer tentava acessar brand.red em undefined ao gerar carrossel, Story ou thumbnail.
+const visualRendererPath = "src/components/marketing/productionVisualRenderer.ts";
+if (fs.existsSync(visualRendererPath)) {
+  let visualRenderer = fs.readFileSync(visualRendererPath, "utf8");
+  const beforeHeadline = 'drawAccentWord(ctx, item.eyebrow || "", x, y);';
+  const afterHeadline = 'drawAccentWord(ctx, item.eyebrow || "", x, y, brand);';
+  const beforeCta = 'drawAccentWord(ctx, item.eyebrow || "PRÓXIMO PASSO", 82, top);';
+  const afterCta = 'drawAccentWord(ctx, item.eyebrow || "PRÓXIMO PASSO", 82, top, brand);';
+  let visualChanged = false;
+
+  if (visualRenderer.includes(beforeHeadline)) {
+    visualRenderer = visualRenderer.replaceAll(beforeHeadline, afterHeadline);
+    visualChanged = true;
+  }
+  if (visualRenderer.includes(beforeCta)) {
+    visualRenderer = visualRenderer.replaceAll(beforeCta, afterCta);
+    visualChanged = true;
+  }
+
+  if (visualChanged) {
+    fs.writeFileSync(visualRendererPath, visualRenderer, "utf8");
+    console.log("[motor-visual-v2] BrandContext corrigido em drawAccentWord");
+  } else {
+    console.log("[motor-visual-v2] BrandContext já corrigido");
+  }
+}

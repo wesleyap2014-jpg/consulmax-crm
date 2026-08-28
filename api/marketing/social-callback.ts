@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
+  INSTAGRAM_GRAPH_VERSION,
   META_GRAPH_VERSION,
   addSeconds,
   callbackUrl,
@@ -18,6 +19,85 @@ function redirect(res: VercelResponse, params: Record<string, string | number | 
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Location", returnUrl(params));
   res.end();
+}
+
+async function exchangeInstagram(code: string, userId: string, fallbackScopes: string[]) {
+  const config = providerConfig("instagram");
+  const body = new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    grant_type: "authorization_code",
+    redirect_uri: callbackUrl(),
+    code,
+  });
+  const response = await fetch(config.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const shortToken = await readJson(response);
+  if (!response.ok) {
+    throw Object.assign(new Error(shortToken?.error_message || shortToken?.error_description || shortToken?.error || "Falha ao trocar código do Instagram."), {
+      status: response.status,
+      data: shortToken,
+    });
+  }
+
+  let accessToken = String(shortToken?.access_token || "");
+  let expiresIn = Number(shortToken?.expires_in || 0);
+  if (!accessToken) throw new Error("Instagram não retornou access token.");
+
+  try {
+    const longUrl = new URL("https://graph.instagram.com/access_token");
+    longUrl.searchParams.set("grant_type", "ig_exchange_token");
+    longUrl.searchParams.set("client_secret", config.clientSecret);
+    longUrl.searchParams.set("access_token", accessToken);
+    const longToken = await fetchJson(longUrl.toString());
+    if (longToken?.access_token) accessToken = String(longToken.access_token);
+    if (longToken?.expires_in) expiresIn = Number(longToken.expires_in);
+  } catch (error) {
+    console.warn("[social-callback] Instagram long-lived token indisponível; usando token inicial.", error);
+  }
+
+  let profile: any = null;
+  try {
+    profile = await fetchJson(
+      `https://graph.instagram.com/${INSTAGRAM_GRAPH_VERSION}/me?fields=user_id,username,name,profile_picture_url,account_type`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+  } catch (error) {
+    console.warn("[social-callback] Perfil Instagram completo indisponível; tentando perfil mínimo.", error);
+    profile = await fetchJson(
+      `https://graph.instagram.com/${INSTAGRAM_GRAPH_VERSION}/me?fields=user_id,username`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+  }
+
+  const accountId = String(profile?.user_id || profile?.id || shortToken?.user_id || "");
+  if (!accountId) throw new Error("Instagram não retornou o identificador da conta profissional.");
+  const scopes = parseGrantedScopes(shortToken?.scope, fallbackScopes);
+
+  return [await saveSocialAccount({
+    provider: "instagram",
+    providerAccountId: accountId,
+    username: profile?.username || null,
+    displayName: profile?.name || profile?.username || "Instagram profissional",
+    accountType: profile?.account_type || "professional",
+    avatarUrl: profile?.profile_picture_url || null,
+    editorialRole: "Marca / Autoridade",
+    scopes,
+    accessToken,
+    expiresAt: addSeconds(expiresIn),
+    connectedBy: userId,
+    metadata: {
+      login_type: "instagram_business_login",
+      graph_host: "graph.instagram.com",
+    },
+    providerPayload: {
+      instagram_user_id: accountId,
+      short_token_user_id: shortToken?.user_id || null,
+    },
+  })];
 }
 
 async function exchangeMeta(code: string, provider: SocialProvider, userId: string, fallbackScopes: string[]) {
@@ -58,56 +138,31 @@ async function exchangeMeta(code: string, provider: SocialProvider, userId: stri
   }
 
   const pages = await fetchJson(
-    `https://graph.facebook.com/${META_GRAPH_VERSION}/me/accounts?limit=100&fields=id,name,access_token,picture{url},instagram_business_account{id,username,name,profile_picture_url}`,
+    `https://graph.facebook.com/${META_GRAPH_VERSION}/me/accounts?limit=100&fields=id,name,access_token,picture{url}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
   );
 
   const saved: any[] = [];
   for (const page of pages?.data || []) {
     const pageToken = String(page?.access_token || accessToken);
-    if (provider === "facebook") {
-      saved.push(await saveSocialAccount({
-        provider: "facebook",
-        providerAccountId: String(page.id),
-        username: page.name || null,
-        displayName: page.name || "Página do Facebook",
-        accountType: "page",
-        avatarUrl: page?.picture?.data?.url || null,
-        editorialRole: "Marca / Página",
-        scopes,
-        accessToken: pageToken,
-        expiresAt: addSeconds(expiresIn),
-        connectedBy: userId,
-        metadata: { page_id: page.id, meta_user_token_expires_in: expiresIn || null },
-        providerPayload: { page_id: page.id },
-      }));
-      continue;
-    }
-
-    const ig = page?.instagram_business_account;
-    if (!ig?.id) continue;
     saved.push(await saveSocialAccount({
-      provider: "instagram",
-      providerAccountId: String(ig.id),
-      username: ig.username || null,
-      displayName: ig.name || ig.username || "Instagram profissional",
-      accountType: "professional",
-      avatarUrl: ig.profile_picture_url || null,
-      editorialRole: "Marca / Autoridade",
+      provider: "facebook",
+      providerAccountId: String(page.id),
+      username: page.name || null,
+      displayName: page.name || "Página do Facebook",
+      accountType: "page",
+      avatarUrl: page?.picture?.data?.url || null,
+      editorialRole: "Marca / Página",
       scopes,
       accessToken: pageToken,
       expiresAt: addSeconds(expiresIn),
       connectedBy: userId,
-      metadata: { linked_page_id: page.id, linked_page_name: page.name || null },
-      providerPayload: { instagram_user_id: ig.id, page_id: page.id },
+      metadata: { page_id: page.id, meta_user_token_expires_in: expiresIn || null },
+      providerPayload: { page_id: page.id },
     }));
   }
 
-  if (!saved.length) {
-    throw new Error(provider === "instagram"
-      ? "Nenhuma conta profissional do Instagram vinculada às páginas autorizadas foi encontrada."
-      : "Nenhuma Página do Facebook autorizada foi encontrada.");
-  }
+  if (!saved.length) throw new Error("Nenhuma Página do Facebook autorizada foi encontrada.");
   return saved;
 }
 
@@ -188,7 +243,7 @@ async function exchangeLinkedIn(code: string, userId: string, fallbackScopes: st
   if (!accountId) throw new Error("LinkedIn não retornou o identificador do perfil.");
   const scopes = parseGrantedScopes(token?.scope, fallbackScopes);
 
-  const saved = [await saveSocialAccount({
+  return [await saveSocialAccount({
     provider: "linkedin",
     providerAccountId: accountId,
     username: profile?.email || null,
@@ -282,7 +337,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!code) return redirect(res, { social: "error", provider, message: "A rede não retornou código de autorização." });
 
     let accounts: any[] = [];
-    if (provider === "instagram" || provider === "facebook") {
+    if (provider === "instagram") {
+      accounts = await exchangeInstagram(code, oauthState.user_id, oauthState.requested_scopes || []);
+    } else if (provider === "facebook") {
       accounts = await exchangeMeta(code, provider, oauthState.user_id, oauthState.requested_scopes || []);
     } else if (provider === "tiktok") {
       accounts = await exchangeTikTok(code, oauthState.user_id, oauthState.requested_scopes || []);
@@ -298,7 +355,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return redirect(res, {
       social: "error",
       provider: oauthState?.provider || null,
-      message: String(error?.data?.error?.message || error?.message || "Falha ao concluir autorização.").slice(0, 180),
+      message: String(error?.data?.error?.message || error?.error_message || error?.message || "Falha ao concluir autorização.").slice(0, 180),
     });
   }
 }

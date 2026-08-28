@@ -18,8 +18,14 @@ function walk(dir) {
     let src = before;
     src = src.replaceAll('from "./_supabase"', 'from "./_supabase.js"');
     src = src.replaceAll("from './_supabase'", "from './_supabase.js'");
+    src = src.replaceAll('from "../_supabase"', 'from "../_supabase.js"');
+    src = src.replaceAll("from '../_supabase'", "from '../_supabase.js'");
     src = src.replaceAll('from "./_livekit-server"', 'from "./_livekit-server.js"');
     src = src.replaceAll("from './_livekit-server'", "from './_livekit-server.js'");
+    src = src.replaceAll('from "./_social"', 'from "./_social.js"');
+    src = src.replaceAll("from './_social'", "from './_social.js'");
+    src = src.replaceAll('import("./_social")', 'import("./_social.js")');
+    src = src.replaceAll("import('./_social')", "import('./_social.js')");
     if (src !== before) {
       fs.writeFileSync(full, src);
       changed += 1;

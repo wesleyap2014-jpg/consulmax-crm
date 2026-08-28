@@ -28,7 +28,8 @@ function authorizationUrl(provider: SocialProvider, state: string) {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("state", state);
     url.searchParams.set("scope", config.scopes.join(","));
-    url.searchParams.set("force_reauth", "true");
+    url.searchParams.set("enable_fb_login", "0");
+    url.searchParams.set("force_authentication", "1");
     return url.toString();
   }
 

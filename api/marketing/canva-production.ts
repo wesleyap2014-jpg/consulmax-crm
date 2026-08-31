@@ -4,7 +4,7 @@ import {
   json,
   requireAdmin,
   supabaseAdmin,
-} from "./_canva";
+} from "./_canva.js";
 
 const CONTENT_BUCKET = "marketing-content-assets";
 const OUTPUT_ROLE: Record<string, string> = {

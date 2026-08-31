@@ -8,7 +8,7 @@ import {
   json,
   requireAdmin,
   supabaseAdmin,
-} from "./_canva";
+} from "./_canva.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const user = await requireAdmin(req, res);

@@ -6,7 +6,7 @@ import {
   consumeCanvaOauthState,
   exchangeCanvaCode,
   upsertCanvaConnection,
-} from "./_canva";
+} from "./_canva.js";
 
 function redirect(res: VercelResponse, params: Record<string, string>) {
   const url = new URL(`${APP_BASE_URL}/marketing/conteudo`);

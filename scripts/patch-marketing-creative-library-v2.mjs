@@ -88,3 +88,5 @@ if (fs.existsSync(visualRendererPath)) {
     console.log("[motor-visual-v2] BrandContext já corrigido");
   }
 }
+
+await import(`./patch-content-canva-first-v1.mjs?build=${Date.now()}`);

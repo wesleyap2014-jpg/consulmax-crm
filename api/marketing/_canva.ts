@@ -8,7 +8,7 @@ import {
   json,
   requireAdmin,
   supabaseAdmin,
-} from "./_social";
+} from "./_social.js";
 
 export type CanvaConnection = {
   id: string;

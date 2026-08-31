@@ -53,3 +53,45 @@ if (changed) {
 } else {
   console.log("[canva-first-v1] arquitetura Canva-first já aplicada");
 }
+
+// Compatibilidade estrita com o Canva Connect API: ao copiar um design ou Brand Template,
+// o endpoint /designs recebe apenas o discriminador + ID de origem. O título permanece no
+// fluxo de Autofill, onde é suportado.
+const canvaApiPath = "api/marketing/canva-production.ts";
+if (fs.existsSync(canvaApiPath)) {
+  let apiText = fs.readFileSync(canvaApiPath, "utf8");
+  let apiChanged = false;
+  const copyWithTitleBrand = '? { type: "brand_template", brand_template_id: mapping.canva_brand_template_id, title }';
+  const copyWithoutTitleBrand = '? { type: "brand_template", brand_template_id: mapping.canva_brand_template_id }';
+  const copyWithTitleDesign = ': { type: "design", design_id: mapping.canva_source_design_id, title };';
+  const copyWithoutTitleDesign = ': { type: "design", design_id: mapping.canva_source_design_id };';
+  if (apiText.includes(copyWithTitleBrand)) {
+    apiText = apiText.replace(copyWithTitleBrand, copyWithoutTitleBrand);
+    apiChanged = true;
+  }
+  if (apiText.includes(copyWithTitleDesign)) {
+    apiText = apiText.replace(copyWithTitleDesign, copyWithoutTitleDesign);
+    apiChanged = true;
+  }
+
+  // Preserva label/purpose semeados no mapping ao registrar dataset e horário do vínculo.
+  const mappingAnchor = '  let dataset: any = {};\n  if (brandTemplateId) {';
+  const mappingReplacement = '  const { data: currentMapping } = await supabaseAdmin.from("marketing_canva_template_mappings").select("metadata").eq("id", mappingId).maybeSingle();\n  let dataset: any = {};\n  if (brandTemplateId) {';
+  if (!apiText.includes(mappingReplacement) && apiText.includes(mappingAnchor)) {
+    apiText = apiText.replace(mappingAnchor, mappingReplacement);
+    apiChanged = true;
+  }
+  const metadataAnchor = '      metadata: {\n        mapped_at: new Date().toISOString(),\n        dataset_field_count: Object.keys(dataset || {}).length,\n      },';
+  const metadataReplacement = '      metadata: {\n        ...(currentMapping?.metadata || {}),\n        mapped_at: new Date().toISOString(),\n        dataset_field_count: Object.keys(dataset || {}).length,\n      },';
+  if (apiText.includes(metadataAnchor)) {
+    apiText = apiText.replace(metadataAnchor, metadataReplacement);
+    apiChanged = true;
+  }
+
+  if (apiChanged) {
+    fs.writeFileSync(canvaApiPath, apiText, "utf8");
+    console.log("[canva-first-v1] Canva API compatível e metadata de templates preservada");
+  } else {
+    console.log("[canva-first-v1] Canva API já compatível");
+  }
+}

@@ -90,3 +90,4 @@ if (fs.existsSync(visualRendererPath)) {
 }
 
 await import(`./patch-content-canva-first-v1.mjs?build=${Date.now()}`);
+await import(`./patch-content-visual-prompt-studio-v1.mjs?build=${Date.now()}`);

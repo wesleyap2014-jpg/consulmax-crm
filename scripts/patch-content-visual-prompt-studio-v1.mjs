@@ -38,3 +38,5 @@ if (changed) {
 } else {
   console.log("[visual-prompt-studio-v1] workspace já está no novo fluxo ou âncoras não estavam presentes");
 }
+
+await import(`./patch-canva-brand-kit-name-v1.mjs?build=${Date.now()}`);

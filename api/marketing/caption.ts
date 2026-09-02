@@ -92,8 +92,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ]);
     if (contentRes.error) throw contentRes.error;
     if (variantRes.error) throw variantRes.error;
-    const content = contentRes.data || {};
-    const variant = variantRes.data || {};
+    const content: any = contentRes.data || {};
+    const variant: any = variantRes.data || {};
     const settings = settingsRes.data || [];
 
     const system = `Você é o Max Content, redator e estrategista de conteúdo da Consulmax Consórcios.\n\nRegras obrigatórias:\n- Escreva sempre em português do Brasil.\n- A legenda deve ser nativa para a plataforma e o formato.\n- Não repita literalmente o texto da arte ou do roteiro; complemente a peça.\n- Posicionamento premium, consultivo, moderno, claro e profissional.\n- Não invente números, taxas, resultados, garantias, contemplação, rentabilidade ou economia.\n- Não use sensacionalismo.\n- CTA deve ser natural e coerente com o objetivo.\n- Hashtags devem ser específicas e moderadas, nunca genéricas em excesso.\n- Responda apenas JSON válido no formato {"caption":"...","hashtags":["..."]}.\n\nCONFIGURAÇÕES EDITORIAIS ATIVAS:\n${JSON.stringify(settings).slice(0, 16000)}`;

@@ -10,6 +10,43 @@ if (!fs.existsSync(workspacePath)) throw new Error("[visual-prompt-studio-v1] Pr
 fs.copyFileSync(templatePath, bridgePath);
 console.log("[visual-prompt-studio-v1] bridge Canva substituído pelo Estúdio de Prompts Visuais");
 
+let bridge = fs.readFileSync(bridgePath, "utf8");
+let bridgeChanged = false;
+
+const uploadStartOld = `  async function uploadFinal(files: FileList | null) {\n    if (!files?.length) return;\n    setBusy(true);`;
+const uploadStartNew = `  async function uploadFinal(files: FileList | null) {\n    const selectedFiles = Array.from(files || []);\n    if (!selectedFiles.length) return;\n    setBusy(true);`;
+if (bridge.includes(uploadStartOld)) {
+  bridge = bridge.replace(uploadStartOld, uploadStartNew);
+  bridgeChanged = true;
+}
+
+const uploadLoopOld = `      for (let index = 0; index < files.length; index += 1) {\n        const file = files[index];`;
+const uploadLoopNew = `      for (let index = 0; index < selectedFiles.length; index += 1) {\n        const file = selectedFiles[index];`;
+if (bridge.includes(uploadLoopOld)) {
+  bridge = bridge.replace(uploadLoopOld, uploadLoopNew);
+  bridgeChanged = true;
+}
+
+if (bridge.includes("external_visual_count: files.length,")) {
+  bridge = bridge.replace("external_visual_count: files.length,", "external_visual_count: selectedFiles.length,");
+  bridgeChanged = true;
+}
+
+if (bridge.includes("onNotice?.(`${files.length} imagem(ns) final(is) enviada(s). A peça está em revisão.`);")) {
+  bridge = bridge.replace(
+    "onNotice?.(`${files.length} imagem(ns) final(is) enviada(s). A peça está em revisão.`);",
+    "onNotice?.(`${selectedFiles.length} imagem(ns) final(is) enviada(s). A peça está em revisão.`);",
+  );
+  bridgeChanged = true;
+}
+
+if (bridgeChanged) {
+  fs.writeFileSync(bridgePath, bridge, "utf8");
+  console.log("[visual-prompt-studio-v1] upload final usa snapshot estável dos arquivos selecionados");
+} else {
+  console.log("[visual-prompt-studio-v1] upload final já está estabilizado ou âncoras não foram encontradas");
+}
+
 let text = fs.readFileSync(workspacePath, "utf8");
 let changed = false;
 

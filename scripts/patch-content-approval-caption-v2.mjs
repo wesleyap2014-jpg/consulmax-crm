@@ -114,9 +114,15 @@ if (fs.existsSync(productionPath)) {
     text = text.replace('  ajuste_solicitado: "Ajuste solicitado",\n', '  ajuste_solicitado: "Ajuste solicitado",\n  rejeitado: "Rejeitado",\n');
   }
 
-  const memoAnchor = `  const variantById = useMemo(() => new Map(variants.map((item) => [item.id, item])), [variants]);\n  const assetsByOrder = useMemo(() => {`;
-  const memoReplacement = `  const variantById = useMemo(() => new Map(variants.map((item) => [item.id, item])), [variants]);\n  const productionOrders = useMemo(() => orders.filter((item) => !["pronto_aprovacao", "aprovado", "rejeitado"].includes(item.status)), [orders]);\n  const assetsByOrder = useMemo(() => {`;
-  text = replaceOnce(text, memoAnchor, memoReplacement, "production queue filter");
+  const oldQueue = '  const productionOrders = useMemo(() => orders.filter((item) => !["pronto_aprovacao", "aprovado"].includes(item.status)), [orders]);';
+  const newQueue = '  const productionOrders = useMemo(() => orders.filter((item) => !["pronto_aprovacao", "aprovado", "rejeitado"].includes(item.status)), [orders]);';
+  if (text.includes(oldQueue)) {
+    text = text.replace(oldQueue, newQueue);
+  } else if (!text.includes(newQueue)) {
+    const memoAnchor = `  const variantById = useMemo(() => new Map(variants.map((item) => [item.id, item])), [variants]);\n  const assetsByOrder = useMemo(() => {`;
+    const memoReplacement = `  const variantById = useMemo(() => new Map(variants.map((item) => [item.id, item])), [variants]);\n${newQueue}\n  const assetsByOrder = useMemo(() => {`;
+    text = replaceOnce(text, memoAnchor, memoReplacement, "production queue filter");
+  }
   text = text.replace("{orders.map((order) => {", "{productionOrders.map((order) => {");
   text = text.replace("{!orders.length ? <div", "{!productionOrders.length ? <div");
 

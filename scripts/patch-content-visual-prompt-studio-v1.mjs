@@ -78,3 +78,4 @@ if (changed) {
 
 await import(`./patch-canva-brand-kit-name-v1.mjs?build=${Date.now()}`);
 await import(`./patch-content-approval-flow-v1.mjs?build=${Date.now()}`);
+await import(`./patch-content-approval-caption-v2.mjs?build=${Date.now()}`);

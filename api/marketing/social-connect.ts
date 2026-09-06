@@ -12,6 +12,7 @@ import {
 } from "./_social";
 
 const PROVIDERS: SocialProvider[] = ["instagram", "facebook", "tiktok", "linkedin", "youtube", "whatsapp"];
+const FACEBOOK_LOGIN_CONFIG_ID = String(process.env.META_FACEBOOK_LOGIN_CONFIG_ID || "1052812334037021").trim();
 
 function isProvider(value: any): value is SocialProvider {
   return PROVIDERS.includes(String(value) as SocialProvider);
@@ -34,11 +35,14 @@ function authorizationUrl(provider: SocialProvider, state: string) {
   }
 
   if (provider === "facebook") {
+    if (!FACEBOOK_LOGIN_CONFIG_ID) throw new Error("Facebook Login for Business sem config_id configurado.");
     url.searchParams.set("client_id", config.clientId);
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");
+    url.searchParams.set("override_default_response_type", "true");
     url.searchParams.set("state", state);
-    url.searchParams.set("scope", config.scopes.join(","));
+    // No Facebook Login for Business, config_id substitui o parâmetro scope.
+    url.searchParams.set("config_id", FACEBOOK_LOGIN_CONFIG_ID);
     return url.toString();
   }
 
@@ -124,6 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         missing: config.missing,
         scopes: config.scopes,
         callback_url: provider === "whatsapp" ? null : callbackUrl(),
+        ...(provider === "facebook" ? { login_configured: Boolean(FACEBOOK_LOGIN_CONFIG_ID) } : {}),
       };
     });
     return json(res, 200, { ok: true, providers });

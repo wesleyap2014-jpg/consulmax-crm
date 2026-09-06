@@ -13,3 +13,16 @@ if (!source.includes(to)) {
 } else {
   console.log("[patch-marketing-radar-pulse-v1] escopo já aplicado");
 }
+
+const radarFile = "api/marketing/radar-run.ts";
+let radar = fs.readFileSync(radarFile, "utf8");
+const radarFrom = "engagementRates.filter((value) => value > 0)";
+const radarTo = "engagementRates.filter((value: number) => value > 0)";
+if (!radar.includes(radarTo)) {
+  if (!radar.includes(radarFrom)) throw new Error("[patch-marketing-radar-pulse-v1] âncora de tipagem do Radar não encontrada");
+  radar = radar.replace(radarFrom, radarTo);
+  fs.writeFileSync(radarFile, radar);
+  console.log("[patch-marketing-radar-pulse-v1] tipagem do Radar corrigida");
+} else {
+  console.log("[patch-marketing-radar-pulse-v1] tipagem do Radar já corrigida");
+}

@@ -12,7 +12,7 @@ import {
 } from "./_social";
 
 const PROVIDERS: SocialProvider[] = ["instagram", "facebook", "tiktok", "linkedin", "youtube", "whatsapp"];
-const FACEBOOK_LOGIN_CONFIG_ID = String(process.env.META_FACEBOOK_LOGIN_CONFIG_ID || "1052812334037021").trim();
+const FACEBOOK_LOGIN_CONFIG_ID = String(process.env.META_FACEBOOK_LOGIN_CONFIG_ID || "895878950037566").trim();
 
 function isProvider(value: any): value is SocialProvider {
   return PROVIDERS.includes(String(value) as SocialProvider);

@@ -8,6 +8,7 @@ const patches = [
   "scripts/patch-marketing-radar-pulse-v1.mjs",
   "scripts/patch-marketing-radar-run-now-v1.mjs",
   "scripts/patch-marketing-radar-insights-v1.mjs",
+  "scripts/patch-marketing-radar-auto-ideas-v1.mjs",
 ];
 
 for (const patch of patches) {

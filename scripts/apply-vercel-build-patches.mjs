@@ -10,6 +10,7 @@ const patches = [
   "scripts/patch-marketing-radar-insights-v1.mjs",
   "scripts/patch-marketing-radar-auto-ideas-v1.mjs",
   "scripts/patch-marketing-radar-idea-selection-v2.mjs",
+  "scripts/patch-marketing-idea-inbox-v1.mjs",
 ];
 
 for (const patch of patches) {

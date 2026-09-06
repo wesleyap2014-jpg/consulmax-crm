@@ -40,7 +40,6 @@ function authorizationUrl(provider: SocialProvider, state: string) {
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("override_default_response_type", "true");
-    url.searchParams.set("auth_type", "rerequest");
     url.searchParams.set("state", state);
     // No Facebook Login for Business, config_id substitui o parâmetro scope.
     url.searchParams.set("config_id", FACEBOOK_LOGIN_CONFIG_ID);

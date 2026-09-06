@@ -24,6 +24,7 @@ type RequestBody = {
   action?: "expand" | "head";
   content?: ContentInput;
   idea?: string;
+  current_idea?: Record<string, unknown> | null;
   targets?: Target[];
   instructions?: string;
 };
@@ -178,11 +179,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const idea = String(body.idea || "").trim();
       if (!idea) return json(res, 400, { ok: false, message: "Envie uma ideia para o Head de Conteúdo." });
 
+      const currentIdea = body.current_idea && typeof body.current_idea === "object" ? body.current_idea : null;
+      const instructions = String(body.instructions || "").trim();
       const result = await callOpenAI([
         { role: "system", content: systemPrompt(editorialSettings) },
         {
           role: "user",
-          content: `Analise a ideia abaixo como Head de Conteúdo e devolva JSON com as chaves: title, theme, thesis, objective, audience, content_pillar, cta, head_recommendation, recommended_targets. recommended_targets deve ser um array de objetos {provider, format, reason}.\n\nIDEIA:\n${idea.slice(0, 12000)}\n\nINSTRUÇÕES ADICIONAIS:\n${String(body.instructions || "").slice(0, 3000)}`,
+          content: `Você está na etapa IDEIAS da esteira editorial. Organize a ideia sem ainda escrever a peça final.
+
+IDEIA ORIGINAL DO USUÁRIO:
+${idea.slice(0, 12000)}
+
+${currentIdea ? `VERSÃO ESTRUTURADA ATUAL:\n${JSON.stringify(currentIdea).slice(0, 9000)}\n\n` : ""}${instructions ? `AJUSTES SOLICITADOS PELO USUÁRIO:\n${instructions.slice(0, 4000)}\n\nRefaça a estrutura respeitando os ajustes acima, preservando o que continuar válido.\n\n` : ""}Devolva SOMENTE JSON válido com estas chaves:
+{
+  "title": "título curto para identificar a pauta",
+  "idea": "a ideia central organizada em 1 a 3 frases",
+  "angle": "o recorte estratégico escolhido para abordar a ideia",
+  "audience": "público principal e específico",
+  "objective": "objetivo de marketing desta pauta",
+  "recommended_format": "formato principal recomendado, por exemplo Reel, Carrossel, Stories, LinkedIn, TikTok",
+  "hook": "gancho de abertura recomendado",
+  "structure": "estrutura narrativa resumida, por exemplo Gancho → contexto → desenvolvimento → prova → CTA",
+  "cta": "ação final recomendada",
+  "theme": "tema editorial",
+  "thesis": "tese que o conteúdo deve defender",
+  "content_pillar": "pilar editorial",
+  "head_recommendation": "nota curta do Head explicando por que esta direção faz sentido",
+  "recommended_targets": [{"provider":"instagram","format":"reel","reason":"motivo"}]
+}
+
+Regras desta etapa:
+- Não transforme em roteiro completo ainda.
+- Ângulo, público, objetivo, formato, gancho, estrutura e CTA precisam conversar entre si.
+- Seja específico; evite recomendações genéricas.
+- Se a ideia estiver vaga, escolha uma direção estratégica plausível em vez de apenas repetir o texto do usuário.
+- Se houver ajustes solicitados, eles têm prioridade sobre a versão estruturada atual.`,
         },
       ]);
 

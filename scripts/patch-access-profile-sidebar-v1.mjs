@@ -76,3 +76,4 @@ await import("./patch-social-accounts-live-v1.mjs");
 await import("./patch-content-settings-editor-v1.mjs");
 await import("./patch-content-engine-v2.mjs");
 await import("./patch-production-factory-v1.mjs");
+await import("./patch-marketing-editorial-pipeline-v1.mjs");

@@ -204,6 +204,16 @@ function ConsortiumSummaryCard({ proposal, flow }: { proposal: ProposalModelRow;
   const remainingMonths = Math.max(0, flow.totalMonths - lastContemplationMonth);
   const postContemplationEntry = monthEntries.find((entry) => entry.month > lastContemplationMonth);
   const postContemplationInstallment = onlyNumber(proposal.parcela_escolhida) || summary.postContemplationInstallment || postContemplationEntry?.installment || 0;
+  const specialPostContemplationStart = lastContemplationMonth + 1;
+  const specialPostContemplationEnd = Math.min(configuredInitialMonths, flow.totalMonths);
+  const specialPostContemplationCount = specialPostContemplationEnd >= specialPostContemplationStart
+    ? specialPostContemplationEnd - specialPostContemplationStart + 1
+    : 0;
+  const specialPostContemplationEntry = monthEntries.find((entry) => entry.month === specialPostContemplationStart);
+  const specialPostContemplationInstallment = specialPostContemplationEntry?.installment || postContemplationInstallment;
+  const hasSpecialPostContemplationInstallments = specialPostContemplationCount > 0
+    && Math.abs(specialPostContemplationInstallment - postContemplationInstallment) > 0.01;
+  const regularPostContemplationCount = Math.max(0, remainingMonths - specialPostContemplationCount);
   const adminName = getAdminName(proposal);
   const isEmbracon = adminName.toLocaleLowerCase("pt-BR").includes("embracon");
 
@@ -284,7 +294,18 @@ function ConsortiumSummaryCard({ proposal, flow }: { proposal: ProposalModelRow;
                 <div className="rounded-lg border bg-white/85 p-3">
                   <div className="text-[11px] font-bold uppercase tracking-[.08em] text-slate-500">Parcelas restantes</div>
                   <div className="mt-1 text-base font-black" style={{ color: C.navy }}>
-                    {remainingMonths} x de {brMoney(postContemplationInstallment)}
+                    {hasSpecialPostContemplationInstallments ? (
+                      <div className="space-y-1">
+                        <div>
+                          {installmentRangeLabel(specialPostContemplationStart, specialPostContemplationEnd)}: {brMoney(specialPostContemplationInstallment)}
+                        </div>
+                        {regularPostContemplationCount > 0 ? (
+                          <div className="text-sm">+ {regularPostContemplationCount} x de {brMoney(postContemplationInstallment)}</div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <>{remainingMonths} x de {brMoney(postContemplationInstallment)}</>
+                    )}
                   </div>
                 </div>
                 <div className="rounded-lg border bg-white/85 p-3">

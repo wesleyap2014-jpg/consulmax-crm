@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import "./patch-whatsapp-international-phone-v51.mjs";
 
 const file = "src/pages/Usuarios.tsx";
 let src = fs.readFileSync(file, "utf8");

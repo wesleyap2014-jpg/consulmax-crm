@@ -2,9 +2,8 @@ import fs from "node:fs";
 
 const FRONT_FILE = "src/pages/whatsapp/WhatsAppAtendimento.tsx";
 const TEMPLATE_FILE = "api/whatsapp/template.ts";
-const SEND_FILE = "api/whatsapp/send.ts";
 
-for (const file of [FRONT_FILE, TEMPLATE_FILE, SEND_FILE]) {
+for (const file of [FRONT_FILE, TEMPLATE_FILE]) {
   if (!fs.existsSync(file)) {
     throw new Error(`[patch-whatsapp-international-phone-v51] arquivo não encontrado: ${file}`);
   }
@@ -23,7 +22,7 @@ function replaceOnce(source, from, to, label) {
 }
 
 // -----------------------------------------------------------------------------
-// Front-end: Central WhatsApp passa a respeitar o país do cadastro e E.164.
+// Front-end: a Central WhatsApp passa a respeitar o país do cadastro e E.164.
 // -----------------------------------------------------------------------------
 let front = fs.readFileSync(FRONT_FILE, "utf8");
 
@@ -126,15 +125,15 @@ front = replaceOnce(
   "placeholder internacional",
 );
 
-if (!front.includes('normalizePhoneForWhatsapp') || !front.includes('clientCountryFromObservacoes')) {
+if (!front.includes("normalizePhoneForWhatsapp") || !front.includes("clientCountryFromObservacoes")) {
   throw new Error("[patch-whatsapp-international-phone-v51] validação do front-end falhou");
 }
 fs.writeFileSync(FRONT_FILE, front);
 
 // -----------------------------------------------------------------------------
-// Back-end: conversa existente usa o telefone canônico do cadastro do cliente.
-// Isso corrige principalmente templates fora da janela de 24h apontando para
-// whatsapp_contacts desatualizado.
+// Templates: em conversas já existentes, revalida o destinatário pelo cadastro
+// canônico do cliente antes de enviar o modelo. Isso é especialmente importante
+// quando a conversa está fora da janela de 24h e o whatsapp_contact é antigo.
 // -----------------------------------------------------------------------------
 const backendHelper = `\nfunction canonicalStoredPhone(value?: string | null) {\n  const raw = String(value || "").trim();\n  const digits = onlyDigits(raw);\n  if (!digits) return "";\n  if (raw.startsWith("+") && digits.length >= 8 && digits.length <= 15) return digits;\n  if (digits.length > 11 && digits.length <= 15) return digits;\n  return "";\n}\n\nasync function resolveConversationRecipientPhone(conversationId: string, suppliedTo?: string | null) {\n  const fallback = onlyDigits(suppliedTo);\n  if (!conversationId) return fallback;\n\n  const { data: conversation } = await supabaseAdmin\n    .from("whatsapp_conversations")\n    .select("id,lead_id,whatsapp_contacts(id,lead_id,telefone,wa_id)")\n    .eq("id", conversationId)\n    .maybeSingle();\n\n  const contact: any = Array.isArray((conversation as any)?.whatsapp_contacts)\n    ? (conversation as any).whatsapp_contacts[0]\n    : (conversation as any)?.whatsapp_contacts;\n  const leadId = (conversation as any)?.lead_id || contact?.lead_id || null;\n  let phone = onlyDigits(contact?.telefone || contact?.wa_id) || fallback;\n\n  if (leadId) {\n    const { data: client } = await supabaseAdmin\n      .from("clientes")\n      .select("telefone")\n      .eq("lead_id", leadId)\n      .maybeSingle();\n    const clientPhone = canonicalStoredPhone((client as any)?.telefone);\n    if (clientPhone) phone = clientPhone;\n\n    if (!clientPhone) {\n      const { data: lead } = await supabaseAdmin\n        .from("leads")\n        .select("telefone")\n        .eq("id", leadId)\n        .maybeSingle();\n      const leadPhone = canonicalStoredPhone((lead as any)?.telefone);\n      if (leadPhone) phone = leadPhone;\n    }\n  }\n\n  if (!phone) phone = fallback;\n\n  const contactId = contact?.id ? String(contact.id) : "";\n  const currentPhone = onlyDigits(contact?.wa_id || contact?.telefone);\n  if (contactId && phone && currentPhone !== phone) {\n    const { data: conflict } = await supabaseAdmin\n      .from("whatsapp_contacts")\n      .select("id")\n      .eq("wa_id", phone)\n      .neq("id", contactId)\n      .limit(1)\n      .maybeSingle();\n\n    if (!(conflict as any)?.id) {\n      await supabaseAdmin\n        .from("whatsapp_contacts")\n        .update({ wa_id: phone, telefone: phone, updated_at: new Date().toISOString() })\n        .eq("id", contactId);\n    }\n  }\n\n  return phone;\n}\n`;
 
@@ -159,48 +158,5 @@ if (!template.includes('resolveConversationRecipientPhone(String(conversation_id
   throw new Error("[patch-whatsapp-international-phone-v51] validação do template falhou");
 }
 fs.writeFileSync(TEMPLATE_FILE, template);
-
-let send = fs.readFileSync(SEND_FILE, "utf8");
-if (!send.includes("async function resolveConversationRecipientPhone")) {
-  send = replaceOnce(
-    send,
-    `function onlyDigits(value?: string | null) {\n  return String(value || "").replace(/\\D/g, "");\n}\n`,
-    `function onlyDigits(value?: string | null) {\n  return String(value || "").replace(/\\D/g, "");\n}\n${backendHelper}`,
-    "helper canônico no endpoint de envio",
-  );
-}
-
-send = replaceOnce(
-  send,
-  `    if (!conversation_id || !to) {\n      return res.status(400).json({\n        ok: false,\n        error: "conversation_id e to são obrigatórios.",\n      });\n    }\n\n    if (resend_message_id) {`,
-  `    if (!conversation_id || !to) {\n      return res.status(400).json({\n        ok: false,\n        error: "conversation_id e to são obrigatórios.",\n      });\n    }\n\n    const resolvedTo = await resolveConversationRecipientPhone(conversation_id, to);\n    if (!resolvedTo) {\n      return res.status(400).json({\n        ok: false,\n        error: "Não foi possível identificar um telefone internacional válido para a conversa.",\n      });\n    }\n\n    if (resend_message_id) {`,
-  "resolve telefone antes do envio",
-);
-
-send = replaceOnce(
-  send,
-  `        message_id: resend_message_id,\n        conversation_id,\n        to,\n        user_id,`,
-  `        message_id: resend_message_id,\n        conversation_id,\n        to: resolvedTo,\n        user_id,`,
-  "reenvio usa telefone canônico",
-);
-
-send = replaceOnce(
-  send,
-  `        conversation_id,\n        to,\n        user_id,\n        file_base64,`,
-  `        conversation_id,\n        to: resolvedTo,\n        user_id,\n        file_base64,`,
-  "mídia usa telefone canônico",
-);
-
-send = replaceOnce(
-  send,
-  `      conversation_id,\n      to,\n      body,\n      user_id,`,
-  `      conversation_id,\n      to: resolvedTo,\n      body,\n      user_id,`,
-  "texto usa telefone canônico",
-);
-
-if (!send.includes("const resolvedTo = await resolveConversationRecipientPhone")) {
-  throw new Error("[patch-whatsapp-international-phone-v51] validação do send falhou");
-}
-fs.writeFileSync(SEND_FILE, send);
 
 console.log("[patch-whatsapp-international-phone-v51] concluído");

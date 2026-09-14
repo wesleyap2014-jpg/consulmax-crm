@@ -257,10 +257,10 @@ function demaisParcelas(row: ProposalModelRow) {
 
 function parcelaAposContemplacao(row: ProposalModelRow) {
   return (
-    onlyNumber(row.nova_parcela_sem_limite) ||
-    onlyNumber(row.parcela_limitante) ||
-    onlyNumber(row.parcela_demais) ||
     onlyNumber(row.parcela_escolhida) ||
+    onlyNumber(row.parcela_limitante) ||
+    onlyNumber(row.nova_parcela_sem_limite) ||
+    onlyNumber(row.parcela_demais) ||
     parcelaInicial(row)
   );
 }

@@ -1,0 +1,67 @@
+name: Laboratório Robôs Embracon
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_login_diagnostic:
+        description: Fazer login seguro e mapear a navegação do Convert+
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embracon-robot-lab
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    name: Mapear Convert+ autenticado
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar dependências do worker
+        working-directory: workers/embracon-worker
+        run: npm install --no-audit --no-fund
+
+      - name: Compilar worker Embracon
+        working-directory: workers/embracon-worker
+        run: npm run build
+
+      - name: Validar estrutura compilada
+        working-directory: workers/embracon-worker
+        run: test -f dist/index.js
+
+      - name: Validar secrets do Convert+
+        env:
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
+        run: |
+          test -n "$CONVERT_ROBOT_USERNAME" || (echo "Secret CONVERT_ROBOT_USERNAME ausente" && exit 1)
+          test -n "$CONVERT_ROBOT_PASSWORD" || (echo "Secret CONVERT_ROBOT_PASSWORD ausente" && exit 1)
+
+      - name: Fazer login e mapear navegação do Convert+
+        if: ${{ inputs.run_login_diagnostic }}
+        working-directory: workers/embracon-worker
+        env:
+          EMBRACON_ROBOT_PORTAL_URL: https://www.convertmais.com.br/AdminConvertMais/ConvertMaisWeb/login/
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
+        run: node scripts/run-login-diagnostic.mjs
+
+      - name: Salvar diagnóstico para análise
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: embracon-login-diagnostic
+          path: workers/embracon-worker/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

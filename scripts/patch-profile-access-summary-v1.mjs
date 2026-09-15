@@ -52,3 +52,4 @@ await import("./patch-agenda-create-overlay-v9.mjs");
 await import("./patch-agenda-guest-management-v10.mjs");
 await import("./patch-serverless-esm-imports-v1.mjs");
 await import("./patch-clientes-phone-source-v1.mjs");
+await import("./patch-whatsapp-template-display-v52.mjs");

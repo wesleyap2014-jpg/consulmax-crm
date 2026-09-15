@@ -7,7 +7,7 @@ const META_TOKEN = process.env["META" + "_WHATSAPP" + "_TOKEN"]!;
 const PHONE_NUMBER_ID = process.env["META" + "_WHATSAPP" + "_PHONE" + "_NUMBER" + "_ID"]!;
 const WABA_ID = process.env["META" + "_WHATSAPP" + "_WABA" + "_ID"] || process.env["META" + "_WABA" + "_ID"] || process.env["WHATSAPP" + "_BUSINESS" + "_ACCOUNT" + "_ID"] || "";
 const GRAPH_BASE = "https://graph.facebook.com/v21.0";
-const TEMPLATE_NAME = "resultado_assembleia_nao_contemplada";
+const TEMPLATE_NAME = "novo_resultado_assembleia_nao_contemplada";
 const TEMPLATE_LANGUAGE = "pt_BR";
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);

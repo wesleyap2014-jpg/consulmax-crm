@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/pages/MarketingCreativePipeline.tsx",
+    "src/components/marketing/creative/**/*.ts",
+    "src/components/marketing/creative/**/*.tsx",
+    "api/marketing/creative-max.ts",
+    "node_modules/vite/client.d.ts"
+  ],
+  "compilerOptions": {
+    "types": [
+      "node"
+    ]
+  }
+}

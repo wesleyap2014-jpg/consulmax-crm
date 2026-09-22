@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import MarketingNewsletterPanel from "./MarketingNewsletterPanel";
+const MarketingCreativePipeline = React.lazy(() => import("./MarketingCreativePipeline"));
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -729,6 +730,7 @@ Responda APENAS em JSON válido, sem markdown, exatamente com estas chaves:
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <div className="overflow-x-auto pb-1">
           <TabsList className="min-w-max border border-white/80 bg-white/75 p-1.5 shadow-sm backdrop-blur">
+            {canManage && <TabsTrigger value="esteira"><FolderKanban className="mr-2 h-4 w-4" />Esteira Criativa</TabsTrigger>}
             {canManage && <TabsTrigger value="plano"><CalendarDays className="mr-2 h-4 w-4" />Plano de mídia</TabsTrigger>}
             {canManage && <TabsTrigger value="estudio"><Sparkles className="mr-2 h-4 w-4" />Estúdio de conteúdo</TabsTrigger>}
             {canManage && <TabsTrigger value="campanhas"><FolderKanban className="mr-2 h-4 w-4" />Campanhas</TabsTrigger>}
@@ -737,6 +739,7 @@ Responda APENAS em JSON válido, sem markdown, exatamente com estas chaves:
           </TabsList>
         </div>
 
+        {canManage && <TabsContent value="esteira" className="mt-5"><React.Suspense fallback={<div className="p-8">Carregando Esteira Criativa…</div>}><MarketingCreativePipeline /></React.Suspense></TabsContent>}
         {canManage && <TabsContent value="plano" className="mt-5 space-y-5">
           <Card className="border-white/70 bg-white/85 shadow-lg backdrop-blur">
             <CardContent className="p-4 md:p-5">

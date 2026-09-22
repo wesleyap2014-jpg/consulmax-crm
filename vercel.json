@@ -20,6 +20,9 @@
     },
     "api/whatsapp/campaign-cron.ts": {
       "maxDuration": 300
+    },
+    "api/marketing/creative-max.ts": {
+      "maxDuration": 90
     }
   },
   "crons": [

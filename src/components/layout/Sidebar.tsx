@@ -510,6 +510,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         icon: Megaphone,
         items: [
           { to: "/marketing", label: "Central de Marketing", icon: Megaphone, end: true },
+          { to: "/marketing/esteira", label: "Esteira Criativa", icon: FolderKanban, end: true },
         ],
       },
       admin: {

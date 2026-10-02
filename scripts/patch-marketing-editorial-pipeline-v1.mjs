@@ -18,9 +18,12 @@ function replaceOnce(from, to, label) {
 const importAnchor = 'import MarketingIdeaInbox from "@/components/marketing/MarketingIdeaInbox";';
 const importLine = 'import MarketingEditorialPipelineNav from "@/components/marketing/MarketingEditorialPipelineNav";';
 if (!center.includes(importLine)) {
-  if (!center.includes(importAnchor)) throw new Error("[editorial-pipeline] import MarketingIdeaInbox não encontrado");
-  center = center.replace(importAnchor, `${importAnchor}\n${importLine}`);
-  changed = true;
+  if (center.includes(importAnchor)) {
+    center = center.replace(importAnchor, `${importAnchor}\n${importLine}`);
+    changed = true;
+  } else {
+    console.log("[editorial-pipeline] import da Caixa de ideias já não é necessário; seguindo");
+  }
 }
 
 replaceOnce(

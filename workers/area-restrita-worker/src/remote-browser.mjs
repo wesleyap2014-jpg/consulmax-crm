@@ -406,7 +406,7 @@ async function monitorSession(chrome, browser) {
   let totalMagnifierHandled = false;
   let priceTableHandled = false;
 
-  while (chrome.exitCode === null) {
+  while (chrome.exitCode === null && chrome.signalCode === null) {
     try {
       const context = browser.contexts()[0];
       const page = context ? choosePortalPage(context.pages()) : null;
@@ -549,6 +549,10 @@ async function main() {
     env: process.env,
     stdio: ["ignore", "inherit", "inherit"],
   });
+  // Registra antes do monitor: em saídas por sinal exitCode continua null.
+  const chromeExit = new Promise((resolve) => {
+    chrome.once("exit", (code, signal) => resolve({ code, signal }));
+  });
 
   let stopping = false;
   const stop = (signal) => {
@@ -572,14 +576,11 @@ async function main() {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${DEBUG_PORT}`);
   await monitorSession(chrome, browser);
 
-  const exitCode = await new Promise((resolve) => {
-    if (chrome.exitCode !== null) return resolve(chrome.exitCode);
-    chrome.once("exit", (code) => resolve(code));
-  });
+  const { code: exitCode, signal: exitSignal } = await chromeExit;
 
-  if (!stopping && exitCode !== 0) {
+  if (!stopping) {
     await setStatus("error", {
-      error: `Google Chrome encerrou inesperadamente com código ${exitCode}.`,
+      error: `Google Chrome encerrou inesperadamente (código=${exitCode}, sinal=${exitSignal || "nenhum"}). Reiniciando o serviço.`,
     });
     process.exitCode = 1;
   }

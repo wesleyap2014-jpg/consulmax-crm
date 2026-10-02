@@ -50,4 +50,4 @@ RUN mkdir -p /data/chrome-profile /run/area-restrita
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["bash", "scripts/start-remote.sh"]

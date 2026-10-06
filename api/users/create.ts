@@ -47,6 +47,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const authorization = String(req.headers.authorization || '')
+    const accessToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
+
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Sessão não informada.' })
+    }
+
+    const { data: callerAuth, error: callerAuthError } = await admin.auth.getUser(accessToken)
+    const callerId = callerAuth?.user?.id
+
+    if (callerAuthError || !callerId) {
+      return res.status(401).json({ error: 'Sessão inválida ou expirada.' })
+    }
+
+    const { data: callerProfile, error: callerProfileError } = await admin
+      .from('users')
+      .select('role,is_active')
+      .eq('auth_user_id', callerId)
+      .maybeSingle()
+
+    if (callerProfileError) {
+      return res.status(500).json({ error: 'Não foi possível validar o usuário administrador.' })
+    }
+
+    if (!callerProfile || callerProfile.is_active === false || String(callerProfile.role || '').toLowerCase() !== 'admin') {
+      return res.status(403).json({ error: 'Somente administradores podem criar usuários.' })
+    }
+
     const body: any =
       typeof req.body === 'string' && req.body.length ? JSON.parse(req.body) : req.body || {}
 
@@ -131,13 +159,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: `Perfil não salvo: ${upsertErr.message}` })
     }
 
-    // 3) Resposta para o front exibir a senha provisória
+    // 3) Envia o e-mail de boas-vindas usando o mesmo SMTP configurado no RH.
+    let emailSent = false
+    let emailError: string | null = null
+
+    try {
+      const { data: emailResult, error: emailFnError } = await admin.functions.invoke('send-user-welcome-email', {
+        body: {
+          name: nome,
+          email,
+          temp_password: tempPass,
+          crm_url: 'https://crm.consulmaxconsorcios.com.br/login',
+        },
+      })
+
+      if (emailFnError) throw emailFnError
+      if (!emailResult?.ok) throw new Error(emailResult?.error || 'A função de e-mail não confirmou o envio.')
+
+      emailSent = true
+    } catch (mailErr: any) {
+      emailError = mailErr?.message || 'Falha ao enviar o e-mail de boas-vindas.'
+      console.error('[users/create] welcome email:', emailError)
+    }
+
+    // 4) Resposta para o front. O usuário permanece criado mesmo se o SMTP falhar.
     return res.status(200).json({
       ok: true,
       user_id: auth_user_id,
       email,
       role,
       temp_password: tempPass,
+      email_sent: emailSent,
+      email_error: emailError,
     })
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Erro interno' })

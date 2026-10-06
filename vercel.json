@@ -23,6 +23,9 @@
     },
     "api/marketing/creative-max.ts": {
       "maxDuration": 90
+    },
+    "api/weekly-performance-feedback.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [
@@ -41,6 +44,10 @@
     {
       "path": "/api/whatsapp/campaign-cron",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/weekly-performance-feedback",
+      "schedule": "0 21 * * 5"
     }
   ],
   "rewrites": [

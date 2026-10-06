@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 27137)
-Total output lines: 2739
-
 // src/pages/Carteira.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -1139,7 +1136,794 @@ const Carteira: React.FC = () => {
 
     const { data: cliente } = await supabase.from("clientes").select("cpf,data_nascimento").eq("lead_id", leadId).maybeSingle();
 
-    if (cliente?.cpf || cliente?.data_nasci…7137 tokens truncated…font-bold text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 0)}</div>
+    if (cliente?.cpf || cliente?.data_nascimento) {
+      setForm((f) => ({
+        ...f,
+        cpf: cliente.cpf ?? f.cpf,
+        data_nascimento: cliente.data_nascimento ?? f.data_nascimento,
+      }));
+      return;
+    }
+
+    const { data: lastVenda } = await supabase
+      .from("vendas")
+      .select("cpf,data_nascimento,administradora,produto,tabela")
+      .eq("lead_id", leadId)
+      .eq("status", "encarteirada")
+      .order("encarteirada_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastVenda) {
+      setForm((f) => ({
+        ...f,
+        cpf: lastVenda.cpf ?? f.cpf,
+        data_nascimento: lastVenda.data_nascimento ?? f.data_nascimento,
+        administradora: lastVenda.administradora ?? f.administradora,
+        produto: (lastVenda.produto as Produto) ?? f.produto,
+        tabela: lastVenda.tabela ?? f.tabela,
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (loading || opportunitySalePrefillHandled.current) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const leadId = params.get("lead_id");
+    if (!leadId) {
+      opportunitySalePrefillHandled.current = true;
+      return;
+    }
+    if (!leads.some((lead) => lead.id === leadId)) return;
+
+    opportunitySalePrefillHandled.current = true;
+    setForm((current) => ({ ...current, lead_id: leadId }));
+    setShowModal(true);
+    void prefillFromLead(leadId);
+
+    params.delete("lead_id");
+    params.delete("opportunity_id");
+    const nextSearch = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
+    );
+  }, [loading, leads, prefillFromLead]);
+
+  const registrarVenda = async () => {
+    try {
+      if (!form.lead_id) throw new Error("Selecione o Lead.");
+      if (!form.cpf?.trim()) throw new Error("CPF/CNPJ é obrigatório.");
+      if (!validateCPF(form.cpf)) throw new Error("CPF ou CNPJ inválido.");
+      if (!form.numero_proposta?.trim()) throw new Error("Número da proposta é obrigatório.");
+
+      const valor = Number((form.valor_venda as any)?.toString().replace(/\./g, "").replace(",", "."));
+      if (Number.isNaN(valor)) throw new Error("Valor inválido.");
+
+      const segmento = normalizeProdutoToSegmento(form.produto as Produto);
+      const payload: Partial<Venda> = {
+        lead_id: form.lead_id,
+        cpf: onlyDigits(form.cpf!),
+        data_venda: form.data_venda!,
+        vendedor_id: userId,
+        produto: form.produto as Produto,
+        administradora: (form.administradora as Administradora) || "",
+        forma_venda: form.forma_venda as FormaVenda,
+        numero_proposta: form.numero_proposta!,
+        valor_venda: valor,
+        tipo_venda: (form.tipo_venda as any) ?? "Normal",
+        descricao: form.descricao ?? "",
+        status: "nova",
+        tabela: form.tabela || null,
+        segmento: segmento ?? undefined,
+        data_nascimento: form.data_nascimento || null,
+        grupo: form.tipo_venda === "Bolsão" ? form.grupo || "" : null,
+        codigo: "00",
+      };
+
+      if (form.tipo_venda === "Bolsão" && !form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
+
+      await insertVenda(payload);
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
+
+      setForm({
+        cpf: "",
+        data_venda: new Date().toISOString().slice(0, 10),
+        produto: "Automóvel",
+        administradora: simAdmins[0]?.name ?? "",
+        forma_venda: "Parcela Cheia",
+        tipo_venda: "Normal",
+        descricao: "",
+        grupo: "",
+        tabela: "",
+        data_nascimento: "",
+      });
+
+      setLeadSearch("");
+      setShowModal(false);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao registrar venda.");
+    }
+  };
+
+  const encarteirar = async (vendaId: string, grupo: string, cota: string, codigo: string) => {
+    try {
+      if (!isAdmin) throw new Error("Somente administradores podem encarteirar.");
+      if (!grupo?.trim() || !cota?.trim() || !codigo?.trim()) throw new Error("Preencha Grupo, Cota e Código.");
+
+      const { data: vOne, error: selErr } = await supabase.from("vendas").select("produto").eq("id", vendaId).maybeSingle();
+      if (selErr) throw selErr;
+      const segmento = normalizeProdutoToSegmento(vOne?.produto as Produto);
+
+      const { error } = await supabase
+        .from("vendas")
+        .update({
+          grupo,
+          cota,
+          codigo,
+          status: "encarteirada",
+          encarteirada_em: new Date().toISOString(),
+          segmento: segmento ?? undefined,
+        })
+        .eq("id", vendaId);
+
+      if (error) throw error;
+
+      const [{ data: pend }, { data: enc }] = await Promise.all([
+        (async () => {
+          const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          const r = await q;
+          return r.data;
+        })(),
+        (async () => {
+          const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          const r = await q;
+          return r.data;
+        })(),
+      ]);
+
+      setPendentes((pend ?? []) as Venda[]);
+      setEncarteiradas((enc ?? []) as Venda[]);
+      await loadMetrics(selectedSeller, selectedYear);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao encarteirar.");
+    }
+  };
+
+  const excluirVenda = async (vendaId: string) => {
+    try {
+      const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
+      if (error) throw error;
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao excluir.");
+    }
+  };
+
+  const reloadEncarteiradas = async () => {
+    const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+    if (!isAdmin) encQuery.eq("vendedor_id", userId);
+    const { data: enc } = await encQuery;
+    setEncarteiradas((enc ?? []) as Venda[]);
+  };
+
+  const salvarEdicaoPendente = async (venda: Venda, novo: Partial<Venda>) => {
+    try {
+      if (novo.cpf && !validateCPF(novo.cpf)) throw new Error("CPF ou CNPJ inválido.");
+      if (novo.numero_proposta && !novo.numero_proposta.trim()) throw new Error("Informe o número da proposta.");
+
+      const patch: any = { ...novo };
+      if (patch.cpf) patch.cpf = onlyDigits(patch.cpf);
+      if (patch.valor_venda != null) {
+        const valor = Number(patch.valor_venda);
+        if (Number.isNaN(valor)) throw new Error("Valor inválido.");
+        patch.valor_venda = valor;
+      }
+      if (patch.produto) patch.segmento = normalizeProdutoToSegmento(patch.produto as Produto);
+
+      await updateVenda(venda.id, patch);
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
+
+      setEditVendaModal({ open: false, venda: undefined });
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar.");
+    }
+  };
+
+  const tabelaOptions = useMemo(() => {
+    const prod = (form.produto as Produto) || "Automóvel";
+    const admName = (form.administradora as string) || "";
+    const admId = simAdmins.find((a) => a.name === admName)?.id;
+
+    const filtered = simTables.filter((t) => {
+      if (admId && t.admin_id !== admId) return false;
+      return produtoMatchesTableSegment(prod, t.segmento);
+    });
+
+    const seen = new Set<string>();
+    const unique = filtered.filter((t) => {
+      const key = normalizeTableName(t.nome_tabela);
+      if (!key) return false;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return unique;
+  }, [form.produto, form.administradora, simTables, simAdmins]);
+
+  const produtoOptionsForAdmin: Produto[] = useMemo(() => {
+    const admName = (form.administradora as string) || "";
+    const admId = simAdmins.find((a) => a.name === admName)?.id;
+    if (!admId) return PRODUTOS;
+
+    const segSet = new Set(simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento)));
+
+    const filtered = PRODUTOS.filter((p) => {
+      const candidates = segmentCandidatesForProduto(p);
+      return candidates.some((c) => segSet.has(c));
+    });
+
+    return filtered.length ? filtered : PRODUTOS;
+  }, [form.administradora, simAdmins, simTables]);
+
+  const adminOptions = useMemo(() => simAdmins.map((a) => a.name), [simAdmins]);
+
+  const filteredLeads = useMemo(() => {
+    if (!leadSearch.trim()) return leads;
+    const s = leadSearch.toLowerCase();
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
+  }, [leadSearch, leads]);
+
+  const filteredTransferLeads = useMemo(() => {
+    if (!transferSearch.trim()) return leads;
+    const s = transferSearch.toLowerCase();
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
+  }, [transferSearch, leads]);
+
+  const onSelectLead = async (leadId: string) => {
+    onFormChange("lead_id", leadId);
+    await prefillFromLead(leadId);
+  };
+
+  const openTransfer = (v: Venda) => {
+    setTransferModal({ open: true, venda: v });
+    setTransferLeadId("");
+    setTransferSearch("");
+    setTransferCpf("");
+    setTransferNascimento("");
+  };
+
+  const handleTransferSave = async () => {
+    try {
+      if (!transferModal.venda) return;
+      if (!transferLeadId) throw new Error("Selecione o novo lead.");
+      if (!transferCpf.trim()) throw new Error("CPF/CNPJ é obrigatório.");
+      if (!validateCPF(transferCpf)) throw new Error("CPF ou CNPJ inválido.");
+
+      const patch: Partial<Venda> = {
+        lead_id: transferLeadId,
+        cpf: onlyDigits(transferCpf),
+        data_nascimento: transferNascimento || null,
+      };
+
+      await updateVenda(transferModal.venda.id, patch);
+      await reloadEncarteiradas();
+
+      setTransferModal({ open: false, venda: undefined });
+      setTransferLeadId("");
+      setTransferSearch("");
+      setTransferCpf("");
+      setTransferNascimento("");
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao transferir cota.");
+    }
+  };
+
+  const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
+    if (sellerId) {
+      const authId = getAuthByUserId(sellerId);
+      let q = supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
+
+      if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
+      else q = q.eq("vendedor_id", sellerId);
+
+      const { data: metasRow } = await q.maybeSingle();
+
+      const m = metasRow
+        ? [
+            metasRow.m01,
+            metasRow.m02,
+            metasRow.m03,
+            metasRow.m04,
+            metasRow.m05,
+            metasRow.m06,
+            metasRow.m07,
+            metasRow.m08,
+            metasRow.m09,
+            metasRow.m10,
+            metasRow.m11,
+            metasRow.m12,
+          ].map((x: any) => Number(x || 0))
+        : Array(12).fill(0);
+
+      setMetaMensal(m);
+    } else {
+      const { data: metasAll } = await supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
+
+      const sum = Array(12).fill(0);
+      (metasAll ?? []).forEach((row: any) => {
+        const arr = [
+          row.m01,
+          row.m02,
+          row.m03,
+          row.m04,
+          row.m05,
+          row.m06,
+          row.m07,
+          row.m08,
+          row.m09,
+          row.m10,
+          row.m11,
+          row.m12,
+        ].map((x: any) => Number(x || 0));
+        for (let i = 0; i < 12; i++) sum[i] += arr[i];
+      });
+
+      setMetaMensal(sum);
+    }
+
+    const yearStart = new Date(`${year}-01-01T00:00:00-04:00`).toISOString();
+    const yearEnd = new Date(`${year + 1}-01-01T00:00:00-04:00`).toISOString();
+
+    let vendasQuery = supabase
+      .from("vendas")
+      .select("valor_venda, encarteirada_em, cancelada_em, vendedor_id, codigo, status")
+      .eq("status", "encarteirada")
+      .or(
+        `and(encarteirada_em.gte.${yearStart},encarteirada_em.lt.${yearEnd}),and(cancelada_em.gte.${yearStart},cancelada_em.lt.${yearEnd})`
+      );
+
+    const authIdToFilter = sellerId ? getAuthByUserId(sellerId) : "";
+    if (sellerId) {
+      vendasQuery = authIdToFilter
+        ? vendasQuery.eq("vendedor_id", authIdToFilter)
+        : vendasQuery.eq("vendedor_id", "__none__");
+    }
+
+    const { data: vendasMovimentos } = await vendasQuery;
+    const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
+    const series = portfolioMonthlySeries(vendasMovimentos ?? [], months);
+    setRealizadoMensal(series.map((row: any) => Number(row.liquido || 0)));
+  };
+
+  const loadMetaForForm = async (sellerId: string, year: number): Promise<void> => {
+    if (!sellerId) {
+      setMetaForm((prev) => ({ ...prev, vendedor_id: sellerId, ano: year, m: Array(12).fill(0) }));
+      return;
+    }
+
+    const authId = getAuthByUserId(sellerId);
+    let q = supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
+
+    if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
+    else q = q.eq("vendedor_id", sellerId);
+
+    const { data: metasRow } = await q.maybeSingle();
+
+    const arr = metasRow
+      ? [
+          metasRow.m01,
+          metasRow.m02,
+          metasRow.m03,
+          metasRow.m04,
+          metasRow.m05,
+          metasRow.m06,
+          metasRow.m07,
+          metasRow.m08,
+          metasRow.m09,
+          metasRow.m10,
+          metasRow.m11,
+          metasRow.m12,
+        ].map((x: any) => Number(x || 0))
+      : Array(12).fill(0);
+
+    setMetaForm((prev) => ({ ...prev, vendedor_id: sellerId, ano: year, m: arr }));
+  };
+
+  useEffect(() => {
+    if (!isAdmin && !selectedSeller) return;
+    loadMetrics(selectedSeller, selectedYear);
+  }, [selectedSeller, selectedYear, users, isAdmin]);
+
+  const donutAnualData = useMemo(() => {
+    if (metaAnual <= 0) {
+      if (realizadoAnual > 0) return [{ name: "Realizado", value: realizadoAnual }];
+      return [{ name: "Sem meta", value: 1 }];
+    }
+
+    if (realizadoAnual <= metaAnual) {
+      return [
+        { name: "Realizado", value: Math.max(0, realizadoAnual) },
+        { name: "Restante", value: Math.max(0, metaAnual - realizadoAnual) },
+      ];
+    }
+
+    return [
+      { name: "Meta", value: metaAnual },
+      { name: "Excedente", value: Math.max(0, realizadoAnual - metaAnual) },
+    ];
+  }, [metaAnual, realizadoAnual]);
+
+  const handleOpenMeta = () => {
+    if (!isAdmin) return;
+
+    if (!users || users.length === 0) {
+      alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
+      return;
+    }
+
+    setMetaForm({
+      vendedor_id: selectedSeller || "",
+      ano: selectedYear,
+      m: Array(12).fill(0),
+    });
+
+    if (selectedSeller) loadMetaForForm(selectedSeller, selectedYear);
+
+    setMetaOverlay({ open: true });
+  };
+
+  const saveMeta = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente administradores podem cadastrar metas.");
+      if (!metaForm.vendedor_id) throw new Error("Selecione o vendedor.");
+
+      const authId = getAuthByUserId(metaForm.vendedor_id);
+
+      const payload: any = {
+        vendedor_id: metaForm.vendedor_id,
+        auth_user_id: authId || null,
+        ano: metaForm.ano,
+        m01: metaForm.m[0],
+        m02: metaForm.m[1],
+        m03: metaForm.m[2],
+        m04: metaForm.m[3],
+        m05: metaForm.m[4],
+        m06: metaForm.m[5],
+        m07: metaForm.m[6],
+        m08: metaForm.m[7],
+        m09: metaForm.m[8],
+        m10: metaForm.m[9],
+        m11: metaForm.m[10],
+        m12: metaForm.m[11],
+      };
+
+      let q = supabase.from("metas_vendedores").select("id").eq("ano", metaForm.ano);
+      if (authId) q = q.or(`vendedor_id.eq.${metaForm.vendedor_id},auth_user_id.eq.${authId}`);
+      else q = q.eq("vendedor_id", metaForm.vendedor_id);
+
+      const { data: exists } = await q.maybeSingle();
+
+      if (exists?.id) {
+        const { error } = await supabase.from("metas_vendedores").update(payload).eq("id", exists.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("metas_vendedores").insert(payload);
+        if (error) throw error;
+      }
+
+      setMetaOverlay({ open: false });
+
+      if (selectedSeller === metaForm.vendedor_id && selectedYear === metaForm.ano) {
+        setMetaMensal([...metaForm.m]);
+      }
+    } catch (e: any) {
+      alert(e.message || "Erro ao salvar metas.");
+    }
+  };
+
+  const openViewVenda = (v: Venda, lead?: Lead) => setViewVendaModal({ open: true, venda: v, lead });
+
+  const openCotaEditor = (v: Venda) => {
+    setCotaEditor({ open: true, venda: v, mode: "pick" });
+
+    setCeGrupo(v.grupo ?? "");
+    setCeCota(v.cota ?? "");
+    setCeCodigo(v.codigo ?? "");
+
+    setCeCancelDate(portfolioDay(v.cancelada_em) || "");
+    setCeReativDate(portfolioDay(v.reativada_em) || "");
+
+    setCeContFlag(!!v.contemplada);
+    setCeContDate(v.data_contemplacao ?? "");
+    setCeContTipo(v.contemplacao_tipo ?? "");
+    setCeContPctRaw(v.contemplacao_pct != null ? formatPct4(v.contemplacao_pct) : "");
+
+    setCeInadFlag(!!v.inad);
+    setCeInadEm(v.inad_em ?? "");
+    setCeInadRev(v.inad_revertida_em ?? "");
+  };
+
+  const closeCotaEditor = () => setCotaEditor({ open: false, venda: undefined, mode: "pick" });
+
+  const saveCotaCodigo = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente admin pode editar.");
+      const v = cotaEditor.venda;
+      if (!v) return;
+
+      const prevAtiva = isAtiva(v.codigo);
+      const nextAtiva = isAtiva(ceCodigo);
+
+      if (!ceGrupo.trim() || !ceCota.trim() || !ceCodigo.trim()) throw new Error("Preencha Grupo, Cota e Código.");
+
+      if (prevAtiva && !nextAtiva) {
+        if (!ceCancelDate) throw new Error("Informe a data do cancelamento.");
+      }
+
+      if (!prevAtiva && nextAtiva) {
+        if (!ceReativDate) throw new Error("Informe a data da reativação.");
+      }
+
+      const patch: any = { grupo: ceGrupo, cota: ceCota, codigo: ceCodigo };
+
+      if (prevAtiva && !nextAtiva) {
+        const canceladaEm = isoFromDateInput(ceCancelDate);
+        if (!canceladaEm) throw new Error("Data de cancelamento inválida.");
+        patch.cancelada_em = canceladaEm;
+      }
+      if (!prevAtiva && nextAtiva) {
+        const reativadaEm = isoFromDateInput(ceReativDate);
+        if (!reativadaEm) throw new Error("Data de reativação inválida.");
+        patch.reativada_em = reativadaEm;
+        patch.cancelada_em = null;
+      }
+
+      await updateVenda(v.id, patch);
+      await reloadEncarteiradas();
+      await loadMetrics(selectedSeller, selectedYear);
+
+      closeCotaEditor();
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar alterações de cota.");
+    }
+  };
+
+  const saveContemplacao = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente admin pode editar.");
+      const v = cotaEditor.venda;
+      if (!v) return;
+
+      const patch: any = {};
+
+      if (!ceContFlag) {
+        patch.contemplada = false;
+        patch.data_contemplacao = null;
+        patch.contemplacao_tipo = null;
+        patch.contemplacao_pct = null;
+      } else {
+        if (!ceContDate) throw new Error("Informe a data da contemplação.");
+        if (!ceContTipo) throw new Error("Selecione o tipo de contemplação.");
+
+        patch.contemplada = true;
+        patch.data_contemplacao = ceContDate;
+        patch.contemplacao_tipo = ceContTipo;
+
+        if (ceContTipo === "Sorteio") {
+          patch.contemplacao_pct = null;
+        } else {
+          const pct = parsePct4(ceContPctRaw);
+          if (pct == null) throw new Error("Informe o % do lance (ex.: 41,2542%).");
+          patch.contemplacao_pct = Number(pct.toFixed(4));
+        }
+      }
+
+      await updateVenda(v.id, patch);
+      await reloadEncarteiradas();
+      closeCotaEditor();
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar contemplação.");
+    }
+  };
+
+  const saveInad = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente admin pode editar.");
+      const v = cotaEditor.venda;
+      if (!v) return;
+
+      const patch: any = {};
+
+      if (ceInadFlag) {
+        if (!ceInadEm) throw new Error("Informe a data que inadimpliu.");
+        patch.inad = true;
+        patch.inad_em = ceInadEm;
+        patch.inad_revertida_em = null;
+      } else {
+        if (!ceInadRev) throw new Error("Informe a data da reversão da inadimplência.");
+        patch.inad = false;
+        patch.inad_revertida_em = ceInadRev;
+      }
+
+      await updateVenda(v.id, patch);
+      await reloadEncarteiradas();
+      closeCotaEditor();
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar inadimplência.");
+    }
+  };
+
+  const goTransferFromEditor = () => {
+    const v = cotaEditor.venda;
+    if (!v) return;
+    closeCotaEditor();
+    openTransfer(v);
+  };
+
+  if (loading) return <div className="p-6 text-sm text-gray-600">Carregando carteira…</div>;
+  if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
+
+  const tabelaOptionsForForm = tabelaOptions;
+  const adminOptionsNames = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
+  const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
+
+  return (
+    <div className="p-4 sm:p-6 space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Carteira</h1>
+          <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
+            + Nova Venda
+          </button>
+
+          {isAdmin && (
+            <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
+              Cadastrar Meta
+            </button>
+          )}
+        </div>
+      </div>
+
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <h2 className="text-lg font-medium">Metas</h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
+            <select className="w-full border rounded-xl px-3 py-2" value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
+              {Array.from({ length: 6 }).map((_, i) => {
+                const y = new Date().getFullYear() - 1 + i;
+                return (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                );
+              })}
+            </select>
+
+            {isAdmin && (
+              <select className="w-full border rounded-xl px-3 py-2" value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)}>
+                <option value="">Todos</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nome || u.email || u.id}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+          <div className="xl:col-span-2 rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.7fr_120px] gap-5 items-center">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-gray-900">Meta Anual</div>
+
+                <div className="mt-3 text-sm text-gray-700 space-y-1">
+                  <div>
+                    Meta: <strong>{currency(metaAnual)}</strong>
+                  </div>
+                  <div>
+                    Realizado: <strong>{currency(realizadoAnual)}</strong>
+                  </div>
+                  <div>
+                    {metaAnual > 0 && realizadoAnual > metaAnual ? "Excedente" : "Falta"}:{" "}
+                    <strong>{metaAnual > 0 ? currency(Math.abs(metaAnual - realizadoAnual)) : "—"}</strong>
+                  </div>
+                </div>
+
+                <div className="mt-3 inline-flex items-center rounded-full bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
+                  {pctAnual == null ? "Sem percentual" : `Atingiu ${formatPctHuman(pctAnual, 1)}`}
+                </div>
+              </div>
+
+              <div className="min-w-0 flex flex-col justify-center">
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-2 max-w-[420px] mx-auto w-full">
+                  <span>
+                    Atingido: <strong className="text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}</strong>
+                  </span>
+                  <span>
+                    Esperado: <strong className="text-gray-900">{formatPctHuman(expectedAnnualPct, 1)}</strong>
+                  </span>
+                </div>
+
+                <div className="relative h-5 rounded-full bg-gray-100 border overflow-hidden max-w-[420px] mx-auto w-full">
+                  <div
+                    className={`absolute left-0 top-0 h-full rounded-full ${paceStatus.barClass}`}
+                    style={{ width: `${annualFillPct}%` }}
+                    title={`Atingido: ${pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}`}
+                  />
+
+                  <div
+                    className="absolute top-[-4px] h-7 w-[3px] rounded-full bg-[#1E293F]"
+                    style={{ left: `calc(${annualExpectedMarkerPct}% - 1.5px)` }}
+                    title={`Esperado: ${formatPctHuman(expectedAnnualPct, 1)}`}
+                  />
+
+                  <div
+                    className="absolute top-[3px] h-3 w-3 rounded-full bg-white border-2 border-[#1E293F]"
+                    style={{ left: `calc(${annualExpectedMarkerPct}% - 6px)` }}
+                  />
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-600 max-w-[420px] mx-auto w-full">
+                  <div className="rounded-xl bg-gray-50 px-3 py-2">
+                    Esperado até hoje
+                    <div className="text-sm font-semibold text-gray-900">{currency(expectedAnnualValue)}</div>
+                  </div>
+
+                  <div className="rounded-xl bg-gray-50 px-3 py-2">
+                    Ritmo do jogo
+                    <div className={`text-sm font-semibold ${paceStatus.textClass}`}>
+                      {annualPaceGapValue >= 0 ? "+" : "-"}
+                      {currency(Math.abs(annualPaceGapValue))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`mt-3 rounded-2xl border px-3 py-2 max-w-[420px] mx-auto w-full ${paceStatus.pillClass}`}>
+                  <div className="text-sm font-bold">{paceStatus.label}</div>
+                  <div className="text-xs mt-0.5">{paceStatus.description}</div>
+                </div>
+              </div>
+
+              <div className="h-28 w-28 relative mx-auto shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={donutAnualData} innerRadius={40} outerRadius={54} dataKey="value" stroke="none">
+                      {donutAnualData.map((d, i) => {
+                        if (metaAnual <= 0) return <Cell key={`anual-${i}`} fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"} />;
+                        if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`anual-${i}`} fill="#1E293F" />;
+                        if (d.name === "Restante") return <Cell key={`anual-${i}`} fill="#A11C27" />;
+                        return <Cell key={`anual-${i}`} fill="#B5A573" />;
+                      })}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+
+                <div className="absolute inset-0 grid place-items-center pointer-events-none">
+                  <div className="text-sm font-bold text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 0)}</div>
                 </div>
               </div>
             </div>

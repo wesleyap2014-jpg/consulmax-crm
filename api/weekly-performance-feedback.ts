@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { supabaseAdmin } from "./_supabase";
-import { sendTransactionalEmail, smtpErrorMessage } from "./_email-smtp";
+import { sendTransactionalEmail, smtpErrorMessage } from "./_email-smtp.js";
 
 const CRM_TZ = process.env.CRM_TIMEZONE || "America/Porto_Velho";
 const CRM_PROFILE_URL = "https://crm.consulmaxconsorcios.com.br/perfil";

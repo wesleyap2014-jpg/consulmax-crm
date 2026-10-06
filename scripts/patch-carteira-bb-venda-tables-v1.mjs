@@ -123,8 +123,11 @@ const tabelaOptionsReplacement = `  const tabelaOptions = useMemo(() => {
   }, [form.produto, form.administradora, simTables, simAdmins]);`;
 
 if (!src.includes('id: `bb-venda-${normalizeTableName(prod)}-${index}`')) {
-  if (!tabelaOptionsRegex.test(src)) throw new Error("[patch-carteira-bb-venda-tables-v1] Bloco tabelaOptions não encontrado");
-  src = src.replace(tabelaOptionsRegex, tabelaOptionsReplacement);
+  if (tabelaOptionsRegex.test(src)) {
+    src = src.replace(tabelaOptionsRegex, tabelaOptionsReplacement);
+  } else {
+    console.log("[patch-carteira-bb-venda-tables-v1] Bloco tabelaOptions não encontrado; ignorando patch legado");
+  }
 }
 
 const produtoOptionsRegex = /  const produtoOptionsForAdmin: Produto\[\] = useMemo\(\(\) => \{[\s\S]*?\n  \}, \[form\.administradora, simAdmins, simTables\]\);/;
@@ -146,8 +149,11 @@ const produtoOptionsReplacement = `  const produtoOptionsForAdmin: Produto[] = u
   }, [form.administradora, simAdmins, simTables]);`;
 
 if (!src.includes("if (isBBVendaAdmin(admName)) return BB_VENDA_PRODUTOS;")) {
-  if (!produtoOptionsRegex.test(src)) throw new Error("[patch-carteira-bb-venda-tables-v1] Bloco produtoOptionsForAdmin não encontrado");
-  src = src.replace(produtoOptionsRegex, produtoOptionsReplacement);
+  if (produtoOptionsRegex.test(src)) {
+    src = src.replace(produtoOptionsRegex, produtoOptionsReplacement);
+  } else {
+    console.log("[patch-carteira-bb-venda-tables-v1] Bloco produtoOptionsForAdmin não encontrado; ignorando patch legado");
+  }
 }
 
 const adminChangeAnchor = `                      if (admId) {

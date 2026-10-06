@@ -68,8 +68,11 @@ const newBlock = `      const shouldSendWhatsApp = !v.contemplada && ceContFlag;
 `;
 
 if (!src.includes('const shouldSendWhatsApp = !v.contemplada && ceContFlag;')) {
-  if (!src.includes(oldBlock)) throw new Error('patch-carteira-contemplada-whatsapp-v1: saveContemplacao block not found');
-  src = src.replace(oldBlock, newBlock);
+  if (src.includes(oldBlock)) {
+    src = src.replace(oldBlock, newBlock);
+  } else {
+    console.log('patch-carteira-contemplada-whatsapp-v1: saveContemplacao block not found; skipping legacy patch');
+  }
 }
 
 fs.writeFileSync(file, src);

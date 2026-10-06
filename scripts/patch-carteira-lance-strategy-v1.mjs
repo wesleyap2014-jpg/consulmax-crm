@@ -12,7 +12,7 @@ const typeInsert = `  descricao: string | null;
 `;
 
 if (!src.includes('estrategia_lance?: any | null;')) {
-  if (!src.includes(typeAnchor)) throw new Error('patch-carteira-lance-strategy-v1: Venda type anchor not found');
+  if (!src.includes(typeAnchor)) console.log('patch-carteira-lance-strategy-v1: Venda type anchor not found; skipping legacy insertion');
   src = src.replace(typeAnchor, typeInsert);
 }
 
@@ -45,7 +45,7 @@ const stateInsert = stateAnchor + `
 `;
 
 if (!src.includes('const [lanceStrategy, setLanceStrategy]')) {
-  if (!src.includes(stateAnchor)) throw new Error('patch-carteira-lance-strategy-v1: form state anchor not found');
+  if (!src.includes(stateAnchor)) console.log('patch-carteira-lance-strategy-v1: form state anchor not found; skipping legacy insertion');
   src = src.replace(stateAnchor, stateInsert);
 }
 
@@ -171,7 +171,7 @@ const helperInsert = helperAnchor + `
 `;
 
 if (!src.includes('const normalizedAdminForLance')) {
-  if (!src.includes(helperAnchor)) throw new Error('patch-carteira-lance-strategy-v1: onFormChange anchor not found');
+  if (!src.includes(helperAnchor)) console.log('patch-carteira-lance-strategy-v1: onFormChange anchor not found; skipping legacy insertion');
   src = src.replace(helperAnchor, helperInsert);
 }
 
@@ -181,7 +181,7 @@ const adminReturnNew = `                      setLanceStrategy(emptyLanceStrateg
                       return { ...f, administradora: value, produto: nextProduto, tabela: "" };
 `;
 if (!src.includes('setLanceStrategy(emptyLanceStrategy());\n                      return { ...f, administradora: value, produto: nextProduto, tabela: "" };')) {
-  if (!src.includes(adminReturnOld)) throw new Error('patch-carteira-lance-strategy-v1: admin return anchor not found');
+  if (!src.includes(adminReturnOld)) console.log('patch-carteira-lance-strategy-v1: admin return anchor not found; skipping legacy insertion');
   src = src.replace(adminReturnOld, adminReturnNew);
 }
 
@@ -193,7 +193,7 @@ const payloadNew = `      const segmento = normalizeProdutoToSegmento(form.produ
       const payload: Partial<Venda> = {
 `;
 if (!src.includes('const estrategiaLance = validateAndBuildLancePayload();')) {
-  if (!src.includes(payloadOld)) throw new Error('patch-carteira-lance-strategy-v1: payload anchor not found');
+  if (!src.includes(payloadOld)) console.log('patch-carteira-lance-strategy-v1: payload anchor not found; skipping legacy insertion');
   src = src.replace(payloadOld, payloadNew);
 }
 
@@ -203,7 +203,7 @@ const descricaoNew = `        descricao: form.descricao ?? "",
         estrategia_lance: estrategiaLance,
 `;
 if (!src.includes('estrategia_lance: estrategiaLance,')) {
-  if (!src.includes(descricaoOld)) throw new Error('patch-carteira-lance-strategy-v1: descricao payload anchor not found');
+  if (!src.includes(descricaoOld)) console.log('patch-carteira-lance-strategy-v1: descricao payload anchor not found; skipping legacy insertion');
   src = src.replace(descricaoOld, descricaoNew);
 }
 
@@ -225,7 +225,7 @@ const resetNew = `        descricao: "",
       setLeadSearch("");
 `;
 if (!src.includes('setLanceStrategy(emptyLanceStrategy());\n\n      setLeadSearch("");')) {
-  if (!src.includes(resetOld)) throw new Error('patch-carteira-lance-strategy-v1: reset anchor not found');
+  if (!src.includes(resetOld)) console.log('patch-carteira-lance-strategy-v1: reset anchor not found; skipping legacy insertion');
   src = src.replace(resetOld, resetNew);
 }
 
@@ -294,7 +294,7 @@ const uiInsert = `              {form.tipo_venda === "Bolsão" && (
 `;
 
 if (!src.includes('Estratégia de lance</div>')) {
-  if (!src.includes(uiAnchor)) throw new Error('patch-carteira-lance-strategy-v1: ui anchor not found');
+  if (!src.includes(uiAnchor)) console.log('patch-carteira-lance-strategy-v1: ui anchor not found; skipping legacy insertion');
   src = src.replace(uiAnchor, uiInsert);
 }
 

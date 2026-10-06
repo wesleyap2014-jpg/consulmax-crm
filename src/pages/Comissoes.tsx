@@ -399,6 +399,34 @@ const normalize = (s?: string | null) =>
     .trim()
     .toLowerCase();
 
+const BB_COMMISSION_TABLES: Array<{ segmento: string; nome_tabela: string }> = [
+  { segmento: "Automóvel", nome_tabela: "Auto Fipe" },
+  { segmento: "Automóvel", nome_tabela: "Auto IPCA" },
+  { segmento: "Imóvel", nome_tabela: "Mais BBC Imóveis 240" },
+  { segmento: "Imóvel", nome_tabela: "Mais BBC Todos Segmentos" },
+  { segmento: "Serviço", nome_tabela: "Outros Bens Móveis" },
+  { segmento: "Motocicleta", nome_tabela: "Motocicleta" },
+  { segmento: "Pesados", nome_tabela: "Trator e Caminhão Geral" },
+];
+
+const isBBCommissionAdmin = (name?: string | null) => {
+  const key = normalize(name).replace(/[^a-z0-9]+/g, " ").trim();
+  return key === "bb consorcios" || key.includes("banco do brasil") || key.includes("bb consorcio");
+};
+
+const bbCommissionTableId = (segmento: string, nomeTabela: string) =>
+  `bb-commission-${normalize(segmento).replace(/[^a-z0-9]+/g, "-")}-${normalize(nomeTabela).replace(/[^a-z0-9]+/g, "-")}`;
+
+const buildBBCommissionTables = (adminId: string): SimTable[] =>
+  BB_COMMISSION_TABLES.map((item) => ({
+    id: bbCommissionTableId(item.segmento, item.nome_tabela),
+    admin_id: adminId,
+    segmento: item.segmento,
+    nome_tabela: item.nome_tabela,
+  }));
+
+const isSyntheticBBCommissionTable = (table?: SimTable | null) => !!table?.id?.startsWith("bb-commission-");
+
 function parseBRL(s: string) {
   return parseFloat((s || "").replace(/\./g, "").replace(",", ".")) || 0;
 }
@@ -1338,11 +1366,20 @@ export default function ComissoesPage() {
   }, [authUserId]);
 
   const adminOptions = useMemo(() => {
-    const ids = Array.from(new Set(simTables.map((t) => t.admin_id).filter(Boolean))) as string[];
-    return ids
-      .map((id) => ({ id, name: adminById[id] || "Sem administradora" }))
+    const options = new Map<string, string>();
+    simAdmins.forEach((a) => options.set(a.id, a.name));
+    simTables.forEach((t) => {
+      if (t.admin_id && !options.has(t.admin_id)) options.set(t.admin_id, adminById[t.admin_id] || "Sem administradora");
+    });
+    return Array.from(options.entries())
+      .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [simTables, adminById]);
+  }, [simAdmins, simTables, adminById]);
+
+  const bbAdminId = useMemo(
+    () => simAdmins.find((a) => isBBCommissionAdmin(a.name))?.id || null,
+    [simAdmins]
+  );
 
   const mainAdminOptions = useMemo(() => {
     return Array.from(
@@ -1383,21 +1420,39 @@ export default function ComissoesPage() {
   const tableRuleAdminOptions = useMemo(() => adminOptions, [adminOptions]);
 
   const tableRuleSegmentOptions = useMemo(() => {
-    let base = simTables;
-    if (tableRuleAdminFilter !== "all") base = base.filter((t) => t.admin_id === tableRuleAdminFilter);
-    return Array.from(new Set(base.map((t) => t.segmento).filter(Boolean))).sort() as string[];
-  }, [simTables, tableRuleAdminFilter]);
+    const segments = new Set<string>();
+    simTables
+      .filter((t) => tableRuleAdminFilter === "all" || t.admin_id === tableRuleAdminFilter)
+      .forEach((t) => t.segmento && segments.add(t.segmento));
+
+    if (bbAdminId && (tableRuleAdminFilter === "all" || tableRuleAdminFilter === bbAdminId)) {
+      BB_COMMISSION_TABLES.forEach((t) => segments.add(t.segmento));
+    }
+
+    return Array.from(segments).sort();
+  }, [simTables, tableRuleAdminFilter, bbAdminId]);
 
   const tableRuleTableOptions = useMemo(() => {
-    return simTables
+    const options: SimTable[] = simTables
       .filter((t) => tableRuleAdminFilter === "all" || t.admin_id === tableRuleAdminFilter)
-      .filter((t) => tableRuleSegmentFilter === "all" || t.segmento === tableRuleSegmentFilter)
-      .sort((a, b) => {
-        const an = adminById[a.admin_id || ""] || "";
-        const bn = adminById[b.admin_id || ""] || "";
-        return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
-      });
-  }, [simTables, tableRuleAdminFilter, tableRuleSegmentFilter, adminById]);
+      .filter((t) => tableRuleSegmentFilter === "all" || t.segmento === tableRuleSegmentFilter);
+
+    if (bbAdminId && (tableRuleAdminFilter === "all" || tableRuleAdminFilter === bbAdminId)) {
+      const existingKeys = new Set(options.map((t) => `${t.admin_id || ""}|${normalize(t.segmento)}|${normalize(t.nome_tabela)}`));
+      buildBBCommissionTables(bbAdminId)
+        .filter((t) => tableRuleSegmentFilter === "all" || t.segmento === tableRuleSegmentFilter)
+        .forEach((t) => {
+          const key = `${t.admin_id || ""}|${normalize(t.segmento)}|${normalize(t.nome_tabela)}`;
+          if (!existingKeys.has(key)) options.push(t);
+        });
+    }
+
+    return options.sort((a, b) => {
+      const an = adminById[a.admin_id || ""] || "";
+      const bn = adminById[b.admin_id || ""] || "";
+      return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
+    });
+  }, [simTables, tableRuleAdminFilter, tableRuleSegmentFilter, adminById, bbAdminId]);
 
   const paginatedTableRules = useMemo(() => {
     const totalPages = Math.max(1, Math.ceil(tableRules.length / 10));
@@ -1411,24 +1466,51 @@ export default function ComissoesPage() {
   }, [tableRules.length, tableRuleAdminFilter, tableRuleSegmentFilter]);
 
   const partSegmentOptions = useMemo(() => {
-    let base = simTables;
-    if (partAdminFilter !== "all") base = base.filter((t) => t.admin_id === partAdminFilter);
-    return Array.from(new Set(base.map((t) => t.segmento).filter(Boolean))).sort() as string[];
-  }, [simTables, partAdminFilter]);
+    const segments = new Set<string>();
+    simTables
+      .filter((t) => partAdminFilter === "all" || t.admin_id === partAdminFilter)
+      .forEach((t) => t.segmento && segments.add(t.segmento));
+
+    if (bbAdminId && (partAdminFilter === "all" || partAdminFilter === bbAdminId)) {
+      BB_COMMISSION_TABLES.forEach((t) => segments.add(t.segmento));
+    }
+
+    return Array.from(segments).sort();
+  }, [simTables, partAdminFilter, bbAdminId]);
 
   const partTableOptions = useMemo(() => {
-    return simTables
+    const options: SimTable[] = simTables
       .filter((t) => partAdminFilter === "all" || t.admin_id === partAdminFilter)
-      .filter((t) => partSegmentFilter === "all" || t.segmento === partSegmentFilter)
-      .filter((t) => tableRules.some((r) => r.sim_table_id === t.id || normalize(r.nome_tabela) === normalize(t.nome_tabela)))
+      .filter((t) => partSegmentFilter === "all" || t.segmento === partSegmentFilter);
+
+    if (bbAdminId && (partAdminFilter === "all" || partAdminFilter === bbAdminId)) {
+      const existingKeys = new Set(options.map((t) => `${t.admin_id || ""}|${normalize(t.segmento)}|${normalize(t.nome_tabela)}`));
+      buildBBCommissionTables(bbAdminId)
+        .filter((t) => partSegmentFilter === "all" || t.segmento === partSegmentFilter)
+        .forEach((t) => {
+          const key = `${t.admin_id || ""}|${normalize(t.segmento)}|${normalize(t.nome_tabela)}`;
+          if (!existingKeys.has(key)) options.push(t);
+        });
+    }
+
+    return options
+      .filter((t) =>
+        tableRules.some(
+          (r) =>
+            r.is_active !== false &&
+            (r.sim_table_id === t.id ||
+              (normalize(r.nome_tabela) === normalize(t.nome_tabela) &&
+                (!r.administradora || normalize(r.administradora) === normalize(adminById[t.admin_id || ""]))))
+        )
+      )
       .sort((a, b) => {
         const an = adminById[a.admin_id || ""] || "";
         const bn = adminById[b.admin_id || ""] || "";
         return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
       });
-  }, [simTables, partAdminFilter, partSegmentFilter, adminById, tableRules]);
+  }, [simTables, partAdminFilter, partSegmentFilter, adminById, tableRules, bbAdminId]);
 
-  const selectedPartTable = useMemo(() => simTables.find((t) => t.id === partRuleTableId) || null, [simTables, partRuleTableId]);
+  const selectedPartTable = useMemo(() => partTableOptions.find((t) => t.id === partRuleTableId) || null, [partTableOptions, partRuleTableId]);
   const selectedPartTableRule = useMemo(() => {
     if (!selectedPartTable) return null;
     return (
@@ -1502,7 +1584,14 @@ export default function ComissoesPage() {
 
         if (partAdminFilter !== "all" && table?.admin_id !== partAdminFilter && normalize(rule.administradora) !== normalize(adminName)) return null;
         if (partSegmentFilter !== "all" && table?.segmento !== partSegmentFilter && rule.segmento !== partSegmentFilter) return null;
-        if (partRuleTableId && partRuleTableId !== "all" && partRuleTableId !== table?.id && partRuleTableId !== rule.sim_table_id) return null;
+        if (partRuleTableId && partRuleTableId !== "all") {
+          const selectedFilterTable = partTableOptions.find((t) => t.id === partRuleTableId);
+          const sameSelectedTable =
+            partRuleTableId === table?.id ||
+            partRuleTableId === rule.sim_table_id ||
+            (!!selectedFilterTable && normalize(selectedFilterTable.nome_tabela) === normalize(rule.nome_tabela));
+          if (!sameSelectedTable) return null;
+        }
         if (partRuleUnitId && partRuleUnitId !== "all" && unitId !== partRuleUnitId) return null;
         if (partVendorId && partVendorId !== "all" && vendorId !== partVendorId) return null;
 
@@ -1539,18 +1628,24 @@ export default function ComissoesPage() {
         commissionPct: number;
         fluxo: number[];
       }>;
-  }, [splitRules, tableRules, simTables, unitById, usersById, adminById, partAdminFilter, partSegmentFilter, partRuleTableId, partRuleUnitId, partVendorId]);
+  }, [splitRules, tableRules, simTables, unitById, usersById, adminById, partAdminFilter, partSegmentFilter, partRuleTableId, partRuleUnitId, partVendorId, partTableOptions]);
 
   const selectedTableRuleForForm = useMemo(() => {
     if (!tableRuleTableId) return null;
-    const table = simTables.find((t) => t.id === tableRuleTableId);
+    const table = tableRuleTableOptions.find((t) => t.id === tableRuleTableId);
     if (!table) return null;
+    const adminName = table.admin_id ? adminById[table.admin_id] || null : null;
     return (
       tableRules.find((r) => r.sim_table_id === table.id && r.is_active !== false) ||
-      tableRules.find((r) => normalize(r.nome_tabela) === normalize(table.nome_tabela) && r.is_active !== false) ||
+      tableRules.find(
+        (r) =>
+          r.is_active !== false &&
+          normalize(r.nome_tabela) === normalize(table.nome_tabela) &&
+          (!adminName || !r.administradora || normalize(r.administradora) === normalize(adminName))
+      ) ||
       null
     );
-  }, [tableRuleTableId, simTables, tableRules]);
+  }, [tableRuleTableId, tableRuleTableOptions, tableRules, adminById]);
 
   useEffect(() => {
     if (!selectedTableRuleForForm) return;
@@ -2764,7 +2859,7 @@ export default function ComissoesPage() {
     if (!canEdit) return alert("Somente admin pode configurar regras de comissão.");
     if (!tableRuleTableId) return alert("Selecione a tabela.");
 
-    const table = simTables.find((t) => t.id === tableRuleTableId);
+    const table = tableRuleTableOptions.find((t) => t.id === tableRuleTableId);
     if (!table) return alert("Tabela não encontrada.");
 
     const percentTotal = parsePctHumanToNumber(tableRuleTotalPct) / 100;
@@ -2784,8 +2879,9 @@ export default function ComissoesPage() {
 
     const fluxoPercentuais = fluxoRaw.map((x) => x / percentTotal);
     const adminName = table.admin_id ? adminById[table.admin_id] || null : null;
+    const syntheticBB = isSyntheticBBCommissionTable(table);
     const payload = {
-      sim_table_id: table.id,
+      sim_table_id: syntheticBB ? null : table.id,
       administradora: adminName,
       segmento: table.segmento,
       nome_tabela: table.nome_tabela,
@@ -2796,7 +2892,14 @@ export default function ComissoesPage() {
       created_by: authUserId,
     } as any;
 
-    const existing = tableRules.find((r) => r.sim_table_id === table.id && r.is_active !== false);
+    const existing = tableRules.find(
+      (r) =>
+        r.is_active !== false &&
+        ((!syntheticBB && r.sim_table_id === table.id) ||
+          (normalize(r.nome_tabela) === normalize(table.nome_tabela) &&
+            normalize(r.segmento) === normalize(table.segmento) &&
+            (!adminName || normalize(r.administradora) === normalize(adminName))))
+    );
     const { error } = existing
       ? await supabase.from("commission_table_rules").update(payload).eq("id", existing.id)
       : await supabase.from("commission_table_rules").insert(payload);
@@ -2813,12 +2916,18 @@ export default function ComissoesPage() {
     if (!partRuleUnitId) return alert("Selecione a unidade.");
     if (!partVendorId) return alert("Selecione o vendedor de referência da unidade.");
 
-    const table = simTables.find((t) => t.id === partRuleTableId);
+    const table = partTableOptions.find((t) => t.id === partRuleTableId);
     if (!table) return alert("Tabela não encontrada.");
 
+    const adminName = table.admin_id ? adminById[table.admin_id] || null : null;
     const rule =
       tableRules.find((r) => r.sim_table_id === table.id && r.is_active !== false) ||
-      tableRules.find((r) => normalize(r.nome_tabela) === normalize(table.nome_tabela) && r.is_active !== false);
+      tableRules.find(
+        (r) =>
+          r.is_active !== false &&
+          normalize(r.nome_tabela) === normalize(table.nome_tabela) &&
+          (!adminName || !r.administradora || normalize(r.administradora) === normalize(adminName))
+      );
 
     if (!rule) return alert("Cadastre primeiro a regra de comissão dessa tabela em Regras de Comissão.");
 
@@ -3797,6 +3906,13 @@ export default function ComissoesPage() {
         if (gerouParticionado) {
           await fetchData();
           alert("Comissão particionada gerada com sucesso.");
+          return;
+        }
+
+        if (isBBCommissionAdmin(venda.administradora)) {
+          alert(
+            `Não foi possível gerar a comissão. A tabela ${venda.tabela || "informada"} — BB Consórcios ainda não possui regra de comissão configurada.`
+          );
           return;
         }
       } catch (partErr: any) {

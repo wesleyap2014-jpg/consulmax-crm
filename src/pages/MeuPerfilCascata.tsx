@@ -5,6 +5,7 @@ import MeuPerfil from "./MeuPerfil";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import WeeklyPerformanceFeedback from "@/components/profile/WeeklyPerformanceFeedback";
 import {
   Activity,
   AlertTriangle,
@@ -674,6 +675,8 @@ function PerfilPreposto({ profileId }: { profileId: string }) {
           </CardContent>
         </Card>
       </div>
+
+      <WeeklyPerformanceFeedback authUserId={profile.auth_user_id} />
 
       <Card className="overflow-hidden border-[#A11C27]/20 bg-white/95">
         <CardHeader className="pb-2"><SectionTitle icon={Sparkles}>IA / Max</SectionTitle></CardHeader>

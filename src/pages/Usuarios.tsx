@@ -484,9 +484,21 @@ export default function Usuarios() {
         is_active: true,
       };
 
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        alert("Sua sessão expirou. Entre novamente no CRM para cadastrar o usuário.");
+        return;
+      }
+
       const res = await fetch("/api/users/create", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + accessToken,
+        },
         body: JSON.stringify(payload),
       });
 
@@ -512,12 +524,25 @@ export default function Usuarios() {
       }
 
       const senha = data?.password || data?.temp_password || data?.tempPass || data?.temp || null;
+      const emailEnviado = data?.email_sent === true;
+      const emailFalha = typeof data?.email_error === "string" ? data.email_error : "";
 
-      alert(
-        senha
-          ? `Usuário criado!\n\nSenha provisória: ${senha}\n\nPeça para trocar no primeiro acesso.`
-          : "Usuário criado com sucesso!"
-      );
+      const mensagem: string[] = ["Usuário criado com sucesso!"];
+      if (senha) mensagem.push("", "Senha provisória: " + senha);
+
+      if (emailEnviado) {
+        mensagem.push("", "E-mail de boas-vindas enviado para " + email + ".");
+      } else {
+        mensagem.push(
+          "",
+          "O usuário foi criado, mas o e-mail de boas-vindas não foi enviado." +
+            (emailFalha ? "\nMotivo: " + emailFalha : ""),
+          "Você ainda pode repassar a senha provisória manualmente."
+        );
+      }
+
+      if (senha) mensagem.push("", "A senha deverá ser trocada no primeiro acesso.");
+      alert(mensagem.join("\n"));
 
       setOpenCreate(false);
       setForm(emptyForm());

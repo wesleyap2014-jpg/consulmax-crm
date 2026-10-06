@@ -776,8 +776,7 @@ async function alreadySent(userId: string, periodStart: string, periodEnd: strin
 function authorized(req: VercelRequest) {
   const authorization = String(req.headers.authorization || "");
   const cronSecret = String(process.env.CRON_SECRET || "");
-  if (cronSecret && authorization === `Bearer ${cronSecret}`) return true;
-  return String(req.headers["user-agent"] || "").startsWith("vercel-cron/1.0");
+  return Boolean(cronSecret) && authorization === `Bearer ${cronSecret}`;
 }
 
 async function isAdminRequest(req: VercelRequest) {

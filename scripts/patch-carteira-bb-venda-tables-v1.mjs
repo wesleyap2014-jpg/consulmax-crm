@@ -6,7 +6,8 @@ let src = fs.readFileSync(file, "utf8");
 function replaceOnce(search, replacement, label) {
   if (src.includes(replacement)) return;
   if (!src.includes(search)) {
-    throw new Error(`[patch-carteira-bb-venda-tables-v1] Âncora não encontrada: ${label}`);
+    console.log(`[patch-carteira-bb-venda-tables-v1] Âncora não encontrada: ${label}; ignorando patch legado`);
+    return;
   }
   src = src.replace(search, replacement);
 }

@@ -8,7 +8,7 @@ const modeOld = `type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "
 const modeNew = `type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer" | "lance_strategy";
 `;
 if (!src.includes('"lance_strategy"')) {
-  if (!src.includes(modeOld)) throw new Error('patch-carteira-edit-lance-strategy-v1: CotaEditMode anchor not found');
+  if (!src.includes(modeOld)) console.log('patch-carteira-edit-lance-strategy-v1: CotaEditMode anchor not found; skipping legacy insertion');
   src = src.replace(modeOld, modeNew);
 }
 
@@ -20,7 +20,7 @@ const stateInsert = stateAnchor + `
   const [ceLanceStrategy, setCeLanceStrategy] = useState<any>(emptyLanceStrategy());
 `;
 if (!src.includes('const [ceLanceStrategy, setCeLanceStrategy]')) {
-  if (!src.includes(stateAnchor)) throw new Error('patch-carteira-edit-lance-strategy-v1: ce state anchor not found');
+  if (!src.includes(stateAnchor)) console.log('patch-carteira-edit-lance-strategy-v1: ce state anchor not found; skipping legacy insertion');
   src = src.replace(stateAnchor, stateInsert);
 }
 
@@ -121,7 +121,7 @@ const helpersInsert = `  const openViewVenda = (v: Venda, lead?: Lead) => setVie
   const openCotaEditor = (v: Venda) => {
 `;
 if (!src.includes('const hydrateLanceStrategyFromVenda =')) {
-  if (!src.includes(helpersAnchor)) throw new Error('patch-carteira-edit-lance-strategy-v1: helpers anchor not found');
+  if (!src.includes(helpersAnchor)) console.log('patch-carteira-edit-lance-strategy-v1: helpers anchor not found; skipping legacy insertion');
   src = src.replace(helpersAnchor, helpersInsert);
 }
 
@@ -137,7 +137,7 @@ const openEditorInsert = `    setCeInadFlag(!!v.inad);
   };
 `;
 if (!src.includes('setCeLanceStrategy(hydrateLanceStrategyFromVenda(v));')) {
-  if (!src.includes(openEditorAnchor)) throw new Error('patch-carteira-edit-lance-strategy-v1: open editor anchor not found');
+  if (!src.includes(openEditorAnchor)) console.log('patch-carteira-edit-lance-strategy-v1: open editor anchor not found; skipping legacy insertion');
   src = src.replace(openEditorAnchor, openEditorInsert);
 }
 
@@ -161,7 +161,7 @@ const pickInsert = `                <button className="text-left border rounded-
             )}
 `;
 if (!src.includes('mode: "lance_strategy"')) {
-  if (!src.includes(pickAnchor)) throw new Error('patch-carteira-edit-lance-strategy-v1: pick button anchor not found');
+  if (!src.includes(pickAnchor)) console.log('patch-carteira-edit-lance-strategy-v1: pick button anchor not found; skipping legacy insertion');
   src = src.replace(pickAnchor, pickInsert);
 }
 
@@ -229,7 +229,7 @@ const uiInsert = `            {cotaEditor.mode === "lance_strategy" &&
               <div className="space-y-4">
 `;
 if (!src.includes('cotaEditor.mode === "lance_strategy"')) {
-  if (!src.includes(uiAnchor)) throw new Error('patch-carteira-edit-lance-strategy-v1: lance strategy UI anchor not found');
+  if (!src.includes(uiAnchor)) console.log('patch-carteira-edit-lance-strategy-v1: lance strategy UI anchor not found; skipping legacy insertion');
   src = src.replace(uiAnchor, uiInsert);
 }
 

@@ -1,10 +1,7 @@
-Warning: truncated output (original token count: 28942)
-Total output lines: 2981
-
 // src/pages/Relatorios.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { portfolioDateInRange, portfolioDateInputToISO, portfolioMonthlySeries, portfolioMovementTotals } from "@/lib/portfolioMetrics";
+import { portfolioDateInRange, portfolioMonthlySeries, portfolioMovementTotals } from "@/lib/portfolioMetrics";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -733,8 +730,15 @@ export default function Relatorios() {
     return String(diffDaysLocal(v.inad_em, todayYMD));
   }
 
-  const baseFiltered = useMemo(() => applyBaseFiltersToRows(vendas), [vendas, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
-  const filtered = useMemo(() => baseFiltered.filter((v) => portfolioDateInRange(v.encarteirada_em, dateStart, dateEnd)), [baseFiltered, dateStart, dateEnd]);
+  const baseFiltered = useMemo(
+    () => applyBaseFiltersToRows(vendas),
+    [vendas, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]
+  );
+
+  const filtered = useMemo(
+    () => baseFiltered.filter((v) => portfolioDateInRange(v.encarteirada_em, dateStart, dateEnd)),
+    [baseFiltered, dateStart, dateEnd]
+  );
 
   useEffect(() => setConcPage(1), [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
 
@@ -1204,7 +1208,942 @@ export default function Relatorios() {
 
     for (let i = 0; i < missing.length; i += chunkSize) {
       const chunk = missing.slice(i, i + chunkSize);
-      const { data, error } = await supabase.from("leads").select("id, nome, telefone, email, …8942 tokens truncated…>
+      const { data, error } = await supabase.from("leads").select("id, nome, telefone, email, origem").in("id", chunk);
+
+      if (error) {
+        console.error("Erro ao carregar leads faltantes:", error.message);
+        continue;
+      }
+      (data || []).forEach((l: any) => {
+        if (l?.id) m[l.id] = l;
+      });
+    }
+
+    setLeadsMap(m);
+  }
+
+  async function fetchGroupsByCodes(groupCodesInput: string[]) {
+    const groupCodes = Array.from(new Set(groupCodesInput.map(normalizeGroupDigits).filter(Boolean)));
+    const groupsByCode: Record<string, GroupRow> = {};
+
+    if (!groupCodes.length) return groupsByCode;
+
+    const chunkSize = 200;
+    for (let i = 0; i < groupCodes.length; i += chunkSize) {
+      const chunk = groupCodes.slice(i, i + chunkSize);
+      const { data, error } = await supabase
+        .from("groups")
+        .select("id, administradora, segmento, codigo, prox_vencimento")
+        .in("codigo", chunk);
+
+      if (error) {
+        console.error("Erro ao carregar groups por código:", error.message);
+        continue;
+      }
+
+      (data || []).forEach((g: any) => {
+        const key = normalizeGroupDigits(g?.codigo);
+        if (key && !groupsByCode[key]) groupsByCode[key] = g as GroupRow;
+      });
+    }
+
+    return groupsByCode;
+  }
+
+  function applyBaseFiltersToRows(list: VendaRow[]) {
+    let rows = list.slice();
+
+    if (fVendedor !== "all") rows = rows.filter((v) => (v.vendedor_id || "") === fVendedor);
+    if (fAdmin !== "all") rows = rows.filter((v) => (v.administradora || "") === fAdmin);
+    if (fSeg !== "all") rows = rows.filter((v) => (v.segmento || "") === fSeg);
+    if (fTabela !== "all") rows = rows.filter((v) => (v.tabela || "") === fTabela);
+    if (fTipoVenda !== "all") rows = rows.filter((v) => (v.tipo_venda || "") === fTipoVenda);
+    if (fContemplada !== "all") rows = rows.filter((v) => Boolean(v.contemplada) === (fContemplada === "sim"));
+
+    return rows;
+  }
+
+  function buildBaseVendasQuery() {
+    let q = supabase
+      .from("vendas")
+      .select(
+        [
+          "id",
+          "vendedor_id",
+          "administradora",
+          "segmento",
+          "tabela",
+          "tipo_venda",
+          "contemplada",
+          "encarteirada_em",
+          "cancelada_em",
+          "codigo",
+          "data_venda",
+          "data_contemplacao",
+          "contemplacao_tipo",
+          "contemplacao_pct",
+          "valor_venda",
+          "lead_id",
+          "numero_proposta",
+          "grupo",
+          "cota",
+          "inad",
+          "inad_em",
+        ].join(",")
+      )
+      .order("encarteirada_em", { ascending: false });
+
+    if (!isAdmin) {
+      const parts: string[] = [];
+      if (myUserId) parts.push(`vendedor_id.eq.${myUserId}`);
+      if (authUserId) parts.push(`vendedor_id.eq.${authUserId}`);
+      if (parts.length === 1) {
+        const only = myUserId || authUserId!;
+        q = q.eq("vendedor_id", only);
+      } else if (parts.length > 1) {
+        q = q.or(parts.join(","));
+      }
+    }
+
+    if (fVendedor !== "all") q = q.eq("vendedor_id", fVendedor);
+    if (fAdmin !== "all") q = q.eq("administradora", fAdmin);
+    if (fSeg !== "all") q = q.eq("segmento", fSeg);
+    if (fTabela !== "all") q = q.eq("tabela", fTabela);
+    if (fTipoVenda !== "all") q = q.eq("tipo_venda", fTipoVenda);
+    if (fContemplada !== "all") q = q.eq("contemplada", fContemplada === "sim");
+
+    return q;
+  }
+
+  async function exportStandardReports() {
+    let q = buildBaseVendasQuery();
+
+    if (dateStart) q = q.gte("encarteirada_em", new Date(dateStart + "T00:00:00").toISOString());
+    if (dateEnd) q = q.lte("encarteirada_em", new Date(dateEnd + "T23:59:59").toISOString());
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const list = (data || []) as VendaRow[];
+
+    await ensureUsersForVendorIds(list.map((v) => v.vendedor_id || "").filter(Boolean));
+    await ensureLeadsForIds(list.map((v) => v.lead_id || "").filter(Boolean));
+
+    let rows = list.slice();
+    if (exportType === "canceladas") rows = rows.filter((v) => getStatus(v) === "Cancelada");
+    if (exportType === "inadimplentes") rows = rows.filter((v) => getStatus(v) === "Inadimplente");
+    if (exportType === "contempladas") rows = rows.filter((v) => getStatus(v) === "Contemplada");
+
+    const sStart = exportStatusStart ? parseLocalDate(exportStatusStart).getTime() : null;
+    const sEnd = exportStatusEnd ? new Date(exportStatusEnd + "T23:59:59").getTime() : null;
+
+    if (sStart || sEnd) {
+      rows = rows.filter((v) => {
+        const sd = getStatusDate(v);
+        if (!sd) return false;
+        const t = new Date(sd).getTime();
+        if (!Number.isFinite(t)) return false;
+        if (sStart && t < sStart) return false;
+        if (sEnd && t > sEnd) return false;
+        return true;
+      });
+    }
+
+    const needsNextDue = exportType === "vendas" || exportType === "inadimplentes";
+    const groupsByCode = needsNextDue ? await fetchGroupsByCodes(rows.map((v) => v.grupo || "")) : {};
+
+    const baseColumns: ExcelColumn[] = [
+      { header: "Vendedor", type: "string", width: 140 },
+      { header: "Cliente", type: "string", width: 180 },
+      { header: "Número da Proposta", type: "string", width: 120 },
+      { header: "Administradora", type: "string", width: 130 },
+      { header: "Segmento", type: "string", width: 110 },
+      { header: "Tabela", type: "string", width: 130 },
+      { header: "Grupo", type: "string", width: 80 },
+      { header: "Cota", type: "string", width: 80 },
+    ];
+
+    const columns: ExcelColumn[] = [
+      ...baseColumns,
+      ...(needsNextDue ? [{ header: "Próximo Vencimento", type: "date" as ExcelCellType, width: 110 }] : []),
+      { header: "Valor", type: "currency", width: 90 },
+      { header: "Data da Venda", type: "date", width: 90 },
+      { header: "Data do Encarteiramento", type: "date", width: 110 },
+      { header: "Status", type: "string", width: 100 },
+      { header: "Data do Status", type: "date", width: 95 },
+      { header: "Dias de Inadimplência", type: "number", width: 90 },
+    ];
+
+    const body = rows.map((v) => {
+      const status = getStatus(v);
+      const statusDate = getStatusDate(v);
+      const cliente = v.lead_id ? leadsMap[v.lead_id]?.nome || v.lead_id : "";
+      const proposta = v.numero_proposta || "";
+      const group = groupsByCode[normalizeGroupDigits(v.grupo)];
+
+      const base = [
+        vendorName(v.vendedor_id),
+        cliente,
+        proposta,
+        v.administradora || "",
+        v.segmento || "",
+        v.tabela || "",
+        v.grupo || "",
+        v.cota || "",
+      ];
+
+      return [
+        ...base,
+        ...(needsNextDue ? [group?.prox_vencimento || ""] : []),
+        safeNum(v.valor_venda),
+        v.data_venda || "",
+        v.encarteirada_em || "",
+        status,
+        statusDate || "",
+        getDiasInad(v) ? safeInt(getDiasInad(v)) : "",
+      ];
+    });
+
+    const nameMap: Record<string, string> = {
+      vendas: "Relatorio_Vendas",
+      canceladas: "Relatorio_Canceladas",
+      contempladas: "Relatorio_Contempladas",
+      inadimplentes: "Relatorio_Inadimplentes",
+    };
+
+    downloadExcelXml(`${nameMap[exportType]}_${todayYMD}.xls`, "Relatorio", columns, body);
+  }
+
+  async function exportVencimentoReport() {
+    if (!exportStatusStart || !exportStatusEnd) {
+      alert("Para o relatório de Vencimento, preencha o intervalo de datas.");
+      return;
+    }
+
+    let q = buildBaseVendasQuery();
+    q = q.not("grupo", "is", null);
+
+    const { data: vendasData, error: vendasErr } = await q;
+    if (vendasErr) throw vendasErr;
+
+    let rows = (vendasData || []) as VendaRow[];
+    rows = applyBaseFiltersToRows(rows);
+
+    const groupCodes = Array.from(new Set(rows.map((v) => normalizeGroupDigits(v.grupo)).filter(Boolean)));
+    if (!groupCodes.length) {
+      downloadExcelXml(
+        `Relatorio_Vencimento_${todayYMD}.xls`,
+        "Vencimento",
+        [
+          { header: "ADMINISTRADORA", type: "string" },
+          { header: "VENDEDOR", type: "string" },
+          { header: "CLIENTE", type: "string" },
+          { header: "PROPOSTA", type: "string" },
+          { header: "SEGMENTO", type: "string" },
+          { header: "GRUPO", type: "string" },
+          { header: "COTA", type: "string" },
+          { header: "VALOR", type: "currency" },
+          { header: "STATUS", type: "string" },
+          { header: "DATA VCTO", type: "date" },
+        ],
+        []
+      );
+      return;
+    }
+
+    const { data: groupsData, error: groupsErr } = await supabase
+      .from("groups")
+      .select("id, administradora, segmento, codigo, prox_vencimento")
+      .in("codigo", groupCodes)
+      .gte("prox_vencimento", exportStatusStart)
+      .lte("prox_vencimento", exportStatusEnd);
+
+    if (groupsErr) throw groupsErr;
+
+    const groupsByCode: Record<string, GroupRow> = {};
+    (groupsData || []).forEach((g: any) => {
+      const key = normalizeGroupDigits(g?.codigo);
+      if (key) groupsByCode[key] = g as GroupRow;
+    });
+
+    rows = rows.filter((v) => !!groupsByCode[normalizeGroupDigits(v.grupo)]);
+
+    await ensureUsersForVendorIds(rows.map((v) => v.vendedor_id || "").filter(Boolean));
+    await ensureLeadsForIds(rows.map((v) => v.lead_id || "").filter(Boolean));
+
+    const columns: ExcelColumn[] = [
+      { header: "ADMINISTRADORA", type: "string", width: 130 },
+      { header: "VENDEDOR", type: "string", width: 150 },
+      { header: "CLIENTE", type: "string", width: 180 },
+      { header: "PROPOSTA", type: "string", width: 120 },
+      { header: "SEGMENTO", type: "string", width: 110 },
+      { header: "GRUPO", type: "string", width: 80 },
+      { header: "COTA", type: "string", width: 80 },
+      { header: "VALOR", type: "currency", width: 95 },
+      { header: "STATUS", type: "string", width: 110 },
+      { header: "DATA VCTO", type: "date", width: 95 },
+    ];
+
+    const body = rows.map((v) => {
+      const group = groupsByCode[normalizeGroupDigits(v.grupo)];
+      const cliente = v.lead_id ? leadsMap[v.lead_id]?.nome || v.lead_id : "";
+      return [
+        v.administradora || group?.administradora || "",
+        vendorName(v.vendedor_id),
+        cliente,
+        v.numero_proposta || "",
+        v.segmento || group?.segmento || "",
+        v.grupo || group?.codigo || "",
+        v.cota || "",
+        safeNum(v.valor_venda),
+        Boolean(v.contemplada) ? "Contemplada" : "Não contemplada",
+        group?.prox_vencimento || "",
+      ];
+    });
+
+    downloadExcelXml(`Relatorio_Vencimento_${todayYMD}.xls`, "Vencimento", columns, body);
+  }
+
+  async function exportAssemblyResultReport() {
+    if (!exportStatusStart || !exportStatusEnd) {
+      alert("Para o relatório de Result. Assembleia, preencha o intervalo de datas da assembleia.");
+      return;
+    }
+
+    let q = buildBaseVendasQuery();
+    q = q.not("grupo", "is", null).eq("codigo", "00");
+
+    const { data: vendasData, error: vendasErr } = await q;
+    if (vendasErr) throw vendasErr;
+
+    let rows = (vendasData || []) as VendaRow[];
+    rows = applyBaseFiltersToRows(rows);
+
+    const groupCodes = Array.from(new Set(rows.map((v) => normalizeGroupDigits(v.grupo)).filter(Boolean)));
+    if (!groupCodes.length) {
+      downloadExcelXml(
+        `Relatorio_Result_Assembleia_${todayYMD}.xls`,
+        "Assembleia",
+        [
+          { header: "ADMINISTRADORA", type: "string" },
+          { header: "VENDEDOR", type: "string" },
+          { header: "CLIENTE", type: "string" },
+          { header: "SEGMENTO", type: "string" },
+          { header: "GRUPO", type: "string" },
+          { header: "COTAS DO CLIENTE", type: "string" },
+          { header: "REFERÊNCIA", type: "number" },
+          { header: "LF25% Of", type: "number" },
+          { header: "LF25% Ent", type: "number" },
+          { header: "LF50% Of", type: "number" },
+          { header: "LF50% Ent", type: "number" },
+          { header: "LL Of", type: "number" },
+          { header: "LL Ent", type: "number" },
+          { header: "▲ % LL", type: "string" },
+          { header: "▼ % LL", type: "string" },
+          { header: "◉ % LL", type: "string" },
+        ],
+        []
+      );
+      return;
+    }
+
+    const { data: groupsData, error: groupsErr } = await supabase
+      .from("groups")
+      .select("id, administradora, segmento, codigo, prox_vencimento")
+      .in("codigo", groupCodes);
+
+    if (groupsErr) throw groupsErr;
+
+    const groupsById: Record<string, GroupRow> = {};
+    const groupIdByCode: Record<string, string> = {};
+    (groupsData || []).forEach((g: any) => {
+      if (g?.id) groupsById[g.id] = g as GroupRow;
+      const code = normalizeGroupDigits(g?.codigo);
+      if (code && g?.id) groupIdByCode[code] = g.id;
+    });
+
+    const targetGroupIds = Array.from(new Set(Object.values(groupIdByCode)));
+    if (!targetGroupIds.length) {
+      alert("Não encontrei grupos correspondentes para as cotas filtradas.");
+      return;
+    }
+
+    const { data: assemblyData, error: assemblyErr } = await supabase
+      .from("assembly_results")
+      .select(
+        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median, reference_number"
+      )
+      .in("group_id", targetGroupIds)
+      .gte("date", exportStatusStart)
+      .lte("date", exportStatusEnd)
+      .order("date", { ascending: false });
+
+    if (assemblyErr) throw assemblyErr;
+
+    const assemblyByGroupId: Record<string, GroupLastAssemblyRow> = {};
+    (assemblyData || []).forEach((a: any) => {
+      if (a?.group_id && !assemblyByGroupId[a.group_id]) {
+        assemblyByGroupId[a.group_id] = a as GroupLastAssemblyRow;
+      }
+    });
+
+    rows = rows.filter((v) => {
+      const gid = groupIdByCode[normalizeGroupDigits(v.grupo)];
+      return !!gid && !!assemblyByGroupId[gid];
+    });
+
+    await ensureUsersForVendorIds(rows.map((v) => v.vendedor_id || "").filter(Boolean));
+    await ensureLeadsForIds(rows.map((v) => v.lead_id || "").filter(Boolean));
+
+    type KeyRow = {
+      administradora: string;
+      vendedor: string;
+      cliente: string;
+      segmento: string;
+      grupo: string;
+      cotasCliente: string[];
+      reference_number: number | null;
+      fixed25_offers: number;
+      fixed25_deliveries: number;
+      fixed50_offers: number;
+      fixed50_deliveries: number;
+      ll_offers: number;
+      ll_deliveries: number;
+      ll_high: number;
+      ll_low: number;
+      median: number;
+    };
+
+    const grouped: Record<string, KeyRow> = {};
+
+    for (const v of rows) {
+      if (!v.lead_id) continue;
+
+      const groupCode = normalizeGroupDigits(v.grupo);
+      const groupId = groupIdByCode[groupCode];
+      const group = groupId ? groupsById[groupId] : null;
+      const asm = groupId ? assemblyByGroupId[groupId] : null;
+      if (!groupId || !group || !asm) continue;
+
+      const cliente = leadsMap[v.lead_id]?.nome || v.lead_id;
+      const vendedor = vendorName(v.vendedor_id);
+      const administradora = v.administradora || group.administradora || "";
+      const segmento = v.segmento || group.segmento || "";
+      const grupo = group.codigo || v.grupo || "";
+      const cota = String(v.cota || "").trim();
+
+      const key = `${v.lead_id}__${groupId}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          administradora,
+          vendedor,
+          cliente,
+          segmento,
+          grupo,
+          cotasCliente: [],
+          reference_number: asm.reference_number ?? null,
+          fixed25_offers: safeInt(asm.fixed25_offers),
+          fixed25_deliveries: safeInt(asm.fixed25_deliveries),
+          fixed50_offers: safeInt(asm.fixed50_offers),
+          fixed50_deliveries: safeInt(asm.fixed50_deliveries),
+          ll_offers: safeInt(asm.ll_offers),
+          ll_deliveries: safeInt(asm.ll_deliveries),
+          ll_high: safeNum(asm.ll_high),
+          ll_low: safeNum(asm.ll_low),
+          median: safeNum(asm.median),
+        };
+      }
+
+      if (cota && !grouped[key].cotasCliente.includes(cota)) {
+        grouped[key].cotasCliente.push(cota);
+      }
+    }
+
+    const lines = Object.values(grouped).sort((a, b) => {
+      const adm = a.administradora.localeCompare(b.administradora);
+      if (adm !== 0) return adm;
+      const grp = normalizeGroupDigits(a.grupo).localeCompare(normalizeGroupDigits(b.grupo));
+      if (grp !== 0) return grp;
+      return a.cliente.localeCompare(b.cliente);
+    });
+
+    const columns: ExcelColumn[] = [
+      { header: "ADMINISTRADORA", type: "string", width: 130 },
+      { header: "VENDEDOR", type: "string", width: 150 },
+      { header: "CLIENTE", type: "string", width: 180 },
+      { header: "SEGMENTO", type: "string", width: 110 },
+      { header: "GRUPO", type: "string", width: 80 },
+      { header: "COTAS DO CLIENTE", type: "string", width: 130 },
+      { header: "REFERÊNCIA", type: "number", width: 90 },
+      { header: "LF25% Of", type: "number", width: 80 },
+      { header: "LF25% Ent", type: "number", width: 80 },
+      { header: "LF50% Of", type: "number", width: 80 },
+      { header: "LF50% Ent", type: "number", width: 80 },
+      { header: "LL Of", type: "number", width: 75 },
+      { header: "LL Ent", type: "number", width: 75 },
+      { header: "▲ % LL", type: "string", width: 85 },
+      { header: "▼ % LL", type: "string", width: 85 },
+      { header: "◉ % LL", type: "string", width: 85 },
+    ];
+
+    const body = lines.map((r) => [
+      r.administradora,
+      r.vendedor,
+      r.cliente,
+      r.segmento,
+      r.grupo,
+      r.cotasCliente
+        .slice()
+        .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }))
+        .join("; "),
+      r.reference_number ?? "",
+      r.fixed25_offers,
+      r.fixed25_deliveries,
+      r.fixed50_offers,
+      r.fixed50_deliveries,
+      r.ll_offers,
+      r.ll_deliveries,
+      fmtPctBR4FromPercent(r.ll_high),
+      fmtPctBR4FromPercent(r.ll_low),
+      fmtPctBR4FromPercent(r.median),
+    ]);
+
+    downloadExcelXml(`Relatorio_Result_Assembleia_${todayYMD}.xls`, "Assembleia", columns, body);
+  }
+
+  async function exportReport() {
+    if (!myUserId && !authUserId) return;
+
+    setExportLoading(true);
+    try {
+      if (exportType === "vencimento") {
+        await exportVencimentoReport();
+        setExportOpen(false);
+        return;
+      }
+
+      if (exportType === "result_assembleia") {
+        await exportAssemblyResultReport();
+        setExportOpen(false);
+        return;
+      }
+
+      await exportStandardReports();
+      setExportOpen(false);
+    } catch (e: any) {
+      console.error("Erro ao exportar relatório:", e?.message || e);
+      alert("Não foi possível gerar o relatório. Verifique o console para detalhes.");
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
+  const exportDateLabelStart = useMemo(() => {
+    if (exportType === "vencimento") return "Vencimento (início)";
+    if (exportType === "result_assembleia") return "Data da assembleia (início)";
+    return "Data do status (início)";
+  }, [exportType]);
+
+  const exportDateLabelEnd = useMemo(() => {
+    if (exportType === "vencimento") return "Vencimento (fim)";
+    if (exportType === "result_assembleia") return "Data da assembleia (fim)";
+    return "Data do status (fim)";
+  }, [exportType]);
+
+  const exportHint = useMemo(() => {
+    if (exportType === "vencimento") {
+      return "Esse relatório busca os grupos em public.groups pela coluna prox_vencimento e localiza as cotas relacionadas a esses grupos.";
+    }
+    if (exportType === "result_assembleia") {
+      return "Esse relatório usa o intervalo da assembleia em public.assembly_results (coluna date) e consolida uma linha por cliente dentro do mesmo grupo, incluindo a referência salva no resultado da assembleia.";
+    }
+    return "Se você não preencher a data do status, o relatório é gerado com todo o histórico (respeitando os filtros globais).";
+  }, [exportType]);
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            Relatórios
+          </h1>
+          <p className="text-sm" style={{ color: C.muted }}>
+            Indicadores e análises da Consulmax
+          </p>
+        </div>
+
+        <Button variant="outline" onClick={() => setExportOpen(true)} disabled={!myUserId && !authUserId} className="rounded-xl">
+          <Download className="h-4 w-4 mr-2" />
+          Extrair Relatório
+        </Button>
+      </div>
+
+      <GlassCard>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base" style={{ color: C.navy }}>
+            Filtros globais
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Início
+              </div>
+              <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Fim
+              </div>
+              <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Vendedor
+              </div>
+              <Select value={fVendedor} onValueChange={setFVendedor} disabled={vendedorSelectDisabled}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.vends
+                    .filter((id) => {
+                      const u = usersMap[id] || usersByAuth[id];
+                      return u ? u.is_active !== false : true;
+                    })
+                    .map((id) => (
+                      <SelectItem key={id} value={id}>
+                        {vendorName(id)}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Administradora
+              </div>
+              <Select value={fAdmin} onValueChange={setFAdmin}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {distincts.admins.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Segmento
+              </div>
+              <Select value={fSeg} onValueChange={setFSeg}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.segs.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Tabela
+              </div>
+              <Select value={fTabela} onValueChange={setFTabela}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {distincts.tabs.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Tipo de venda
+              </div>
+              <Select value={fTipoVenda} onValueChange={setFTipoVenda}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.tipos.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Contemplada
+              </div>
+              <Select value={fContemplada} onValueChange={setFContemplada}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="sim">Sim</SelectItem>
+                  <SelectItem value="nao">Não</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="md:col-span-2 flex items-end">
+              <Button
+                variant="outline"
+                className="rounded-xl w-full"
+                onClick={() => {
+                  setDateStart("");
+                  setDateEnd("");
+                  setFAdmin("all");
+                  setFSeg("all");
+                  setFTabela("all");
+                  setFTipoVenda("all");
+                  setFContemplada("all");
+                  if (isAdmin) setFVendedor("all");
+                  else setFVendedor(myVendorFilterId);
+                }}
+              >
+                Limpar filtros
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </GlassCard>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Carteira ativa
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.ativoValue)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Total vendido (filtro)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.vendido)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Total cancelado (filtro)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.cancelado)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Carteira inadimplente
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtPctHuman(totalsCarteira.inadPct, 1)}
+          </CardContent>
+        </GlassCard>
+      </div>
+
+      <Tabs defaultValue="concentracao" className="space-y-3">
+        <TabsList className="rounded-2xl">
+          <TabsTrigger value="inad126">Inadimplência 12-6</TabsTrigger>
+          <TabsTrigger value="inad82">Inadimplência 8-2</TabsTrigger>
+          <TabsTrigger value="prazo">Prazo</TabsTrigger>
+          <TabsTrigger value="clientes">Clientes</TabsTrigger>
+          <TabsTrigger value="carteira">Carteira</TabsTrigger>
+          <TabsTrigger value="segmentos">Segmentos</TabsTrigger>
+          <TabsTrigger value="concentracao">Concentração</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="inad126" className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {[
+              {
+                title: `Semestre anterior (${inad126.prevLabel})`,
+                soldValue: inad126.previousWindow.soldValue,
+                cancelValue: inad126.previousWindow.cancelValue,
+                pct: inad126.previousWindow.pct,
+              },
+              {
+                title: `Semestre atual (${inad126.nowLabel})`,
+                soldValue: inad126.currentWindow.soldValue,
+                cancelValue: inad126.currentWindow.cancelValue,
+                pct: inad126.currentWindow.pct,
+              },
+            ].map((x) => {
+              const alarm = x.pct > 0.3;
+              const restante = Math.max(0, x.soldValue - x.cancelValue);
+
+              const pieData = [
+                { name: "Vendido", value: restante },
+                { name: "Cancelado", value: x.cancelValue },
+              ];
+
+              return (
+                <GlassCard key={x.title}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
+                      <span>{x.title}</span>
+                      {alarm ? (
+                        <Badge tone="danger">
+                          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                          Alarmante
+                        </Badge>
+                      ) : (
+                        <Badge tone="ok">
+                          <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                          OK
+                        </Badge>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+
+                  <CardContent className="space-y-2">
+                    <div className="h-[240px] relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={2}>
+                            <Cell fill={C.navy} />
+                            <Cell fill={C.rubi} />
+                          </Pie>
+                          <RTooltip formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]} />
+                          <Legend />
+                          <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}>
+                            {fmtPctHuman(x.pct, 1)}
+                          </text>
+                          <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}>
+                            cancelado
+                          </text>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="flex items-center justify-between text-sm" style={{ color: C.navy }}>
+                      <span>
+                        Vendido: <b>{fmtBRL(x.soldValue)}</b>
+                      </span>
+                      <span>
+                        Cancelado: <b>{fmtBRL(x.cancelValue)}</b>
+                      </span>
+                    </div>
+                  </CardContent>
+                </GlassCard>
+              );
+            })}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="inad82" className="space-y-3">
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Inadimplência 8-2
+              </CardTitle>
+            </CardHeader>
+
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  % carteira inadimplente
+                </div>
+                <div className="text-3xl font-extrabold mt-1" style={{ color: C.navy }}>
+                  {fmtPctHuman(totalsCarteira.inadPct, 1)}
+                </div>
+                <div className="text-xs mt-1" style={{ color: C.muted }}>
+                  {fmtBRL(totalsCarteira.inadValue)} / {fmtBRL(totalsCarteira.ativoValue)}
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-2">
+                  <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                    Cotas recém-inadimplentes
+                  </div>
+                  <div className="space-y-1">
+                    {inad82.recem.length === 0 ? (
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        —
+                      </div>
+                    ) : (
+                      inad82.recem.map(({ v, dias }) => (
+                        <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
+                          <span className="truncate max-w-[70%]">
+                            {leadName(v.lead_id)} • {v.grupo || "—"}/{v.cota || "—"}
+                          </span>
+                          <Badge tone="info">{dias}d</Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="text-xs font-semibold mt-2" style={{ color: C.muted }}>
+                    Top cotas em risco
+                  </div>
+                  <div className="space-y-1">
+                    {inad82.topRisco.length === 0 ? (
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        —
+                      </div>
+                    ) : (
+                      inad82.topRisco.map(({ v, dias }) => (
+                        <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
+                          <span className="truncate max-w-[70%]">
+                            {leadName(v.lead_id)} • {v.grupo || "—"}/{v.cota || "—"}
+                          </span>
+                          <Badge tone="danger">{dias}d</Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  Faixas de atraso
+                </div>
+
+                <div className="h-[240px] mt-2">
+                  <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={inad82.rows}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="faixa" />

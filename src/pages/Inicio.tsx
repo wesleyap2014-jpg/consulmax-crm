@@ -25,6 +25,10 @@ import {
   Gift,
   Ticket,
   Trophy,
+  HeartPulse,
+  MousePointerClick,
+  CheckCircle2,
+  RotateCcw,
 } from "lucide-react";
 
 /** ===================== Tipos ===================== */
@@ -47,6 +51,21 @@ type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null;
 type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
+type CarteiraHealth = {
+  friendlyCount: number;
+  friendlyValue: number;
+  reparcelCount: number;
+  reparcelValue: number;
+  criticalCount: number;
+  criticalValue: number;
+  riskCount: number;
+  regularizedMonth: number;
+  recoveryCount: number;
+  recoveredMonth: number;
+  maxRecoveredMonth: number;
+  highIntent7d: number;
+  emailsSentMonth: number;
+};
 type DashboardScope = {
   mode: "matrix" | "branch" | "seller";
   isGlobal: boolean;
@@ -60,6 +79,21 @@ type DashboardScope = {
 
 const ALL = "__all__";
 const PV_OFFSET_MIN = -4 * 60;
+const EMPTY_CARTEIRA_HEALTH: CarteiraHealth = {
+  friendlyCount: 0,
+  friendlyValue: 0,
+  reparcelCount: 0,
+  reparcelValue: 0,
+  criticalCount: 0,
+  criticalValue: 0,
+  riskCount: 0,
+  regularizedMonth: 0,
+  recoveryCount: 0,
+  recoveredMonth: 0,
+  maxRecoveredMonth: 0,
+  highIntent7d: 0,
+  emailsSentMonth: 0,
+};
 
 /** ===================== Helpers ===================== */
 function pad2(n: number) { return String(n).padStart(2, "0"); }
@@ -160,6 +194,7 @@ export default function Inicio() {
   const [myDayPage, setMyDayPage] = useState(0);
   const MY_DAY_PAGE_SIZE = 7;
   const [thoughtOfDay, setThoughtOfDay] = useState<string>(pickThought(rangeToday.ymd));
+  const [carteiraHealth, setCarteiraHealth] = useState<CarteiraHealth>(EMPTY_CARTEIRA_HEALTH);
 
   const giroPageCount = useMemo(() => Math.max(1, Math.ceil(giroAll.length / GIRO_PAGE_SIZE)), [giroAll.length]);
   const giroSlice = useMemo(() => giroAll.slice(giroPage * GIRO_PAGE_SIZE, giroPage * GIRO_PAGE_SIZE + GIRO_PAGE_SIZE), [giroAll, giroPage]);
@@ -478,56 +513,79 @@ export default function Inicio() {
       .map((e) => ({ id: e.cliente?.id || e.lead?.id || e.id, nome: e.cliente?.nome || e.lead?.nome || e.titulo || "Cliente", data_nascimento: e.inicio_at, telefone: e.cliente?.telefone || e.lead?.telefone || null }))
       .slice(0, 50) as ClienteRow[];
     const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
-    if (isBillingRuleDay(today)) {
-      try {
-        let inadQ = supabase
-          .from("vendas")
-          .select("id,vendedor_id,lead_id,cliente_lead_id,grupo,cota,codigo,cancelada_em,inad,inad_em,inad_revertida_em")
-          .eq("inad", true)
-          .is("inad_revertida_em", null)
-          .limit(5000);
+    let carteiraHealthNext: CarteiraHealth = { ...EMPTY_CARTEIRA_HEALTH };
+    try {
+      let healthQ = supabase
+        .from("vendas")
+        .select("id,vendedor_id,lead_id,cliente_lead_id,valor_venda,grupo,cota,codigo,cancelada_em,reativada_em,inad,inad_em,inad_revertida_em")
+        .limit(5000);
+      healthQ = applyVendedorScope(healthQ);
+      const { data: healthRowsRaw, error: healthErr } = await healthQ;
+      if (healthErr) throw healthErr;
+      const healthRows = (healthRowsRaw || []) as any as VendaMini[];
+      const leadIds = Array.from(new Set(healthRows.map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
+      const namesMap = await tryLoadLeadsMap(leadIds);
+      const monthStart = `${today.slice(0, 7)}-01`;
+      const recentClickStart = addDaysYMD(today, -7);
 
-        inadQ = applyVendedorScope(inadQ);
+      for (const v of healthRows) {
+        const cancelled = isVendaCancelada(v);
+        const inadStart = toYMD(v.inad_em);
+        const reverted = toYMD(v.inad_revertida_em);
+        const reactivated = toYMD((v as any).reativada_em);
+        const cancellation = toYMD(v.cancelada_em);
+        const nome = namesMap.get(v.lead_id || v.cliente_lead_id || "")?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`;
 
-        const { data: inadRowsRaw, error: inadErr } = await inadQ;
-        if (inadErr) throw inadErr;
-
-        const inadRows = ((inadRowsRaw || []) as any as VendaMini[])
-          .filter((v) => !isVendaCancelada(v))
-          .filter((v) => Boolean(toYMD(v.inad_em)));
-
-        const inadLeadIds = Array.from(
-          new Set(
-            inadRows
-              .map((v) => v.lead_id || v.cliente_lead_id)
-              .filter(Boolean) as string[]
-          )
-        );
-
-        const inadLeadsMap = await tryLoadLeadsMap(inadLeadIds);
-
-        for (const v of inadRows) {
-          const base = toYMD(v.inad_em);
-          if (!base) continue;
-
-          const dias = Math.max(1, daysDiffYMD(today, base));
-          const leadId = v.lead_id || v.cliente_lead_id || "";
-          const nome = inadLeadsMap.get(leadId)?.nome || `Grupo ${v.grupo || "—"} / Cota ${v.cota || "—"}`;
-
-          let bucket = "";
-          if (dias <= 15) bucket = "1-15";
-          else if (dias <= 30) bucket = "16-30";
-          else if (dias <= 60) bucket = "31-60";
-          else bucket = "60+";
-
+        if (v.inad && !reverted && !cancelled && inadStart) {
+          const dias = Math.max(1, daysDiffYMD(today, inadStart));
+          const value = Number(v.valor_venda || 0) || 0;
+          const bucket = dias <= 30 ? "1-30" : dias <= 60 ? "31-60" : "61+";
           const cur = inadimplentesByBucket.get(bucket) || { count: 0, names: [] };
           cur.count += 1;
           if (cur.names.length < 5) cur.names.push(nome);
           inadimplentesByBucket.set(bucket, cur);
+
+          if (dias <= 30) {
+            carteiraHealthNext.friendlyCount += 1;
+            carteiraHealthNext.friendlyValue += value;
+          } else if (dias <= 60) {
+            carteiraHealthNext.reparcelCount += 1;
+            carteiraHealthNext.reparcelValue += value;
+          } else {
+            carteiraHealthNext.criticalCount += 1;
+            carteiraHealthNext.criticalValue += value;
+            if (dias >= 80) carteiraHealthNext.riskCount += 1;
+          }
         }
-      } catch (e) {
-        console.warn("[Inicio] Não foi possível carregar régua de inadimplência:", e);
+
+        if (reverted && reverted >= monthStart && reverted <= today) carteiraHealthNext.regularizedMonth += 1;
+        if (cancellation && !reactivated) carteiraHealthNext.recoveryCount += 1;
+        if (reactivated && reactivated >= monthStart && reactivated <= today) carteiraHealthNext.recoveredMonth += 1;
       }
+
+      try {
+        let msgQ = supabase
+          .from("carteira_relationship_messages")
+          .select("id,venda_id,vendedor_id,status,sent_at,last_clicked_at,seller_attention_at,created_at")
+          .gte("created_at", `${addDaysYMD(today, -40)}T00:00:00.000Z`)
+          .limit(5000);
+        msgQ = applyVendedorScope(msgQ);
+        const { data: msgRows, error: msgErr } = await msgQ;
+        if (msgErr) throw msgErr;
+        const rows = msgRows || [];
+        carteiraHealthNext.emailsSentMonth = rows.filter((r: any) => r.status === "sent" && toYMD(r.sent_at) && (toYMD(r.sent_at) as string) >= monthStart).length;
+        const highIntentIds = new Set(rows.filter((r: any) => toYMD(r.last_clicked_at) && (toYMD(r.last_clicked_at) as string) >= recentClickStart).map((r: any) => r.venda_id));
+        carteiraHealthNext.highIntent7d = highIntentIds.size;
+        const contactedIds = new Set(rows.map((r: any) => r.venda_id));
+        carteiraHealthNext.maxRecoveredMonth = healthRows.filter((v: any) => {
+          const d = toYMD(v.reativada_em);
+          return d && d >= monthStart && d <= today && contactedIds.has(v.id);
+        }).length;
+      } catch (messageError) {
+        console.warn("[Inicio] Histórico das réguas MAX indisponível:", messageError);
+      }
+    } catch (e) {
+      console.warn("[Inicio] Não foi possível carregar Saúde da Carteira:", e);
     }
 
     let newProceduresCount = 0;
@@ -548,10 +606,9 @@ export default function Inicio() {
     const assembleiaYesterdayGroups = groupRows.filter((g) => groupAsmYMD(g) === yesterday);
     if (assembleiaYesterdayGroups.length) myDay.push({ id: "assembleia-result", priority: 60, icon: "alert", title: `Informar o resultado da assembleia dos grupos ${groupListLabel(assembleiaYesterdayGroups)}`, desc: `Assembleia realizada em ${fmtDateBRFromYMD(yesterday)}.`, action: { label: "Informar Resultado", to: "/gestao-de-grupos" } });
     const billingBuckets = [
-      { key: "1-15", title: "Clientes inadimplentes de 1 a 15 dias", desc: "Cliente inadimplente: reenviar boleto de cobrança." },
-      { key: "16-30", title: "Clientes inadimplentes de 16 a 30 dias", desc: "Realizar ligação solicitando o pagamento da parcela em aberto." },
-      { key: "31-60", title: "Clientes inadimplentes de 30 a 60 dias", desc: "Ligar para entender a situação e agendar uma data de regularização." },
-      { key: "60+", title: "Clientes inadimplentes há mais de 60 dias", desc: "Ligar e ofertar reparcelamento das parcelas inadimplentes." },
+      { key: "1-30", title: "Inadimplência de 1 a 30 dias", desc: "MAX acompanha com comunicação amigável e foco em regularização." },
+      { key: "31-60", title: "Inadimplência de 31 a 60 dias", desc: "MAX passa a oferecer a verificação de reparcelamento como alternativa." },
+      { key: "61+", title: "Inadimplência acima de 60 dias", desc: "Faixa crítica: MAX intensifica a comunicação e sinaliza risco de cancelamento." },
     ];
 
     billingBuckets.forEach((b, idx) => {
@@ -593,6 +650,7 @@ export default function Inicio() {
     setMyDayAlerts(myDay);
     setMyDayPage(0);
     setThoughtOfDay(pickThought(today));
+    setCarteiraHealth(carteiraHealthNext);
     setKpi({ openOppCount, openOppTotal, todayEventsCount, todayGroupsCount, myDayCount: myDay.length, pendingGroupRegistrationCount, monthSalesTotal, monthSalesMeta, monthSalesPct, carteiraAtivaTotal, openStockReqCount, vendasSemComissaoCount, giroDueCount, newProceduresCount, commissionsPendingCount, commissionsPendingTotal, commissionScheduledTotal, commissionScheduledDate });
   }
 
@@ -899,6 +957,70 @@ export default function Inicio() {
         </div>
 
         {MeuDiaCard}
+
+        <Card className={`${glassCard} border-[#B5A573]/40 bg-gradient-to-br from-white via-white to-[#F8F5EC]`}>
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-slate-950">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#1E293F] text-white shadow-md">
+                    <HeartPulse className="h-4 w-4" />
+                  </span>
+                  Saúde da Carteira
+                </CardTitle>
+                <div className="mt-1 text-sm text-slate-500">MAX acompanha inadimplência, intenção de regularização e recuperação de cancelados.</div>
+              </div>
+              <Badge className="w-fit rounded-full border border-[#B5A573]/50 bg-[#B5A573]/15 px-3 py-1 text-[#1E293F]">
+                2 réguas automáticas
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { label: "1–30 dias", value: carteiraHealth.friendlyCount, helper: `${fmtBRL(carteiraHealth.friendlyValue)} em crédito`, tone: "border-amber-200 bg-amber-50/70" },
+                { label: "31–60 dias", value: carteiraHealth.reparcelCount, helper: `${fmtBRL(carteiraHealth.reparcelValue)} em crédito`, tone: "border-orange-200 bg-orange-50/70" },
+                { label: "+60 dias", value: carteiraHealth.criticalCount, helper: `${fmtBRL(carteiraHealth.criticalValue)} em crédito`, tone: "border-red-200 bg-red-50/70" },
+                { label: "Risco D+80", value: carteiraHealth.riskCount, helper: "próximos da referência D+90", tone: "border-rose-300 bg-rose-50/80" },
+              ].map((item) => (
+                <div key={item.label} className={`rounded-2xl border p-4 ${item.tone}`}>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-500">{item.label}</div>
+                  <div className="mt-2 text-2xl font-black text-slate-950">{item.value}</div>
+                  <div className="mt-1 text-xs text-slate-600">{item.helper}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Regularizados no mês</div>
+                <div className="mt-2 text-xl font-black text-emerald-950">{carteiraHealth.regularizedMonth}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><RotateCcw className="h-4 w-4" /> Cancelados em recuperação</div>
+                <div className="mt-2 text-xl font-black text-slate-950">{carteiraHealth.recoveryCount}</div>
+              </div>
+              <div className="rounded-2xl border border-violet-200 bg-violet-50/70 p-4">
+                <div className="flex items-center gap-2 text-xs font-semibold text-violet-800"><MousePointerClick className="h-4 w-4" /> Alta intenção · 7 dias</div>
+                <div className="mt-2 text-xl font-black text-violet-950">{carteiraHealth.highIntent7d}</div>
+              </div>
+              <div className="rounded-2xl border border-[#B5A573]/50 bg-[#B5A573]/10 p-4">
+                <div className="text-xs font-semibold text-slate-700">Comunicações MAX · mês</div>
+                <div className="mt-2 text-xl font-black text-slate-950">{carteiraHealth.emailsSentMonth}</div>
+                <div className="mt-1 text-[11px] text-slate-500">{carteiraHealth.maxRecoveredMonth} recuperação(ões) após contato MAX</div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-4 md:flex-row md:items-center md:justify-between">
+              <div className="text-xs leading-relaxed text-slate-600">
+                <strong className="text-slate-900">Inadimplência:</strong> 1–30 amigável · 31–60 verificação de reparcelamento · +60 comunicação crítica até a baixa real.
+                <span className="mx-2 text-slate-300">|</span>
+                <strong className="text-slate-900">Cancelados:</strong> recuperação automática a cada 20 dias.
+              </div>
+              <Button className={subtleButton} onClick={() => nav("/carteira")}>Abrir Carteira <ArrowRight className="ml-2 h-4 w-4" /></Button>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <Card className={`${glassCard} xl:col-span-2`}>

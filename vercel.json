@@ -26,6 +26,12 @@
     },
     "api/weekly-performance-feedback.ts": {
       "maxDuration": 300
+    },
+    "api/carteira/relationship-ruler.ts": {
+      "maxDuration": 300
+    },
+    "api/carteira/relationship-cta.ts": {
+      "maxDuration": 30
     }
   },
   "crons": [
@@ -48,6 +54,10 @@
     {
       "path": "/api/weekly-performance-feedback",
       "schedule": "0 21 * * 5"
+    },
+    {
+      "path": "/api/carteira/relationship-ruler",
+      "schedule": "0 13 * * *"
     }
   ],
   "rewrites": [

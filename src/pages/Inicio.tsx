@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import {
   RefreshCcw,
@@ -47,7 +48,7 @@ type CommissionFlowRow = { id?: string; commission_id: string; mes?: number | nu
 type CommissionBatchRow = { id: string; venda_id: string; vendedor_id: string; business_unit_id?: string | null; status?: string | null; legacy?: boolean | null };
 type CommissionEntryRow = { id: string; batch_id: string; recipient_user_id?: string | null; recipient_unit_id?: string | null; business_unit_id?: string | null; status?: string | null };
 type CommissionEntryFlowRow = { id: string; entry_id: string; batch_id: string; valor_previsto: number | null; valor_pago: number | null; data_pagamento: string | null; status?: string | null };
-type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; segmento?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
+type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; reativada_em?: string | null; segmento?: string | null; produto?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
 type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
@@ -66,6 +67,28 @@ type CarteiraHealth = {
   highIntent7d: number;
   emailsSentMonth: number;
 };
+type CarteiraHealthKey = "friendly" | "reparcel" | "critical" | "risk" | "regularized" | "recovery" | "highIntent" | "communications";
+type CarteiraHealthItem = {
+  vendaId: string;
+  leadId?: string | null;
+  cliente: string;
+  telefone?: string | null;
+  grupo?: string | null;
+  cota?: string | null;
+  administradora?: string | null;
+  segmento?: string | null;
+  vendedorNome?: string | null;
+  dias?: number | null;
+  statusLabel?: string | null;
+  ruler?: string | null;
+  stage?: string | null;
+  milestone?: number | null;
+  ctaType?: string | null;
+  sentAt?: string | null;
+  clickedAt?: string | null;
+  clickCount?: number;
+};
+type CarteiraHealthLists = Record<CarteiraHealthKey, CarteiraHealthItem[]>;
 type DashboardScope = {
   mode: "matrix" | "branch" | "seller";
   isGlobal: boolean;
@@ -94,6 +117,26 @@ const EMPTY_CARTEIRA_HEALTH: CarteiraHealth = {
   highIntent7d: 0,
   emailsSentMonth: 0,
 };
+const EMPTY_CARTEIRA_HEALTH_LISTS: CarteiraHealthLists = {
+  friendly: [],
+  reparcel: [],
+  critical: [],
+  risk: [],
+  regularized: [],
+  recovery: [],
+  highIntent: [],
+  communications: [],
+};
+const CARTEIRA_HEALTH_META: Record<CarteiraHealthKey, { title: string; description: string }> = {
+  friendly: { title: "Inadimplência · 1–30 dias", description: "Clientes na etapa amigável da régua de regularização." },
+  reparcel: { title: "Inadimplência · 31–60 dias", description: "Clientes para os quais o MAX passa a trabalhar a possibilidade de reparcelamento." },
+  critical: { title: "Inadimplência · +60 dias", description: "Clientes em faixa crítica de inadimplência." },
+  risk: { title: "Risco de cancelamento · D+80", description: "Clientes próximos da referência operacional de cancelamento em D+90." },
+  regularized: { title: "Regularizados no mês", description: "Clientes que saíram da inadimplência durante o mês atual." },
+  recovery: { title: "Cancelados em recuperação", description: "Clientes atualmente dentro da régua pós-cancelamento." },
+  highIntent: { title: "Alta intenção · últimos 7 dias", description: "Clientes que clicaram em algum CTA dos e-mails enviados pelo MAX." },
+  communications: { title: "Comunicações MAX · mês", description: "E-mails enviados pelas réguas de inadimplência e recuperação no mês atual." },
+};
 
 /** ===================== Helpers ===================== */
 function pad2(n: number) { return String(n).padStart(2, "0"); }
@@ -106,6 +149,8 @@ function fmtDateBRFromYMD(ymd?: string | null) { const d10 = toYMD(ymd) || ""; c
 function monthRangeYMDFromOffset(now: Date, offsetMin: number) { const local = new Date(now.getTime() + offsetMin * 60 * 1000); const y = local.getUTCFullYear(); const m = local.getUTCMonth(); const f = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`; return { startYMD: f(new Date(Date.UTC(y, m, 1, 12, 0, 0))), endYMD: f(new Date(Date.UTC(y, m + 1, 1, 12, 0, 0))), year: y, month: m + 1 }; }
 function fmtBRL(v: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v || 0)); }
 function fmtDTForOffset(iso: string, offsetMin: number) { const local = new Date(new Date(iso).getTime() + offsetMin * 60 * 1000); return `${pad2(local.getUTCDate())}/${pad2(local.getUTCMonth() + 1)} ${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}`; }
+function whatsappHref(raw?: string | null) { let digits = String(raw || "").replace(/\D/g, ""); if (!digits) return ""; if ((digits.length === 10 || digits.length === 11) && !digits.startsWith("55")) digits = `55${digits}`; return digits.length >= 12 ? `https://wa.me/${digits}` : ""; }
+function ctaLabel(raw?: string | null) { const key = String(raw || "").toLowerCase(); if (key === "reparcelamento") return "Reparcelamento"; if (key === "regularizar") return "Regularização"; if (key === "retomar_projeto") return "Retomar projeto"; if (key === "ajuda") return "Pediu ajuda"; return raw || "—"; }
 function isMatrixUser(u?: UserRow | null, unit?: UnitRow | null) { const level = normalizeText(u?.hierarchy_level); return Boolean(u && (level === "matriz" || ((u.role || u.user_role || "").toLowerCase() === "admin" && normalizeText(unit?.tipo) === "matriz"))); }
 function isBranchManagerUser(u?: UserRow | null, unit?: UnitRow | null) { return Boolean(u && !isMatrixUser(u, unit) && normalizeText(u.hierarchy_level) === "gestor_filial"); }
 function buildDashboardScope(me: UserRow, users: UserRow[], units: UnitRow[], vendorScope: string): DashboardScope {
@@ -195,6 +240,8 @@ export default function Inicio() {
   const MY_DAY_PAGE_SIZE = 7;
   const [thoughtOfDay, setThoughtOfDay] = useState<string>(pickThought(rangeToday.ymd));
   const [carteiraHealth, setCarteiraHealth] = useState<CarteiraHealth>(EMPTY_CARTEIRA_HEALTH);
+  const [carteiraHealthLists, setCarteiraHealthLists] = useState<CarteiraHealthLists>(EMPTY_CARTEIRA_HEALTH_LISTS);
+  const [carteiraHealthModal, setCarteiraHealthModal] = useState<CarteiraHealthKey | null>(null);
 
   const giroPageCount = useMemo(() => Math.max(1, Math.ceil(giroAll.length / GIRO_PAGE_SIZE)), [giroAll.length]);
   const giroSlice = useMemo(() => giroAll.slice(giroPage * GIRO_PAGE_SIZE, giroPage * GIRO_PAGE_SIZE + GIRO_PAGE_SIZE), [giroAll, giroPage]);
@@ -514,10 +561,20 @@ export default function Inicio() {
       .slice(0, 50) as ClienteRow[];
     const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
     let carteiraHealthNext: CarteiraHealth = { ...EMPTY_CARTEIRA_HEALTH };
+    const carteiraHealthListsNext: CarteiraHealthLists = {
+      friendly: [],
+      reparcel: [],
+      critical: [],
+      risk: [],
+      regularized: [],
+      recovery: [],
+      highIntent: [],
+      communications: [],
+    };
     try {
       let healthQ = supabase
         .from("vendas")
-        .select("id,vendedor_id,lead_id,cliente_lead_id,valor_venda,grupo,cota,codigo,cancelada_em,reativada_em,inad,inad_em,inad_revertida_em")
+        .select("id,vendedor_id,lead_id,cliente_lead_id,valor_venda,grupo,cota,codigo,cancelada_em,reativada_em,inad,inad_em,inad_revertida_em,administradora,segmento,produto")
         .limit(5000);
       healthQ = applyVendedorScope(healthQ);
       const { data: healthRowsRaw, error: healthErr } = await healthQ;
@@ -525,16 +582,45 @@ export default function Inicio() {
       const healthRows = (healthRowsRaw || []) as any as VendaMini[];
       const leadIds = Array.from(new Set(healthRows.map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
       const namesMap = await tryLoadLeadsMap(leadIds);
+      const sellerIds = Array.from(new Set(healthRows.map((v) => String(v.vendedor_id || "")).filter(Boolean)));
+      const sellerMap = new Map<string, string>();
+      if (sellerIds.length) {
+        const [{ data: sellersByProfile }, { data: sellersByAuth }] = await Promise.all([
+          supabase.from("users").select("id,nome").in("id", sellerIds),
+          supabase.from("users").select("auth_user_id,nome").in("auth_user_id", sellerIds),
+        ]);
+        (sellersByProfile || []).forEach((u: any) => sellerMap.set(String(u.id), String(u.nome || "—")));
+        (sellersByAuth || []).forEach((u: any) => sellerMap.set(String(u.auth_user_id), String(u.nome || "—")));
+      }
       const monthStart = `${today.slice(0, 7)}-01`;
       const recentClickStart = addDaysYMD(today, -7);
+      const healthById = new Map(healthRows.map((v) => [v.id, v] as const));
+
+      const itemFor = (v: VendaMini, extras: Partial<CarteiraHealthItem> = {}): CarteiraHealthItem => {
+        const leadId = v.lead_id || v.cliente_lead_id || null;
+        const lead = leadId ? namesMap.get(leadId) : undefined;
+        return {
+          vendaId: v.id,
+          leadId,
+          cliente: lead?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`,
+          telefone: lead?.telefone || null,
+          grupo: v.grupo || null,
+          cota: v.cota || null,
+          administradora: v.administradora || null,
+          segmento: v.produto || v.segmento || null,
+          vendedorNome: sellerMap.get(String(v.vendedor_id || "")) || null,
+          ...extras,
+        };
+      };
 
       for (const v of healthRows) {
         const cancelled = isVendaCancelada(v);
         const inadStart = toYMD(v.inad_em);
         const reverted = toYMD(v.inad_revertida_em);
-        const reactivated = toYMD((v as any).reativada_em);
+        const reactivated = toYMD(v.reativada_em);
         const cancellation = toYMD(v.cancelada_em);
-        const nome = namesMap.get(v.lead_id || v.cliente_lead_id || "")?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`;
+        const leadId = v.lead_id || v.cliente_lead_id || "";
+        const nome = namesMap.get(leadId)?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`;
 
         if (v.inad && !reverted && !cancelled && inadStart) {
           const dias = Math.max(1, daysDiffYMD(today, inadStart));
@@ -548,34 +634,90 @@ export default function Inicio() {
           if (dias <= 30) {
             carteiraHealthNext.friendlyCount += 1;
             carteiraHealthNext.friendlyValue += value;
+            carteiraHealthListsNext.friendly.push(itemFor(v, { dias, statusLabel: "Régua amigável" }));
           } else if (dias <= 60) {
             carteiraHealthNext.reparcelCount += 1;
             carteiraHealthNext.reparcelValue += value;
+            carteiraHealthListsNext.reparcel.push(itemFor(v, { dias, statusLabel: "Verificar reparcelamento" }));
           } else {
             carteiraHealthNext.criticalCount += 1;
             carteiraHealthNext.criticalValue += value;
-            if (dias >= 80) carteiraHealthNext.riskCount += 1;
+            carteiraHealthListsNext.critical.push(itemFor(v, { dias, statusLabel: "Faixa crítica" }));
+            if (dias >= 80) {
+              carteiraHealthNext.riskCount += 1;
+              carteiraHealthListsNext.risk.push(itemFor(v, { dias, statusLabel: "Risco de cancelamento" }));
+            }
           }
         }
 
-        if (reverted && reverted >= monthStart && reverted <= today) carteiraHealthNext.regularizedMonth += 1;
-        if (cancellation && !reactivated) carteiraHealthNext.recoveryCount += 1;
+        if (reverted && reverted >= monthStart && reverted <= today) {
+          carteiraHealthNext.regularizedMonth += 1;
+          carteiraHealthListsNext.regularized.push(itemFor(v, { statusLabel: `Regularizado em ${fmtDateBRFromYMD(reverted)}` }));
+        }
+        if (cancellation && !reactivated) {
+          carteiraHealthNext.recoveryCount += 1;
+          carteiraHealthListsNext.recovery.push(itemFor(v, {
+            dias: Math.max(0, daysDiffYMD(today, cancellation)),
+            statusLabel: `Cancelado em ${fmtDateBRFromYMD(cancellation)}`,
+          }));
+        }
         if (reactivated && reactivated >= monthStart && reactivated <= today) carteiraHealthNext.recoveredMonth += 1;
       }
 
       try {
         let msgQ = supabase
           .from("carteira_relationship_messages")
-          .select("id,venda_id,vendedor_id,status,sent_at,last_clicked_at,seller_attention_at,created_at")
+          .select("id,venda_id,vendedor_id,status,ruler,stage,milestone,cta_type,subject,click_count,sent_at,last_clicked_at,seller_attention_at,created_at")
           .gte("created_at", `${addDaysYMD(today, -40)}T00:00:00.000Z`)
           .limit(5000);
         msgQ = applyVendedorScope(msgQ);
         const { data: msgRows, error: msgErr } = await msgQ;
         if (msgErr) throw msgErr;
         const rows = msgRows || [];
-        carteiraHealthNext.emailsSentMonth = rows.filter((r: any) => r.status === "sent" && toYMD(r.sent_at) && (toYMD(r.sent_at) as string) >= monthStart).length;
-        const highIntentIds = new Set(rows.filter((r: any) => toYMD(r.last_clicked_at) && (toYMD(r.last_clicked_at) as string) >= recentClickStart).map((r: any) => r.venda_id));
-        carteiraHealthNext.highIntent7d = highIntentIds.size;
+        const sentThisMonth = rows.filter((r: any) => r.status === "sent" && toYMD(r.sent_at) && (toYMD(r.sent_at) as string) >= monthStart);
+        carteiraHealthNext.emailsSentMonth = sentThisMonth.length;
+
+        carteiraHealthListsNext.communications = sentThisMonth
+          .map((r: any) => {
+            const v = healthById.get(String(r.venda_id));
+            return v ? itemFor(v, {
+              ruler: r.ruler,
+              stage: r.stage,
+              milestone: Number(r.milestone || 0) || null,
+              ctaType: r.cta_type || null,
+              sentAt: r.sent_at || null,
+              clickedAt: r.last_clicked_at || null,
+              clickCount: Number(r.click_count || 0),
+              statusLabel: r.ruler === "recuperacao" ? "Recuperação" : "Inadimplência",
+            }) : null;
+          })
+          .filter(Boolean) as CarteiraHealthItem[];
+
+        const highIntentRows = rows.filter((r: any) => toYMD(r.last_clicked_at) && (toYMD(r.last_clicked_at) as string) >= recentClickStart);
+        const highIntentByVenda = new Map<string, any>();
+        for (const row of highIntentRows) {
+          const key = String((row as any).venda_id || "");
+          const prev = highIntentByVenda.get(key);
+          if (!prev || new Date((row as any).last_clicked_at).getTime() > new Date(prev.last_clicked_at).getTime()) highIntentByVenda.set(key, row);
+        }
+        carteiraHealthNext.highIntent7d = highIntentByVenda.size;
+        carteiraHealthListsNext.highIntent = Array.from(highIntentByVenda.values())
+          .map((r: any) => {
+            const v = healthById.get(String(r.venda_id));
+            return v ? itemFor(v, {
+              ruler: r.ruler,
+              stage: r.stage,
+              milestone: Number(r.milestone || 0) || null,
+              ctaType: r.cta_type || null,
+              sentAt: r.sent_at || null,
+              clickedAt: r.last_clicked_at || null,
+              clickCount: Number(r.click_count || 0),
+              statusLabel: "Cliente clicou no CTA",
+            }) : null;
+          })
+          .filter(Boolean)
+          .sort((a: any, b: any) => new Date(b.clickedAt || 0).getTime() - new Date(a.clickedAt || 0).getTime()) as CarteiraHealthItem[];
+
         const contactedIds = new Set(rows.map((r: any) => r.venda_id));
         carteiraHealthNext.maxRecoveredMonth = healthRows.filter((v: any) => {
           const d = toYMD(v.reativada_em);
@@ -651,6 +793,7 @@ export default function Inicio() {
     setMyDayPage(0);
     setThoughtOfDay(pickThought(today));
     setCarteiraHealth(carteiraHealthNext);
+    setCarteiraHealthLists(carteiraHealthListsNext);
     setKpi({ openOppCount, openOppTotal, todayEventsCount, todayGroupsCount, myDayCount: myDay.length, pendingGroupRegistrationCount, monthSalesTotal, monthSalesMeta, monthSalesPct, carteiraAtivaTotal, openStockReqCount, vendasSemComissaoCount, giroDueCount, newProceduresCount, commissionsPendingCount, commissionsPendingTotal, commissionScheduledTotal, commissionScheduledDate });
   }
 
@@ -968,7 +1111,7 @@ export default function Inicio() {
                   </span>
                   Saúde da Carteira
                 </CardTitle>
-                <div className="mt-1 text-sm text-slate-500">MAX acompanha inadimplência, intenção de regularização e recuperação de cancelados.</div>
+                <div className="mt-1 text-sm text-slate-500">MAX acompanha inadimplência, intenção de regularização e recuperação de cancelados. Clique em qualquer indicador para ver os clientes.</div>
               </div>
               <Badge className="w-fit rounded-full border border-[#B5A573]/50 bg-[#B5A573]/15 px-3 py-1 text-[#1E293F]">
                 2 réguas automáticas
@@ -978,37 +1121,42 @@ export default function Inicio() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
-                { label: "1–30 dias", value: carteiraHealth.friendlyCount, helper: `${fmtBRL(carteiraHealth.friendlyValue)} em crédito`, tone: "border-amber-200 bg-amber-50/70" },
-                { label: "31–60 dias", value: carteiraHealth.reparcelCount, helper: `${fmtBRL(carteiraHealth.reparcelValue)} em crédito`, tone: "border-orange-200 bg-orange-50/70" },
-                { label: "+60 dias", value: carteiraHealth.criticalCount, helper: `${fmtBRL(carteiraHealth.criticalValue)} em crédito`, tone: "border-red-200 bg-red-50/70" },
-                { label: "Risco D+80", value: carteiraHealth.riskCount, helper: "próximos da referência D+90", tone: "border-rose-300 bg-rose-50/80" },
+                { key: "friendly" as CarteiraHealthKey, label: "1–30 dias", value: carteiraHealth.friendlyCount, helper: `${fmtBRL(carteiraHealth.friendlyValue)} em crédito`, tone: "border-amber-200 bg-amber-50/70 hover:bg-amber-50" },
+                { key: "reparcel" as CarteiraHealthKey, label: "31–60 dias", value: carteiraHealth.reparcelCount, helper: `${fmtBRL(carteiraHealth.reparcelValue)} em crédito`, tone: "border-orange-200 bg-orange-50/70 hover:bg-orange-50" },
+                { key: "critical" as CarteiraHealthKey, label: "+60 dias", value: carteiraHealth.criticalCount, helper: `${fmtBRL(carteiraHealth.criticalValue)} em crédito`, tone: "border-red-200 bg-red-50/70 hover:bg-red-50" },
+                { key: "risk" as CarteiraHealthKey, label: "Risco D+80", value: carteiraHealth.riskCount, helper: "próximos da referência D+90", tone: "border-rose-300 bg-rose-50/80 hover:bg-rose-50" },
               ].map((item) => (
-                <div key={item.label} className={`rounded-2xl border p-4 ${item.tone}`}>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-500">{item.label}</div>
-                  <div className="mt-2 text-2xl font-black text-slate-950">{item.value}</div>
-                  <div className="mt-1 text-xs text-slate-600">{item.helper}</div>
-                </div>
+                <button type="button" key={item.key} onClick={() => setCarteiraHealthModal(item.key)} className={`group rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#A11C27]/30 ${item.tone}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-500">{item.label}</div>
+                      <div className="mt-2 text-2xl font-black text-slate-950">{item.value}</div>
+                      <div className="mt-1 text-xs text-slate-600">{item.helper}</div>
+                    </div>
+                    <ArrowRight className="mt-1 h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-slate-700" />
+                  </div>
+                </button>
               ))}
             </div>
 
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Regularizados no mês</div>
+              <button type="button" onClick={() => setCarteiraHealthModal("regularized")} className="group rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-emerald-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-300">
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Regularizados no mês</div><ArrowRight className="h-4 w-4 text-emerald-500 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-emerald-950">{carteiraHealth.regularizedMonth}</div>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><RotateCcw className="h-4 w-4" /> Cancelados em recuperação</div>
+              </button>
+              <button type="button" onClick={() => setCarteiraHealthModal("recovery")} className="group rounded-2xl border border-slate-200 bg-white/80 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-300">
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><RotateCcw className="h-4 w-4" /> Cancelados em recuperação</div><ArrowRight className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-slate-950">{carteiraHealth.recoveryCount}</div>
-              </div>
-              <div className="rounded-2xl border border-violet-200 bg-violet-50/70 p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-violet-800"><MousePointerClick className="h-4 w-4" /> Alta intenção · 7 dias</div>
+              </button>
+              <button type="button" onClick={() => setCarteiraHealthModal("highIntent")} className="group rounded-2xl border border-violet-200 bg-violet-50/70 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-violet-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-violet-300">
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-violet-800"><MousePointerClick className="h-4 w-4" /> Alta intenção · 7 dias</div><ArrowRight className="h-4 w-4 text-violet-500 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-violet-950">{carteiraHealth.highIntent7d}</div>
-              </div>
-              <div className="rounded-2xl border border-[#B5A573]/50 bg-[#B5A573]/10 p-4">
-                <div className="text-xs font-semibold text-slate-700">Comunicações MAX · mês</div>
+              </button>
+              <button type="button" onClick={() => setCarteiraHealthModal("communications")} className="group rounded-2xl border border-[#B5A573]/50 bg-[#B5A573]/10 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-[#B5A573]/15 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#B5A573]/50">
+                <div className="flex items-center justify-between gap-2"><div className="text-xs font-semibold text-slate-700">Comunicações MAX · mês</div><ArrowRight className="h-4 w-4 text-slate-500 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-slate-950">{carteiraHealth.emailsSentMonth}</div>
                 <div className="mt-1 text-[11px] text-slate-500">{carteiraHealth.maxRecoveredMonth} recuperação(ões) após contato MAX</div>
-              </div>
+              </button>
             </div>
 
             <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-4 md:flex-row md:items-center md:justify-between">
@@ -1021,6 +1169,68 @@ export default function Inicio() {
             </div>
           </CardContent>
         </Card>
+
+        <Dialog open={Boolean(carteiraHealthModal)} onOpenChange={(open) => { if (!open) setCarteiraHealthModal(null); }}>
+          <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-slate-950">
+                <HeartPulse className="h-5 w-5 text-[#A11C27]" />
+                {carteiraHealthModal ? CARTEIRA_HEALTH_META[carteiraHealthModal].title : "Saúde da Carteira"}
+              </DialogTitle>
+              <div className="text-sm text-slate-500">
+                {carteiraHealthModal ? CARTEIRA_HEALTH_META[carteiraHealthModal].description : ""}
+              </div>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              {carteiraHealthModal && carteiraHealthLists[carteiraHealthModal].length === 0 ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 text-sm text-emerald-900">Nenhum cliente neste indicador agora.</div>
+              ) : null}
+
+              {carteiraHealthModal ? carteiraHealthLists[carteiraHealthModal].map((item, index) => {
+                const wa = whatsappHref(item.telefone);
+                return (
+                  <div key={`${item.vendaId}:${item.sentAt || item.clickedAt || index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="truncate text-sm font-bold text-slate-950">{item.cliente}</div>
+                          {item.statusLabel ? <Badge className="rounded-full border border-slate-200 bg-slate-50 text-slate-700">{item.statusLabel}</Badge> : null}
+                          {item.clickCount ? <Badge className="rounded-full border border-violet-200 bg-violet-50 text-violet-700">{item.clickCount} clique(s)</Badge> : null}
+                        </div>
+                        <div className="mt-2 grid gap-x-5 gap-y-1 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
+                          <div><span className="font-semibold text-slate-800">Grupo/Cota:</span> {item.grupo || "—"}/{item.cota || "—"}</div>
+                          <div><span className="font-semibold text-slate-800">Produto:</span> {item.segmento || "—"}</div>
+                          <div><span className="font-semibold text-slate-800">Administradora:</span> {item.administradora || "—"}</div>
+                          {typeof item.dias === "number" ? <div><span className="font-semibold text-slate-800">Dias:</span> {item.dias}</div> : null}
+                          {item.vendedorNome ? <div><span className="font-semibold text-slate-800">Responsável:</span> {item.vendedorNome}</div> : null}
+                          {item.ctaType ? <div><span className="font-semibold text-slate-800">CTA:</span> {ctaLabel(item.ctaType)}</div> : null}
+                          {item.sentAt ? <div><span className="font-semibold text-slate-800">Enviado:</span> {fmtDTForOffset(item.sentAt, PV_OFFSET_MIN)}</div> : null}
+                          {item.clickedAt ? <div><span className="font-semibold text-slate-800">Último clique:</span> {fmtDTForOffset(item.clickedAt, PV_OFFSET_MIN)}</div> : null}
+                          {item.milestone ? <div><span className="font-semibold text-slate-800">Marco:</span> D+{item.milestone}</div> : null}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        {item.leadId ? (
+                          <Button className={subtleButton} onClick={() => { setCarteiraHealthModal(null); nav(`/clientes?lead_id=${encodeURIComponent(item.leadId || "")}`); }}>
+                            Ver cliente
+                          </Button>
+                        ) : null}
+                        {wa ? (
+                          <Button className={primaryButton} onClick={() => window.open(wa, "_blank", "noopener,noreferrer")}>
+                            <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp
+                          </Button>
+                        ) : (
+                          <Button className={subtleButton} disabled>Sem WhatsApp</Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <Card className={`${glassCard} xl:col-span-2`}>

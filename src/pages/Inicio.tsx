@@ -1111,7 +1111,7 @@ export default function Inicio() {
                   </span>
                   Saúde da Carteira
                 </CardTitle>
-                <div className="mt-1 text-sm text-slate-500">MAX acompanha inadimplência, intenção de regularização e recuperação de cancelados.</div>
+                <div className="mt-1 text-sm text-slate-500">MAX acompanha inadimplência, intenção de regularização e recuperação de cancelados. Clique em qualquer indicador para ver os clientes.</div>
               </div>
               <Badge className="w-fit rounded-full border border-[#B5A573]/50 bg-[#B5A573]/15 px-3 py-1 text-[#1E293F]">
                 2 réguas automáticas
@@ -1121,37 +1121,42 @@ export default function Inicio() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
-                { label: "1–30 dias", value: carteiraHealth.friendlyCount, helper: `${fmtBRL(carteiraHealth.friendlyValue)} em crédito`, tone: "border-amber-200 bg-amber-50/70" },
-                { label: "31–60 dias", value: carteiraHealth.reparcelCount, helper: `${fmtBRL(carteiraHealth.reparcelValue)} em crédito`, tone: "border-orange-200 bg-orange-50/70" },
-                { label: "+60 dias", value: carteiraHealth.criticalCount, helper: `${fmtBRL(carteiraHealth.criticalValue)} em crédito`, tone: "border-red-200 bg-red-50/70" },
-                { label: "Risco D+80", value: carteiraHealth.riskCount, helper: "próximos da referência D+90", tone: "border-rose-300 bg-rose-50/80" },
+                { key: "friendly" as CarteiraHealthKey, label: "1–30 dias", value: carteiraHealth.friendlyCount, helper: `${fmtBRL(carteiraHealth.friendlyValue)} em crédito`, tone: "border-amber-200 bg-amber-50/70 hover:bg-amber-50" },
+                { key: "reparcel" as CarteiraHealthKey, label: "31–60 dias", value: carteiraHealth.reparcelCount, helper: `${fmtBRL(carteiraHealth.reparcelValue)} em crédito`, tone: "border-orange-200 bg-orange-50/70 hover:bg-orange-50" },
+                { key: "critical" as CarteiraHealthKey, label: "+60 dias", value: carteiraHealth.criticalCount, helper: `${fmtBRL(carteiraHealth.criticalValue)} em crédito`, tone: "border-red-200 bg-red-50/70 hover:bg-red-50" },
+                { key: "risk" as CarteiraHealthKey, label: "Risco D+80", value: carteiraHealth.riskCount, helper: "próximos da referência D+90", tone: "border-rose-300 bg-rose-50/80 hover:bg-rose-50" },
               ].map((item) => (
-                <div key={item.label} className={`rounded-2xl border p-4 ${item.tone}`}>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-500">{item.label}</div>
-                  <div className="mt-2 text-2xl font-black text-slate-950">{item.value}</div>
-                  <div className="mt-1 text-xs text-slate-600">{item.helper}</div>
-                </div>
+                <button type="button" key={item.key} onClick={() => setCarteiraHealthModal(item.key)} className={`group rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#A11C27]/30 ${item.tone}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-500">{item.label}</div>
+                      <div className="mt-2 text-2xl font-black text-slate-950">{item.value}</div>
+                      <div className="mt-1 text-xs text-slate-600">{item.helper}</div>
+                    </div>
+                    <ArrowRight className="mt-1 h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-slate-700" />
+                  </div>
+                </button>
               ))}
             </div>
 
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Regularizados no mês</div>
+              <button type="button" onClick={() => setCarteiraHealthModal("regularized")} className="group rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-emerald-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-300">
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Regularizados no mês</div><ArrowRight className="h-4 w-4 text-emerald-500 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-emerald-950">{carteiraHealth.regularizedMonth}</div>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><RotateCcw className="h-4 w-4" /> Cancelados em recuperação</div>
+              </button>
+              <button type="button" onClick={() => setCarteiraHealthModal("recovery")} className="group rounded-2xl border border-slate-200 bg-white/80 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-300">
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><RotateCcw className="h-4 w-4" /> Cancelados em recuperação</div><ArrowRight className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-slate-950">{carteiraHealth.recoveryCount}</div>
-              </div>
-              <div className="rounded-2xl border border-violet-200 bg-violet-50/70 p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-violet-800"><MousePointerClick className="h-4 w-4" /> Alta intenção · 7 dias</div>
+              </button>
+              <button type="button" onClick={() => setCarteiraHealthModal("highIntent")} className="group rounded-2xl border border-violet-200 bg-violet-50/70 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-violet-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-violet-300">
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-violet-800"><MousePointerClick className="h-4 w-4" /> Alta intenção · 7 dias</div><ArrowRight className="h-4 w-4 text-violet-500 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-violet-950">{carteiraHealth.highIntent7d}</div>
-              </div>
-              <div className="rounded-2xl border border-[#B5A573]/50 bg-[#B5A573]/10 p-4">
-                <div className="text-xs font-semibold text-slate-700">Comunicações MAX · mês</div>
+              </button>
+              <button type="button" onClick={() => setCarteiraHealthModal("communications")} className="group rounded-2xl border border-[#B5A573]/50 bg-[#B5A573]/10 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-[#B5A573]/15 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#B5A573]/50">
+                <div className="flex items-center justify-between gap-2"><div className="text-xs font-semibold text-slate-700">Comunicações MAX · mês</div><ArrowRight className="h-4 w-4 text-slate-500 transition-transform group-hover:translate-x-0.5" /></div>
                 <div className="mt-2 text-xl font-black text-slate-950">{carteiraHealth.emailsSentMonth}</div>
                 <div className="mt-1 text-[11px] text-slate-500">{carteiraHealth.maxRecoveredMonth} recuperação(ões) após contato MAX</div>
-              </div>
+              </button>
             </div>
 
             <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-4 md:flex-row md:items-center md:justify-between">
@@ -1164,6 +1169,68 @@ export default function Inicio() {
             </div>
           </CardContent>
         </Card>
+
+        <Dialog open={Boolean(carteiraHealthModal)} onOpenChange={(open) => { if (!open) setCarteiraHealthModal(null); }}>
+          <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-slate-950">
+                <HeartPulse className="h-5 w-5 text-[#A11C27]" />
+                {carteiraHealthModal ? CARTEIRA_HEALTH_META[carteiraHealthModal].title : "Saúde da Carteira"}
+              </DialogTitle>
+              <div className="text-sm text-slate-500">
+                {carteiraHealthModal ? CARTEIRA_HEALTH_META[carteiraHealthModal].description : ""}
+              </div>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              {carteiraHealthModal && carteiraHealthLists[carteiraHealthModal].length === 0 ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 text-sm text-emerald-900">Nenhum cliente neste indicador agora.</div>
+              ) : null}
+
+              {carteiraHealthModal ? carteiraHealthLists[carteiraHealthModal].map((item, index) => {
+                const wa = whatsappHref(item.telefone);
+                return (
+                  <div key={`${item.vendaId}:${item.sentAt || item.clickedAt || index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="truncate text-sm font-bold text-slate-950">{item.cliente}</div>
+                          {item.statusLabel ? <Badge className="rounded-full border border-slate-200 bg-slate-50 text-slate-700">{item.statusLabel}</Badge> : null}
+                          {item.clickCount ? <Badge className="rounded-full border border-violet-200 bg-violet-50 text-violet-700">{item.clickCount} clique(s)</Badge> : null}
+                        </div>
+                        <div className="mt-2 grid gap-x-5 gap-y-1 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
+                          <div><span className="font-semibold text-slate-800">Grupo/Cota:</span> {item.grupo || "—"}/{item.cota || "—"}</div>
+                          <div><span className="font-semibold text-slate-800">Produto:</span> {item.segmento || "—"}</div>
+                          <div><span className="font-semibold text-slate-800">Administradora:</span> {item.administradora || "—"}</div>
+                          {typeof item.dias === "number" ? <div><span className="font-semibold text-slate-800">Dias:</span> {item.dias}</div> : null}
+                          {item.vendedorNome ? <div><span className="font-semibold text-slate-800">Responsável:</span> {item.vendedorNome}</div> : null}
+                          {item.ctaType ? <div><span className="font-semibold text-slate-800">CTA:</span> {ctaLabel(item.ctaType)}</div> : null}
+                          {item.sentAt ? <div><span className="font-semibold text-slate-800">Enviado:</span> {fmtDTForOffset(item.sentAt, PV_OFFSET_MIN)}</div> : null}
+                          {item.clickedAt ? <div><span className="font-semibold text-slate-800">Último clique:</span> {fmtDTForOffset(item.clickedAt, PV_OFFSET_MIN)}</div> : null}
+                          {item.milestone ? <div><span className="font-semibold text-slate-800">Marco:</span> D+{item.milestone}</div> : null}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        {item.leadId ? (
+                          <Button className={subtleButton} onClick={() => { setCarteiraHealthModal(null); nav(`/clientes?lead_id=${encodeURIComponent(item.leadId || "")}`); }}>
+                            Ver cliente
+                          </Button>
+                        ) : null}
+                        {wa ? (
+                          <Button className={primaryButton} onClick={() => window.open(wa, "_blank", "noopener,noreferrer")}>
+                            <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp
+                          </Button>
+                        ) : (
+                          <Button className={subtleButton} disabled>Sem WhatsApp</Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <Card className={`${glassCard} xl:col-span-2`}>

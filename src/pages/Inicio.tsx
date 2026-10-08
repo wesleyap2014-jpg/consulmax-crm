@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import {
   RefreshCcw,
@@ -47,7 +48,7 @@ type CommissionFlowRow = { id?: string; commission_id: string; mes?: number | nu
 type CommissionBatchRow = { id: string; venda_id: string; vendedor_id: string; business_unit_id?: string | null; status?: string | null; legacy?: boolean | null };
 type CommissionEntryRow = { id: string; batch_id: string; recipient_user_id?: string | null; recipient_unit_id?: string | null; business_unit_id?: string | null; status?: string | null };
 type CommissionEntryFlowRow = { id: string; entry_id: string; batch_id: string; valor_previsto: number | null; valor_pago: number | null; data_pagamento: string | null; status?: string | null };
-type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; segmento?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
+type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; reativada_em?: string | null; segmento?: string | null; produto?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
 type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
@@ -66,6 +67,28 @@ type CarteiraHealth = {
   highIntent7d: number;
   emailsSentMonth: number;
 };
+type CarteiraHealthKey = "friendly" | "reparcel" | "critical" | "risk" | "regularized" | "recovery" | "highIntent" | "communications";
+type CarteiraHealthItem = {
+  vendaId: string;
+  leadId?: string | null;
+  cliente: string;
+  telefone?: string | null;
+  grupo?: string | null;
+  cota?: string | null;
+  administradora?: string | null;
+  segmento?: string | null;
+  vendedorNome?: string | null;
+  dias?: number | null;
+  statusLabel?: string | null;
+  ruler?: string | null;
+  stage?: string | null;
+  milestone?: number | null;
+  ctaType?: string | null;
+  sentAt?: string | null;
+  clickedAt?: string | null;
+  clickCount?: number;
+};
+type CarteiraHealthLists = Record<CarteiraHealthKey, CarteiraHealthItem[]>;
 type DashboardScope = {
   mode: "matrix" | "branch" | "seller";
   isGlobal: boolean;

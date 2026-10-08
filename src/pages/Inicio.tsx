@@ -561,10 +561,20 @@ export default function Inicio() {
       .slice(0, 50) as ClienteRow[];
     const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
     let carteiraHealthNext: CarteiraHealth = { ...EMPTY_CARTEIRA_HEALTH };
+    const carteiraHealthListsNext: CarteiraHealthLists = {
+      friendly: [],
+      reparcel: [],
+      critical: [],
+      risk: [],
+      regularized: [],
+      recovery: [],
+      highIntent: [],
+      communications: [],
+    };
     try {
       let healthQ = supabase
         .from("vendas")
-        .select("id,vendedor_id,lead_id,cliente_lead_id,valor_venda,grupo,cota,codigo,cancelada_em,reativada_em,inad,inad_em,inad_revertida_em")
+        .select("id,vendedor_id,lead_id,cliente_lead_id,valor_venda,grupo,cota,codigo,cancelada_em,reativada_em,inad,inad_em,inad_revertida_em,administradora,segmento,produto")
         .limit(5000);
       healthQ = applyVendedorScope(healthQ);
       const { data: healthRowsRaw, error: healthErr } = await healthQ;
@@ -572,16 +582,45 @@ export default function Inicio() {
       const healthRows = (healthRowsRaw || []) as any as VendaMini[];
       const leadIds = Array.from(new Set(healthRows.map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
       const namesMap = await tryLoadLeadsMap(leadIds);
+      const sellerIds = Array.from(new Set(healthRows.map((v) => String(v.vendedor_id || "")).filter(Boolean)));
+      const sellerMap = new Map<string, string>();
+      if (sellerIds.length) {
+        const [{ data: sellersByProfile }, { data: sellersByAuth }] = await Promise.all([
+          supabase.from("users").select("id,nome").in("id", sellerIds),
+          supabase.from("users").select("auth_user_id,nome").in("auth_user_id", sellerIds),
+        ]);
+        (sellersByProfile || []).forEach((u: any) => sellerMap.set(String(u.id), String(u.nome || "—")));
+        (sellersByAuth || []).forEach((u: any) => sellerMap.set(String(u.auth_user_id), String(u.nome || "—")));
+      }
       const monthStart = `${today.slice(0, 7)}-01`;
       const recentClickStart = addDaysYMD(today, -7);
+      const healthById = new Map(healthRows.map((v) => [v.id, v] as const));
+
+      const itemFor = (v: VendaMini, extras: Partial<CarteiraHealthItem> = {}): CarteiraHealthItem => {
+        const leadId = v.lead_id || v.cliente_lead_id || null;
+        const lead = leadId ? namesMap.get(leadId) : undefined;
+        return {
+          vendaId: v.id,
+          leadId,
+          cliente: lead?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`,
+          telefone: lead?.telefone || null,
+          grupo: v.grupo || null,
+          cota: v.cota || null,
+          administradora: v.administradora || null,
+          segmento: v.produto || v.segmento || null,
+          vendedorNome: sellerMap.get(String(v.vendedor_id || "")) || null,
+          ...extras,
+        };
+      };
 
       for (const v of healthRows) {
         const cancelled = isVendaCancelada(v);
         const inadStart = toYMD(v.inad_em);
         const reverted = toYMD(v.inad_revertida_em);
-        const reactivated = toYMD((v as any).reativada_em);
+        const reactivated = toYMD(v.reativada_em);
         const cancellation = toYMD(v.cancelada_em);
-        const nome = namesMap.get(v.lead_id || v.cliente_lead_id || "")?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`;
+        const leadId = v.lead_id || v.cliente_lead_id || "";
+        const nome = namesMap.get(leadId)?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`;
 
         if (v.inad && !reverted && !cancelled && inadStart) {
           const dias = Math.max(1, daysDiffYMD(today, inadStart));
@@ -595,34 +634,90 @@ export default function Inicio() {
           if (dias <= 30) {
             carteiraHealthNext.friendlyCount += 1;
             carteiraHealthNext.friendlyValue += value;
+            carteiraHealthListsNext.friendly.push(itemFor(v, { dias, statusLabel: "Régua amigável" }));
           } else if (dias <= 60) {
             carteiraHealthNext.reparcelCount += 1;
             carteiraHealthNext.reparcelValue += value;
+            carteiraHealthListsNext.reparcel.push(itemFor(v, { dias, statusLabel: "Verificar reparcelamento" }));
           } else {
             carteiraHealthNext.criticalCount += 1;
             carteiraHealthNext.criticalValue += value;
-            if (dias >= 80) carteiraHealthNext.riskCount += 1;
+            carteiraHealthListsNext.critical.push(itemFor(v, { dias, statusLabel: "Faixa crítica" }));
+            if (dias >= 80) {
+              carteiraHealthNext.riskCount += 1;
+              carteiraHealthListsNext.risk.push(itemFor(v, { dias, statusLabel: "Risco de cancelamento" }));
+            }
           }
         }
 
-        if (reverted && reverted >= monthStart && reverted <= today) carteiraHealthNext.regularizedMonth += 1;
-        if (cancellation && !reactivated) carteiraHealthNext.recoveryCount += 1;
+        if (reverted && reverted >= monthStart && reverted <= today) {
+          carteiraHealthNext.regularizedMonth += 1;
+          carteiraHealthListsNext.regularized.push(itemFor(v, { statusLabel: `Regularizado em ${fmtDateBRFromYMD(reverted)}` }));
+        }
+        if (cancellation && !reactivated) {
+          carteiraHealthNext.recoveryCount += 1;
+          carteiraHealthListsNext.recovery.push(itemFor(v, {
+            dias: Math.max(0, daysDiffYMD(today, cancellation)),
+            statusLabel: `Cancelado em ${fmtDateBRFromYMD(cancellation)}`,
+          }));
+        }
         if (reactivated && reactivated >= monthStart && reactivated <= today) carteiraHealthNext.recoveredMonth += 1;
       }
 
       try {
         let msgQ = supabase
           .from("carteira_relationship_messages")
-          .select("id,venda_id,vendedor_id,status,sent_at,last_clicked_at,seller_attention_at,created_at")
+          .select("id,venda_id,vendedor_id,status,ruler,stage,milestone,cta_type,subject,click_count,sent_at,last_clicked_at,seller_attention_at,created_at")
           .gte("created_at", `${addDaysYMD(today, -40)}T00:00:00.000Z`)
           .limit(5000);
         msgQ = applyVendedorScope(msgQ);
         const { data: msgRows, error: msgErr } = await msgQ;
         if (msgErr) throw msgErr;
         const rows = msgRows || [];
-        carteiraHealthNext.emailsSentMonth = rows.filter((r: any) => r.status === "sent" && toYMD(r.sent_at) && (toYMD(r.sent_at) as string) >= monthStart).length;
-        const highIntentIds = new Set(rows.filter((r: any) => toYMD(r.last_clicked_at) && (toYMD(r.last_clicked_at) as string) >= recentClickStart).map((r: any) => r.venda_id));
-        carteiraHealthNext.highIntent7d = highIntentIds.size;
+        const sentThisMonth = rows.filter((r: any) => r.status === "sent" && toYMD(r.sent_at) && (toYMD(r.sent_at) as string) >= monthStart);
+        carteiraHealthNext.emailsSentMonth = sentThisMonth.length;
+
+        carteiraHealthListsNext.communications = sentThisMonth
+          .map((r: any) => {
+            const v = healthById.get(String(r.venda_id));
+            return v ? itemFor(v, {
+              ruler: r.ruler,
+              stage: r.stage,
+              milestone: Number(r.milestone || 0) || null,
+              ctaType: r.cta_type || null,
+              sentAt: r.sent_at || null,
+              clickedAt: r.last_clicked_at || null,
+              clickCount: Number(r.click_count || 0),
+              statusLabel: r.ruler === "recuperacao" ? "Recuperação" : "Inadimplência",
+            }) : null;
+          })
+          .filter(Boolean) as CarteiraHealthItem[];
+
+        const highIntentRows = rows.filter((r: any) => toYMD(r.last_clicked_at) && (toYMD(r.last_clicked_at) as string) >= recentClickStart);
+        const highIntentByVenda = new Map<string, any>();
+        for (const row of highIntentRows) {
+          const key = String((row as any).venda_id || "");
+          const prev = highIntentByVenda.get(key);
+          if (!prev || new Date((row as any).last_clicked_at).getTime() > new Date(prev.last_clicked_at).getTime()) highIntentByVenda.set(key, row);
+        }
+        carteiraHealthNext.highIntent7d = highIntentByVenda.size;
+        carteiraHealthListsNext.highIntent = Array.from(highIntentByVenda.values())
+          .map((r: any) => {
+            const v = healthById.get(String(r.venda_id));
+            return v ? itemFor(v, {
+              ruler: r.ruler,
+              stage: r.stage,
+              milestone: Number(r.milestone || 0) || null,
+              ctaType: r.cta_type || null,
+              sentAt: r.sent_at || null,
+              clickedAt: r.last_clicked_at || null,
+              clickCount: Number(r.click_count || 0),
+              statusLabel: "Cliente clicou no CTA",
+            }) : null;
+          })
+          .filter(Boolean)
+          .sort((a: any, b: any) => new Date(b.clickedAt || 0).getTime() - new Date(a.clickedAt || 0).getTime()) as CarteiraHealthItem[];
+
         const contactedIds = new Set(rows.map((r: any) => r.venda_id));
         carteiraHealthNext.maxRecoveredMonth = healthRows.filter((v: any) => {
           const d = toYMD(v.reativada_em);
@@ -698,6 +793,7 @@ export default function Inicio() {
     setMyDayPage(0);
     setThoughtOfDay(pickThought(today));
     setCarteiraHealth(carteiraHealthNext);
+    setCarteiraHealthLists(carteiraHealthListsNext);
     setKpi({ openOppCount, openOppTotal, todayEventsCount, todayGroupsCount, myDayCount: myDay.length, pendingGroupRegistrationCount, monthSalesTotal, monthSalesMeta, monthSalesPct, carteiraAtivaTotal, openStockReqCount, vendasSemComissaoCount, giroDueCount, newProceduresCount, commissionsPendingCount, commissionsPendingTotal, commissionScheduledTotal, commissionScheduledDate });
   }
 

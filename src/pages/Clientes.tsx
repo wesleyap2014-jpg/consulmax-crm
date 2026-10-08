@@ -809,6 +809,7 @@ export default function ClientesPage() {
 
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [overlayMode, setOverlayMode] = useState<"novo" | "edit" | "view">("novo");
+  const deepLinkHandled = useRef(false);
   const [active, setActive] = useState<ClienteBase | null>(null);
 
   const [nome, setNome] = useState("");
@@ -847,6 +848,44 @@ export default function ClientesPage() {
     loadDemografia();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  useEffect(() => {
+    if (deepLinkHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const leadId = String(params.get("lead_id") || "").trim();
+    if (!leadId) return;
+    deepLinkHandled.current = true;
+
+    (async () => {
+      try {
+        const [{ data: lead, error: leadErr }, { data: cliente, error: clienteErr }, { data: venda, error: vendaErr }] = await Promise.all([
+          supabase.from("leads").select("id,nome,telefone,email").eq("id", leadId).maybeSingle(),
+          supabase.from("clientes").select("id,lead_id,nome,telefone,email,data_nascimento").eq("lead_id", leadId).maybeSingle(),
+          supabase.from("vendas").select("id,lead_id,grupo,vendedor_id,telefone,email,nascimento").eq("lead_id", leadId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        ]);
+        if (leadErr) throw leadErr;
+        if (clienteErr) throw clienteErr;
+        if (vendaErr) throw vendaErr;
+        if (!lead && !cliente) return;
+
+        const target: ClienteBase = {
+          id: leadId,
+          lead_id: leadId,
+          nome: String(cliente?.nome || lead?.nome || "Cliente"),
+          telefone: cliente?.telefone || lead?.telefone || venda?.telefone || null,
+          email: cliente?.email || lead?.email || venda?.email || null,
+          data_nascimento: cliente?.data_nascimento || venda?.nascimento || null,
+          grupo: venda?.grupo || null,
+          cliente_row_id: cliente?.id || null,
+          vendas_ids: venda?.id ? [String(venda.id)] : [],
+        };
+        await openOverlay("view", target);
+      } catch (error) {
+        console.warn("[Clientes] Não foi possível abrir cliente por deep link:", error);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function hydratePhone(raw?: string | null, countryHint?: CountryCode | null) {
     const hint = countryHint || undefined;

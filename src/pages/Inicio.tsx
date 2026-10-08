@@ -117,6 +117,26 @@ const EMPTY_CARTEIRA_HEALTH: CarteiraHealth = {
   highIntent7d: 0,
   emailsSentMonth: 0,
 };
+const EMPTY_CARTEIRA_HEALTH_LISTS: CarteiraHealthLists = {
+  friendly: [],
+  reparcel: [],
+  critical: [],
+  risk: [],
+  regularized: [],
+  recovery: [],
+  highIntent: [],
+  communications: [],
+};
+const CARTEIRA_HEALTH_META: Record<CarteiraHealthKey, { title: string; description: string }> = {
+  friendly: { title: "Inadimplência · 1–30 dias", description: "Clientes na etapa amigável da régua de regularização." },
+  reparcel: { title: "Inadimplência · 31–60 dias", description: "Clientes para os quais o MAX passa a trabalhar a possibilidade de reparcelamento." },
+  critical: { title: "Inadimplência · +60 dias", description: "Clientes em faixa crítica de inadimplência." },
+  risk: { title: "Risco de cancelamento · D+80", description: "Clientes próximos da referência operacional de cancelamento em D+90." },
+  regularized: { title: "Regularizados no mês", description: "Clientes que saíram da inadimplência durante o mês atual." },
+  recovery: { title: "Cancelados em recuperação", description: "Clientes atualmente dentro da régua pós-cancelamento." },
+  highIntent: { title: "Alta intenção · últimos 7 dias", description: "Clientes que clicaram em algum CTA dos e-mails enviados pelo MAX." },
+  communications: { title: "Comunicações MAX · mês", description: "E-mails enviados pelas réguas de inadimplência e recuperação no mês atual." },
+};
 
 /** ===================== Helpers ===================== */
 function pad2(n: number) { return String(n).padStart(2, "0"); }
@@ -129,6 +149,8 @@ function fmtDateBRFromYMD(ymd?: string | null) { const d10 = toYMD(ymd) || ""; c
 function monthRangeYMDFromOffset(now: Date, offsetMin: number) { const local = new Date(now.getTime() + offsetMin * 60 * 1000); const y = local.getUTCFullYear(); const m = local.getUTCMonth(); const f = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`; return { startYMD: f(new Date(Date.UTC(y, m, 1, 12, 0, 0))), endYMD: f(new Date(Date.UTC(y, m + 1, 1, 12, 0, 0))), year: y, month: m + 1 }; }
 function fmtBRL(v: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v || 0)); }
 function fmtDTForOffset(iso: string, offsetMin: number) { const local = new Date(new Date(iso).getTime() + offsetMin * 60 * 1000); return `${pad2(local.getUTCDate())}/${pad2(local.getUTCMonth() + 1)} ${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}`; }
+function whatsappHref(raw?: string | null) { let digits = String(raw || "").replace(/\D/g, ""); if (!digits) return ""; if ((digits.length === 10 || digits.length === 11) && !digits.startsWith("55")) digits = `55${digits}`; return digits.length >= 12 ? `https://wa.me/${digits}` : ""; }
+function ctaLabel(raw?: string | null) { const key = String(raw || "").toLowerCase(); if (key === "reparcelamento") return "Reparcelamento"; if (key === "regularizar") return "Regularização"; if (key === "retomar_projeto") return "Retomar projeto"; if (key === "ajuda") return "Pediu ajuda"; return raw || "—"; }
 function isMatrixUser(u?: UserRow | null, unit?: UnitRow | null) { const level = normalizeText(u?.hierarchy_level); return Boolean(u && (level === "matriz" || ((u.role || u.user_role || "").toLowerCase() === "admin" && normalizeText(unit?.tipo) === "matriz"))); }
 function isBranchManagerUser(u?: UserRow | null, unit?: UnitRow | null) { return Boolean(u && !isMatrixUser(u, unit) && normalizeText(u.hierarchy_level) === "gestor_filial"); }
 function buildDashboardScope(me: UserRow, users: UserRow[], units: UnitRow[], vendorScope: string): DashboardScope {
@@ -218,6 +240,8 @@ export default function Inicio() {
   const MY_DAY_PAGE_SIZE = 7;
   const [thoughtOfDay, setThoughtOfDay] = useState<string>(pickThought(rangeToday.ymd));
   const [carteiraHealth, setCarteiraHealth] = useState<CarteiraHealth>(EMPTY_CARTEIRA_HEALTH);
+  const [carteiraHealthLists, setCarteiraHealthLists] = useState<CarteiraHealthLists>(EMPTY_CARTEIRA_HEALTH_LISTS);
+  const [carteiraHealthModal, setCarteiraHealthModal] = useState<CarteiraHealthKey | null>(null);
 
   const giroPageCount = useMemo(() => Math.max(1, Math.ceil(giroAll.length / GIRO_PAGE_SIZE)), [giroAll.length]);
   const giroSlice = useMemo(() => giroAll.slice(giroPage * GIRO_PAGE_SIZE, giroPage * GIRO_PAGE_SIZE + GIRO_PAGE_SIZE), [giroAll, giroPage]);

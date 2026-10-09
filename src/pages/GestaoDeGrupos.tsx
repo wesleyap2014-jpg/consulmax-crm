@@ -1229,6 +1229,27 @@ export default function GestaoDeGrupos() {
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
   const [fAdmin, setFAdmin] = useState("");
   const [adminScope, setAdminScope] = useState<string>("");
+  const [bidRules, setBidRules] = useState<Array<{ administradora: string; scope: string; segmento: string; group_id: string | null; modalities: Array<{ key: string; label: string }> }>>([]);
+  const loadBidRules = useCallback(async () => {
+    const { data, error } = await supabase.from("group_bid_modality_rules").select("administradora,scope,segmento,group_id,modalities");
+    if (error) { console.warn("Configurações de lance indisponíveis:", error.message); return; }
+    setBidRules((data || []).map((v: any) => ({
+      administradora: String(v.administradora || ""), scope: String(v.scope || ""),
+      segmento: String(v.segmento || ""), group_id: v.group_id ?? null,
+      modalities: Array.isArray(v.modalities) ? v.modalities.filter((m: any) => m && typeof m.key === "string" && typeof m.label === "string") : []
+    })));
+  }, []);
+  useEffect(() => { void loadBidRules(); }, [loadBidRules]);
+  const normalizeBidScope = (v: string) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/consorcios?|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
+  const modesForRow = (r: LinhaUI) => {
+    const candidates = bidRules.filter(rule => normalizeBidScope(rule.administradora) === normalizeBidScope(r.administradora));
+    const rule = candidates.find(x => x.scope === "grupo" && x.group_id === r.id)
+      || candidates.find(x => x.scope === "segmento" && normalizeBidScope(x.segmento) === normalizeBidScope(r.segmento))
+      || candidates.find(x => x.scope === "administradora");
+    return rule ? rule.modalities : [
+      { key: "fixo_25", label: "Fixo 25%" }, { key: "fixo_50", label: "Fixo 50%" }, { key: "livre", label: "Lance Livre" }
+    ];
+  };
   const [fSeg, setFSeg] = useState("");
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
@@ -1587,7 +1608,7 @@ export default function GestaoDeGrupos() {
         </CardContent>
       </Card>
 
-      <GroupBidModalitySettings groups={grupos.filter((g) => !isStubId(g.id))} />
+      <GroupBidModalitySettings groups={grupos.filter((g) => !isStubId(g.id))} onSaved={loadBidRules} />
 
       <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
         <Card className="lg:col-span-3">
@@ -1681,15 +1702,7 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-right">PARTIC.</th>
               <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
               <th className="p-2 text-right">Tot. Entr.</th>
-              <th className="p-2 text-right">25% Entregas</th>
-              <th className="p-2 text-right">25% Ofertas</th>
-              <th className="p-2 text-right">50% Entregas</th>
-              <th className="p-2 text-right">50% Ofertas</th>
-              <th className="p-2 text-right">LL Entregas</th>
-              <th className="p-2 text-right">LL Ofertas</th>
-              <th className="p-2 text-right">Maior %</th>
-              <th className="p-2 text-right">Menor %</th>
-              <th className="p-2 text-right">{headerSort("LL Mediana", "mediana")}</th>
+              <th className="p-2 text-left">Modalidades de Lance</th>
               <th className="p-2 text-center">Apuração</th>
               <th className="p-2 text-center">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
               <th className="p-2 text-center">{headerSort("Vencimento", "prox_vencimento")}</th>
@@ -1702,13 +1715,13 @@ export default function GestaoDeGrupos() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={22} className="p-6 text-center text-muted-foreground">
+                <td colSpan={14} className="p-6 text-center text-muted-foreground">
                   <Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…
                 </td>
               </tr>
             ) : sorted.length === 0 ? (
               <tr>
-                <td colSpan={22} className="p-6 text-center text-muted-foreground">
+                <td colSpan={14} className="p-6 text-center text-muted-foreground">
                   Sem registros para os filtros aplicados.
                 </td>
               </tr>
@@ -1763,15 +1776,25 @@ export default function GestaoDeGrupos() {
                       )}
                     </td>
                     <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
-                    <td className="p-2 text-right">{r.fix25_entregas}</td>
-                    <td className="p-2 text-right">{r.fix25_ofertas}</td>
-                    <td className="p-2 text-right">{r.fix50_entregas}</td>
-                    <td className="p-2 text-right">{r.fix50_ofertas}</td>
-                    <td className="p-2 text-right">{r.ll_entregas}</td>
-                    <td className="p-2 text-right">{r.ll_ofertas}</td>
-                    <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
-                    <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
-                    <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
+                    <td className="p-2 min-w-[240px]">
+                      <div className="flex flex-wrap gap-1">
+                        {modesForRow(r).map((mode) => {
+                          const k = String(mode.key).toLowerCase();
+                          const is25 = k === "fixo_25";
+                          const is50 = k === "fixo_50";
+                          const isLivre = k === "livre";
+                          const known = is25 || is50 || isLivre;
+                          const ofertas = is25 ? r.fix25_ofertas : is50 ? r.fix50_ofertas : r.ll_ofertas;
+                          const entregas = is25 ? r.fix25_entregas : is50 ? r.fix50_entregas : r.ll_entregas;
+                          return <span key={mode.key} className="inline-flex flex-col rounded-md border px-2 py-1 text-xs whitespace-nowrap" title={known ? "Ofertas e entregas da última assembleia" : "Modalidade configurada; resultado ainda não registrado no modelo atual"}>
+                            <strong>{mode.label}</strong>
+                            <span className="text-muted-foreground">{known ? `${ofertas} ofertas · ${entregas} entregas` : "Sem apuração integrada"}</span>
+                            {isLivre && r.mediana != null && <span className="text-muted-foreground">Mediana: {toPct4(r.mediana)}</span>}
+                          </span>;
+                        })}
+                        {modesForRow(r).length === 0 && <span className="text-muted-foreground text-xs">Nenhuma modalidade configurada</span>}
+                      </div>
+                    </td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                     <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>

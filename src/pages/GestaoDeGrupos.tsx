@@ -1240,10 +1240,18 @@ export default function GestaoDeGrupos() {
     })));
   }, []);
   useEffect(() => { void loadBidRules(); }, [loadBidRules]);
-  const normalizeBidScope = (v: string) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/consorcios?|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
+  const normalizeBidScope = (v: string) => {
+    const cleaned = String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+      .replace(/consorcios?|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
+    // Os grupos antigos usam "BB CONSÓRCIOS" e o cadastro usa "Banco do Brasil".
+    if (cleaned === "bb" || cleaned === "bancodobrasil" || cleaned === "bbcons") return "bancodobrasil";
+    return cleaned;
+  };
   const modesForRow = (r: LinhaUI) => {
+    // A regra de grupo está vinculada ao UUID, que é mais confiável que o nome da administradora.
+    const groupRule = bidRules.find(x => x.scope === "grupo" && x.group_id === r.id);
     const candidates = bidRules.filter(rule => normalizeBidScope(rule.administradora) === normalizeBidScope(r.administradora));
-    const rule = candidates.find(x => x.scope === "grupo" && x.group_id === r.id)
+    const rule = groupRule
       || candidates.find(x => x.scope === "segmento" && normalizeBidScope(x.segmento) === normalizeBidScope(r.segmento))
       || candidates.find(x => x.scope === "administradora");
     return rule ? rule.modalities : [

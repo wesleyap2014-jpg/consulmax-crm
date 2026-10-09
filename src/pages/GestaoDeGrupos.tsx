@@ -1227,6 +1227,7 @@ export default function GestaoDeGrupos() {
   const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
   const [fAdmin, setFAdmin] = useState("");
+  const [adminScope, setAdminScope] = useState<string>("");
   const [fSeg, setFSeg] = useState("");
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
@@ -1404,11 +1405,14 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
+  const adminOptions = useMemo(() => Array.from(new Set(rows.map((r) => normalizeAdmin(r.administradora)))).filter(Boolean).sort((a, b) => a.localeCompare(b, "pt-BR")), [rows]);
+
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
       const faixaStr = `${r.faixa_min ?? ""}-${r.faixa_max ?? ""}`;
       return (
+        (!adminScope || normalizeAdmin(r.administradora) === adminScope) &&
         (!fAdmin || r.administradora.toLowerCase().includes(fAdmin.toLowerCase())) &&
         (!fSeg || r.segmento.toLowerCase().includes(fSeg.toLowerCase())) &&
         (!fGrupo || r.codigo.toLowerCase().includes(fGrupo.toLowerCase())) &&
@@ -1416,7 +1420,7 @@ export default function GestaoDeGrupos() {
         withinLLMedianFilter(r.mediana, alvo)
       );
     });
-  }, [rows, fAdmin, fSeg, fGrupo, fFaixa, fMedianaAlvo]);
+  }, [rows, adminScope, fAdmin, fSeg, fGrupo, fFaixa, fMedianaAlvo]);
 
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
 
@@ -1559,6 +1563,28 @@ export default function GestaoDeGrupos() {
           </div>
         </div>
       )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Gestão por administradora</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Selecionar administradora">
+            <Button type="button" size="sm" variant={!adminScope ? "default" : "outline"} onClick={() => setAdminScope("")}>
+              Todas ({rows.length})
+            </Button>
+            {adminOptions.map((adm) => (
+              <Button key={adm} type="button" size="sm" variant={adminScope === adm ? "default" : "outline"} onClick={() => setAdminScope(adm)}>
+                {adm} ({rows.filter((r) => normalizeAdmin(r.administradora) === adm).length})
+              </Button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A seleção organiza a consulta sem modificar grupos, datas, resultados históricos ou disparos.
+            Os lançamentos de assembleia seguem o fluxo atual até a validação das modalidades específicas de cada administradora.
+          </p>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
         <Card className="lg:col-span-3">

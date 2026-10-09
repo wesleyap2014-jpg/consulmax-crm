@@ -1,6 +1,7 @@
 // src/pages/GestaoDeGrupos.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import GroupBidModalitySettings from "@/components/gestao-grupos/GroupBidModalitySettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1585,6 +1586,8 @@ export default function GestaoDeGrupos() {
           </p>
         </CardContent>
       </Card>
+
+      <GroupBidModalitySettings groups={grupos.filter((g) => !isStubId(g.id))} />
 
       <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
         <Card className="lg:col-span-3">

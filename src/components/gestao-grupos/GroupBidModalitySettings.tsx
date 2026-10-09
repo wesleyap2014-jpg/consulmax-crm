@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChevronDown, Settings2, ShieldCheck } from "lucide-react";
 
 type Group = { id: string; administradora: string; segmento: string; codigo: string };
 type Modality = { key: string; label: string; percentage: number | null; notes: string };
@@ -88,26 +89,34 @@ export default function GroupBidModalitySettings({ groups, onSaved }: { groups: 
     } catch (e: any) { setError(e?.message || "Erro ao salvar modalidades."); }
     finally { setSaving(false); }
   };
-  return <Card>
-    <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-      <CardTitle className="text-base">Configuração de modalidades de lance</CardTitle>
-      <Button type="button" variant="outline" onClick={() => setOpen(v => !v)}>{open ? "Fechar" : "Configurar"}</Button>
+  return <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
+    <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
+      <div className="flex items-center gap-3">
+        <span className="rounded-xl bg-rose-50 p-2.5"><Settings2 className="h-5 w-5 text-rose-700" /></span>
+        <div>
+          <CardTitle className="text-base text-slate-900">Modalidades de lance</CardTitle>
+          <p className="mt-0.5 text-xs text-slate-500">Configure as regras sem alterar resultados históricos.</p>
+        </div>
+      </div>
+      <Button type="button" variant="outline" className="gap-2 rounded-lg border-slate-200" aria-expanded={open} onClick={() => setOpen(v => !v)}>
+        {open ? "Recolher" : "Gerenciar regras"} <ChevronDown className={"h-4 w-4 transition-transform " + (open ? "rotate-180" : "")} />
+      </Button>
     </CardHeader>
     <CardContent>
-      {!open ? <p className="text-sm text-muted-foreground">Defina modalidades por administradora, segmento ou grupo sem afetar os resultados e datas já registrados.</p> :
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div><Label>Administradora</Label><select className="w-full h-10 border rounded-md px-3" value={adm} onChange={e => {setAdm(e.target.value); setSegment(""); setGroupId("");}}><option value="">Selecione</option>{admins.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
-          <div><Label>Abrangência</Label><select className="w-full h-10 border rounded-md px-3" value={scope} onChange={e => setScope(e.target.value as Rule["scope"])}><option value="administradora">Toda administradora</option><option value="segmento">Segmento</option><option value="grupo">Grupo específico</option></select></div>
-          {scope !== "administradora" && <div><Label>Segmento {scope === "grupo" ? "(filtro)" : ""}</Label><select className="w-full h-10 border rounded-md px-3" value={segment} onChange={e=>{setSegment(e.target.value);setGroupId("");}}><option value="">Selecione</option>{segments.map(s=><option key={s} value={s}>{s}</option>)}</select></div>}
-          {scope === "grupo" && <div><Label>Grupo</Label><select className="w-full h-10 border rounded-md px-3" value={groupId} onChange={e => setGroupId(e.target.value)}><option value="">Selecione</option>{matchingGroups.map(g=><option key={g.id} value={g.id}>{g.codigo} — {g.segmento}</option>)}</select></div>}
+      {!open ? <p className="flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" /> Administradoras, segmentos e grupos com configurações independentes e dados preservados.</p> :
+      <div className="space-y-4 border-t border-slate-100 pt-4">
+        <div className="grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-3 md:grid-cols-3">
+          <div><Label>Administradora</Label><select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-rose-300" value={adm} onChange={e => {setAdm(e.target.value); setSegment(""); setGroupId("");}}><option value="">Selecione</option>{admins.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
+          <div><Label>Abrangência</Label><select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-rose-300" value={scope} onChange={e => setScope(e.target.value as Rule["scope"])}><option value="administradora">Toda administradora</option><option value="segmento">Segmento</option><option value="grupo">Grupo específico</option></select></div>
+          {scope !== "administradora" && <div><Label>Segmento {scope === "grupo" ? "(filtro)" : ""}</Label><select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-rose-300" value={segment} onChange={e=>{setSegment(e.target.value);setGroupId("");}}><option value="">Selecione</option>{segments.map(s=><option key={s} value={s}>{s}</option>)}</select></div>}
+          {scope === "grupo" && <div><Label>Grupo</Label><select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-rose-300" value={groupId} onChange={e => setGroupId(e.target.value)}><option value="">Selecione</option>{matchingGroups.map(g=><option key={g.id} value={g.id}>{g.codigo} — {g.segmento}</option>)}</select></div>}
         </div>
         <p className="text-xs text-muted-foreground">{exactRule ? "Configuração específica salva neste nível." : inherited ? "Modalidades herdadas do nível superior; ao salvar, será criada uma exceção." : "Nenhuma configuração anterior neste nível. Selecione as modalidades permitidas."}</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {defaults.map(d => <label key={d.key} className="flex gap-2 items-center border rounded-md p-3 text-sm"><input type="checkbox" checked={modalities.some(m => m.key === d.key)} onChange={() => toggle(d)}/>{d.label}</label>)}
+          {defaults.map(d => <label key={d.key} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-3 text-sm font-medium text-slate-700 transition-colors hover:border-rose-300"><input type="checkbox" checked={modalities.some(m => m.key === d.key)} onChange={() => toggle(d)}/>{d.label}</label>)}
         </div>
         {modalities.filter(m => !defaults.some(d => d.key === m.key)).map(m=>
-          <div key={m.key} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end border p-2 rounded-md">
+          <div key={m.key} className="grid grid-cols-1 items-end gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-4">
             <div><Label>Modalidade</Label><Input value={m.label} onChange={e=>setModalities(a=>a.map(x=>x.key===m.key?{...x,label:e.target.value}:x))}/></div>
             <div><Label>Percentual fixo (opcional)</Label><Input type="number" min="0" max="100" step="0.01" value={m.percentage ?? ""} onChange={e=>setModalities(a=>a.map(x=>x.key===m.key?{...x,percentage:e.target.value===""?null:Number(e.target.value)}:x))}/></div>
             <div><Label>Observação</Label><Input value={m.notes} onChange={e=>setModalities(a=>a.map(x=>x.key===m.key?{...x,notes:e.target.value}:x))}/></div>
@@ -119,7 +128,7 @@ export default function GroupBidModalitySettings({ groups, onSaved }: { groups: 
         </div>
         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
         {success && <p role="status" className="text-sm text-green-700">{success}</p>}
-        <div className="flex justify-end"><Button onClick={save} disabled={saving || !adm || !active}>{saving ? "Salvando..." : "Salvar configuração"}</Button></div>
+        <div className="flex justify-end"><Button className="rounded-xl bg-rose-700 px-6 text-white hover:bg-rose-800" onClick={save} disabled={saving || !adm || !active}>{saving ? "Salvando..." : "Salvar configuração"}</Button></div>
         <p className="text-xs text-muted-foreground">Nesta etapa, as modalidades são apenas cadastradas. O lançamento de resultados permanece inalterado até a etapa de compatibilidade e testes.</p>
       </div>}
     </CardContent>

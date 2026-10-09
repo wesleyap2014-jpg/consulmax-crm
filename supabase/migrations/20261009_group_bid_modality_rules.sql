@@ -19,13 +19,15 @@ create unique index if not exists group_bid_rule_segment_key on public.group_bid
 create unique index if not exists group_bid_rule_group_key on public.group_bid_modality_rules (group_id) where scope = 'grupo';
 create index if not exists group_bid_rules_admin_idx on public.group_bid_modality_rules (administradora, scope);
 alter table public.group_bid_modality_rules enable row level security;
--- Regras são consultáveis pela equipe autenticada; gravação apenas usuários com acesso aprovado
--- Ajustar política de escrita ao permissionamento de backend antes da ativação em produção.
+-- Leitura para usuários autenticados; gravação exclusiva de administradores ativos do CRM.
+-- Autorização consultada no banco, não em metadados editáveis do JWT.
 create policy "group_bid_modality_rules_select" on public.group_bid_modality_rules
   for select to authenticated using (true);
 create policy "group_bid_modality_rules_insert" on public.group_bid_modality_rules
-  for insert to authenticated with check (true);
+  for insert to authenticated with check (exists (select 1 from public.users u where u.auth_user_id = (select auth.uid()) and u.is_active is true and u.role::text = 'admin'));
 create policy "group_bid_modality_rules_update" on public.group_bid_modality_rules
-  for update to authenticated using (true) with check (true);
+  for update to authenticated using (exists (select 1 from public.users u where u.auth_user_id = (select auth.uid()) and u.is_active is true and u.role::text = 'admin')) with check (exists (select 1 from public.users u where u.auth_user_id = (select auth.uid()) and u.is_active is true and u.role::text = 'admin'));
 create policy "group_bid_modality_rules_delete" on public.group_bid_modality_rules
-  for delete to authenticated using (true);
+  for delete to authenticated using (exists (select 1 from public.users u where u.auth_user_id = (select auth.uid()) and u.is_active is true and u.role::text = 'admin'));
+
+grant select, insert, update, delete on public.group_bid_modality_rules to authenticated;

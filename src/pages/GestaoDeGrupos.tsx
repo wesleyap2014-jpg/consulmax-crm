@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import GroupBidModalitySettings from "@/components/gestao-grupos/GroupBidModalitySettings";
+import MaxGroupIntelligence, { type MaxGroup } from "@/components/gestao-grupos/MaxGroupIntelligence";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +19,12 @@ import {
   ChevronUp,
   ChevronDown,
   Bell,
+  BrainCircuit,
+  Sparkles,
+  Layers3,
+  CalendarDays,
+  BarChart3,
+  ChevronRight,
 } from "lucide-react";
 
 /* =========================================================
@@ -1228,6 +1235,8 @@ export default function GestaoDeGrupos() {
   const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
   const [fAdmin, setFAdmin] = useState("");
+  const [maxSelectedId, setMaxSelectedId] = useState("");
+  const maxPanelRef = useRef<HTMLDivElement | null>(null);
   const [adminScope, setAdminScope] = useState<string>("");
   const [bidRules, setBidRules] = useState<Array<{ administradora: string; scope: string; segmento: string; group_id: string | null; modalities: Array<{ key: string; label: string }> }>>([]);
   const loadBidRules = useCallback(async () => {
@@ -1453,6 +1462,20 @@ export default function GestaoDeGrupos() {
   }, [rows, adminScope, fAdmin, fSeg, fGrupo, fFaixa, fMedianaAlvo]);
 
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
+  const maxGroups = useMemo<MaxGroup[]>(() => filtered.filter(r => !isStubId(r.id)).map(r => ({
+    id: r.id, codigo: r.codigo, administradora: r.administradora, segmento: r.segmento,
+    participantes: r.participantes, prox_vencimento: r.prox_vencimento,
+    prox_sorteio: r.prox_sorteio, prox_assembleia: r.prox_assembleia,
+    modalidades: modesForRow(r)
+  })), [filtered, bidRules]);
+  const registeredGroups = filtered.filter(r => !isStubId(r.id)).length;
+  const configuredGroups = filtered.filter(r => !isStubId(r.id) && bidRules.some(rule => rule.scope === "grupo" && rule.group_id === r.id)).length;
+  const nextAssembly = filtered.map(r => toYMD(r.prox_assembleia))
+    .filter((v): v is string => Boolean(v) && v >= todayYMDLocal()).sort()[0] || null;
+  const openMaxForGroup = (id: string) => {
+    setMaxSelectedId(id);
+    maxPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   function cmpDateNearestToToday(a?: string | null, b?: string | null): number {
     const today = new Date(todayYMDLocal() + "T00:00:00");
@@ -1584,7 +1607,20 @@ export default function GestaoDeGrupos() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="min-h-full space-y-5 bg-gradient-to-b from-slate-50/70 via-background to-background p-4 md:p-6">
+      <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-7 md:py-6">
+        <div className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-rose-100/80 blur-3xl" />
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-rose-700"><Layers3 className="h-4 w-4" /> Pós-vendas · Inteligência operacional</div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">Gestão de Grupos</h1>
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">Assembleias, modalidades de lance e decisões estratégicas em uma única visão.</p>
+          </div>
+          <Button type="button" onClick={() => maxPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex items-center gap-2 rounded-xl bg-rose-700 text-white hover:bg-rose-800">
+            <Sparkles className="h-4 w-4" /> Abrir inteligência MAX <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
       {todayBadge && (
         <div className="flex">
           <div className="inline-flex items-center gap-2 text-xs px-3 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700">
@@ -1615,6 +1651,33 @@ export default function GestaoDeGrupos() {
           </p>
         </CardContent>
       </Card>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><Layers3 className="h-4 w-4 text-rose-600" /> Grupos na visão</span>
+          <p className="mt-2 text-2xl font-bold text-slate-950">{registeredGroups}</p>
+          <p className="mt-1 text-xs text-slate-500">Grupos cadastrados no filtro</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><BarChart3 className="h-4 w-4 text-rose-600" /> Entregas na última apuração</span>
+          <p className="mt-2 text-2xl font-bold text-slate-950">{totalEntregas.toLocaleString("pt-BR")}</p>
+          <p className="mt-1 text-xs text-slate-500">Soma dos grupos exibidos</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><CalendarDays className="h-4 w-4 text-rose-600" /> Próxima assembleia</span>
+          <p className="mt-2 text-2xl font-bold text-slate-950">{nextAssembly ? formatBR(nextAssembly) : "—"}</p>
+          <p className="mt-1 text-xs text-slate-500">Data mais próxima no filtro</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><Sparkles className="h-4 w-4 text-rose-600" /> Regras por grupo</span>
+          <p className="mt-2 text-2xl font-bold text-slate-950">{configuredGroups}</p>
+          <p className="mt-1 text-xs text-slate-500">Personalizações individuais</p>
+        </div>
+      </div>
+
+      <div ref={maxPanelRef} className="scroll-mt-6">
+        <MaxGroupIntelligence groups={maxGroups} selectedId={maxSelectedId} onSelect={setMaxSelectedId} />
+      </div>
 
       <GroupBidModalitySettings groups={grupos.filter((g) => !isStubId(g.id))} onSaved={loadBidRules} />
 

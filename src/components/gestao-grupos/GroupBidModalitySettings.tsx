@@ -34,7 +34,7 @@ const validModalities = (raw: unknown): Modality[] => Array.isArray(raw) ? raw.f
   notes: String(r.notes || ""),
 })) : [];
 
-export default function GroupBidModalitySettings({ groups }: { groups: Group[] }) {
+export default function GroupBidModalitySettings({ groups, onSaved }: { groups: Group[]; onSaved?: () => void | Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [adm, setAdm] = useState("");
   const [scope, setScope] = useState<Rule["scope"]>("administradora");
@@ -83,6 +83,7 @@ export default function GroupBidModalitySettings({ groups }: { groups: Group[] }
       const { error: saveError } = await request;
       if (saveError) throw saveError;
       await load();
+      await onSaved?.();
       setSuccess("Modalidades salvas. Os resultados históricos e o lançamento atual não foram modificados.");
     } catch (e: any) { setError(e?.message || "Erro ao salvar modalidades."); }
     finally { setSaving(false); }

@@ -727,8 +727,8 @@ function OverlayAssembleias({
                         <th className="p-2 text-left">Grupo</th>
                         <th className="p-2 text-center">25% Entregas</th>
                         <th className="p-2 text-center">25% Ofertas</th>
-                        <th className="p-2 text-center">50% Entregas</th>
-                        <th className="p-2 text-center">50% Ofertas</th>
+                        <th className="p-2 text-center">{adminSel && normalizeAdmin(adminSel).toLowerCase().includes("maggi") ? "35%" : "50%"} Entregas</th>
+                        <th className="p-2 text-center">{adminSel && normalizeAdmin(adminSel).toLowerCase().includes("maggi") ? "35%" : "50%"} Ofertas</th>
                         <th className="p-2 text-center">LL Entregas</th>
                         <th className="p-2 text-center">LL Ofertas</th>
                         <th className="p-2 text-center">LL Maior %</th>
@@ -1247,7 +1247,7 @@ export default function GestaoDeGrupos() {
       || candidates.find(x => x.scope === "segmento" && normalizeBidScope(x.segmento) === normalizeBidScope(r.segmento))
       || candidates.find(x => x.scope === "administradora");
     return rule ? rule.modalities : [
-      { key: "fixo_25", label: "Fixo 25%" }, { key: "fixo_50", label: "Fixo 50%" }, { key: "livre", label: "Lance Livre" }
+      { key: "fixo_25", label: "Fixo 25%" }, { key: "fixo_50", label: normalizeBidScope(r.administradora).includes("maggi") ? "Fixo 35%" : "Fixo 50%" }, { key: "livre", label: "Lance Livre" }
     ];
   };
   const [fSeg, setFSeg] = useState("");
@@ -1781,7 +1781,7 @@ export default function GestaoDeGrupos() {
                         {modesForRow(r).map((mode) => {
                           const k = String(mode.key).toLowerCase();
                           const is25 = k === "fixo_25";
-                          const is50 = k === "fixo_50";
+                          const is50 = k === "fixo_50" || (normalizeBidScope(r.administradora).includes("maggi") && (k === "fixo_35" || /fixo\s*35\s*%/i.test(mode.label)));
                           const isLivre = k === "livre";
                           const known = is25 || is50 || isLivre;
                           const ofertas = is25 ? r.fix25_ofertas : is50 ? r.fix50_ofertas : r.ll_ofertas;

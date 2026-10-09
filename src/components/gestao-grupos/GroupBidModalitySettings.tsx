@@ -18,7 +18,7 @@ const defaults: Modality[] = [
 ];
 const normalize = (value: string) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 const normAdmin = (value: string) => {
-  const s = normalize(value).replace(/consorcios?|consorcio|holding|s\\/a|s\\.a\\.?/g, "").replace(/[^a-z0-9]/g, "");
+  const s = normalize(value).replace(/consorcios?|consorcio|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
   if (s.includes("embracon")) return "Embracon";
   if (s === "hs" || s.startsWith("hs")) return "HS";
   if (s.includes("maggi")) return "Maggi";

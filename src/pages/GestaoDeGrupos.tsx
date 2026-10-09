@@ -1630,17 +1630,17 @@ export default function GestaoDeGrupos() {
         </div>
       )}
 
-      <Card>
+      <Card className="rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Gestão por administradora</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base text-slate-900"><Layers3 className="h-4 w-4 text-rose-700" /> Visão por administradora</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2" role="group" aria-label="Selecionar administradora">
-            <Button type="button" size="sm" variant={!adminScope ? "default" : "outline"} onClick={() => setAdminScope("")}>
+            <Button type="button" size="sm" variant={!adminScope ? "default" : "outline"} className={!adminScope ? "rounded-full bg-rose-700 text-white hover:bg-rose-800" : "rounded-full border-slate-200"} onClick={() => setAdminScope("")}>
               Todas ({rows.length})
             </Button>
             {adminOptions.map((adm) => (
-              <Button key={adm} type="button" size="sm" variant={adminScope === adm ? "default" : "outline"} onClick={() => setAdminScope(adm)}>
+              <Button key={adm} type="button" size="sm" variant={adminScope === adm ? "default" : "outline"} className={adminScope === adm ? "rounded-full bg-rose-700 text-white hover:bg-rose-800" : "rounded-full border-slate-200"} onClick={() => setAdminScope(adm)}>
                 {adm} ({rows.filter((r) => normalizeAdmin(r.administradora) === adm).length})
               </Button>
             ))}
@@ -1682,7 +1682,7 @@ export default function GestaoDeGrupos() {
       <GroupBidModalitySettings groups={grupos.filter((g) => !isStubId(g.id))} onSaved={loadBidRules} />
 
       <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
-        <Card className="lg:col-span-3">
+        <Card className="lg:col-span-3 rounded-2xl border-slate-200 shadow-sm transition-shadow hover:shadow-md">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
             <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setLfOpen(true)}>
@@ -1702,7 +1702,7 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-3">
+        <Card className="lg:col-span-3 rounded-2xl border-slate-200 shadow-sm transition-shadow hover:shadow-md">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
             <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setAsmOpen(true)}>
@@ -1712,7 +1712,7 @@ export default function GestaoDeGrupos() {
           <CardContent className="text-sm text-muted-foreground">Informe resultados por data. Atualizaremos próximas datas.</CardContent>
         </Card>
 
-        <Card className="lg:col-span-3">
+        <Card className="lg:col-span-3 rounded-2xl border-slate-200 shadow-sm transition-shadow hover:shadow-md">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
             <div className="flex gap-2">
@@ -1728,9 +1728,9 @@ export default function GestaoDeGrupos() {
         </Card>
       </div>
 
-      <Card>
+      <Card className="rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="inline-flex items-center gap-2 text-base">
+          <CardTitle className="inline-flex items-center gap-2 text-base text-slate-900">
             <FilterIcon className="h-4 w-4" /> Filtros
           </CardTitle>
         </CardHeader>
@@ -1760,12 +1760,15 @@ export default function GestaoDeGrupos() {
       </Card>
 
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold">Relação de Grupos</h3>
+        <div>
+          <h3 className="text-lg font-bold tracking-tight text-slate-900">Relação de Grupos</h3>
+          <p className="text-xs text-slate-500">{filtered.length} grupo(s) nesta seleção. Clique no número ou no MAX para analisar.</p>
+        </div>
       </div>
 
-      <div className="rounded-2xl border overflow-auto">
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-auto">
         <table className="min-w-full text-sm">
-          <thead className="bg-muted/60 sticky top-0 backdrop-blur">
+          <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
               <th className="p-2 text-left">SEGMENTO</th>
@@ -1800,10 +1803,14 @@ export default function GestaoDeGrupos() {
               sorted.map((r) => {
                 const isEditing = editingId === r.id;
                 return (
-                  <tr key={r.id} className="odd:bg-muted/30">
+                  <tr key={r.id} className="border-b border-slate-100 odd:bg-slate-50/30 transition-colors hover:bg-rose-50/30">
                     <td className="p-2">{r.administradora}</td>
                     <td className="p-2">{r.segmento}</td>
-                    <td className="p-2 font-medium">{r.codigo}</td>
+                    <td className="p-3 font-semibold">
+                      {isStubId(r.id) ? r.codigo : <button type="button" className="group inline-flex items-center gap-1.5 font-semibold text-slate-900 hover:text-rose-700" onClick={() => openMaxForGroup(r.id)} title="Analisar grupo com MAX">
+                        {r.codigo} <Sparkles className="h-3.5 w-3.5 text-rose-600 opacity-0 transition-opacity group-hover:opacity-100" />
+                      </button>}
+                    </td>
                     <td className="p-2 text-right">
                       {isEditing ? (
                         <Input
@@ -1847,7 +1854,7 @@ export default function GestaoDeGrupos() {
                       )}
                     </td>
                     <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
-                    <td className="p-2 min-w-[240px]">
+                    <td className="p-3 min-w-[250px]">
                       <div className="flex flex-wrap gap-1">
                         {modesForRow(r).map((mode) => {
                           const k = String(mode.key).toLowerCase();
@@ -1857,8 +1864,8 @@ export default function GestaoDeGrupos() {
                           const known = is25 || is50 || isLivre;
                           const ofertas = is25 ? r.fix25_ofertas : is50 ? r.fix50_ofertas : r.ll_ofertas;
                           const entregas = is25 ? r.fix25_entregas : is50 ? r.fix50_entregas : r.ll_entregas;
-                          return <span key={mode.key} className="inline-flex flex-col rounded-md border px-2 py-1 text-xs whitespace-nowrap" title={known ? "Ofertas e entregas da última assembleia" : "Modalidade configurada; resultado ainda não registrado no modelo atual"}>
-                            <strong>{mode.label}</strong>
+                          return <span key={mode.key} className="inline-flex flex-col rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs whitespace-nowrap shadow-sm" title={known ? "Ofertas e entregas da última assembleia" : "Modalidade configurada; resultado ainda não registrado no modelo atual"}>
+                            <strong className="text-slate-800">{mode.label}</strong>
                             <span className="text-muted-foreground">{known ? `${ofertas} ofertas · ${entregas} entregas` : "Sem apuração integrada"}</span>
                             {isLivre && r.mediana != null && <span className="text-muted-foreground">Mediana: {toPct4(r.mediana)}</span>}
                           </span>;
@@ -1905,6 +1912,10 @@ export default function GestaoDeGrupos() {
                           </Button>
                         </div>
                       ) : (
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          <Button type="button" variant="outline" className="inline-flex items-center gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => openMaxForGroup(r.id)}>
+                            <BrainCircuit className="h-4 w-4" /> MAX
+                          </Button>
                         <Button
                           variant="secondary"
                           className="inline-flex items-center gap-2"
@@ -1924,6 +1935,7 @@ export default function GestaoDeGrupos() {
                         >
                           <Pencil className="h-4 w-4" /> Editar
                         </Button>
+                        </div>
                       )}
                     </td>
                   </tr>

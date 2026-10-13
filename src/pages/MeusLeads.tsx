@@ -60,11 +60,11 @@ function whatsAppLink(raw?: string | null) {
   // Preserva DDI informado: um número +1 (EUA) jamais recebe o prefixo 55.
   const international = trimmed.startsWith("+") || trimmed.startsWith("00");
   const candidate = trimmed.startsWith("00") ? "+" + digits.slice(2) : trimmed;
-  const parsed = international
-    ? parsePhoneNumberFromString(candidate)
-    : (digits.length === 11 && digits.startsWith("1")
-        ? parsePhoneNumberFromString("+" + digits)
-        : parsePhoneNumberFromString(digits.startsWith("55") && digits.length >= 12 ? "+" + digits : digits, "BR"));
+  const brazil = parsePhoneNumberFromString(digits.startsWith("55") && digits.length >= 12 ? "+" + digits : digits, "BR");
+  const parsed = international ? parsePhoneNumberFromString(candidate)
+    : brazil?.isValid() ? brazil
+    : digits.length === 11 && digits.startsWith("1") ? parsePhoneNumberFromString("+" + digits)
+    : null;
   return parsed?.isValid() ? "https://wa.me/" + parsed.number.slice(1) : null;
 }
 function currency(value?: number | null) {

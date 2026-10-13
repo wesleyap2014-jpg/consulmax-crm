@@ -3,10 +3,11 @@ import { ArrowLeft, Clock3, History, MessageCircle, RefreshCw, Search, UsersRoun
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { supabase } from "@/lib/supabaseClient";
 import { useAccess } from "@/access/AccessContext";
+import WeeklyMaxRecommendations from "@/components/leads/WeeklyMaxRecommendations";
 
 type Lead = {
   id: string; nome: string; telefone: string | null; email: string | null;
-  origem: string | null; descricao: string | null; created_at: string;
+  origem: string | null; descricao: string | null; created_at: string; owner_id: string;
 };
 type Opportunity = {
   id: string; lead_id: string; segmento: string | null; estagio: string | null;
@@ -20,7 +21,7 @@ type Sale = { id: string; lead_id: string | null; cliente_lead_id: string | null
 type LeadEntry = Lead & {
   opportunities: Opportunity[]; notes: Note[]; conversations: Conversation[];
   bought: boolean; segment: string; stage: string;
-  lastContactAt: string | null;
+  lastContactAt: string | null; ownerName: string;
 };
 
 const PAGE_SIZE = 20;
@@ -79,10 +80,14 @@ function customerStatus(item: LeadEntry) {
   return "Sem oportunidade";
 }
 
+type CascadeUser = { auth_user_id: string; nome: string; unit_id: string | null };
+
 export default function MeusLeads() {
   const { user } = useAccess();
   const authId = user?.auth_user_id;
   const [items, setItems] = useState<LeadEntry[]>([]);
+  const [cascadeUsers, setCascadeUsers] = useState<CascadeUser[]>([]);
+  const [sellerFilter, setSellerFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [partial, setPartial] = useState(false);
@@ -100,13 +105,28 @@ export default function MeusLeads() {
       if (!authId) { setLoading(false); return; }
       setLoading(true); setError(""); setPartial(false);
       try {
-        // A lista vem exclusivamente dos leads sob responsabilidade do usuário logado.
-        // Sem novo cadastro, tabela paralela, alteração no pipeline ou escrita no banco.
+        // Cascata idêntica ao painel Início: Matriz (todas as unidades),
+        // gestor_filial (própria unidade), demais (somente o próprio usuário).
+        const { data: unit, error: unitError } = user?.unit_id
+          ? await supabase.from("units").select("tipo").eq("id", user.unit_id).maybeSingle()
+          : { data: null, error: null };
+        if (unitError) throw unitError;
+        const matrix = normalize(user?.hierarchy_level) === "matriz" ||
+          (normalize(user?.role) === "admin" && normalize(unit?.tipo) === "matriz");
+        const branchManager = !matrix && normalize(user?.hierarchy_level) === "gestor_filial" && !!user?.unit_id;
+        let usersQuery = supabase.from("users").select("auth_user_id,nome,unit_id").eq("is_active", true).order("nome");
+        if (branchManager) usersQuery = usersQuery.eq("unit_id", user!.unit_id!);
+        else if (!matrix) usersQuery = usersQuery.eq("auth_user_id", authId);
+        const { data: userRows, error: usersError } = await usersQuery;
+        if (usersError) throw usersError;
+        const team = (userRows || []) as CascadeUser[];
+        const scopeIds = Array.from(new Set([authId, ...team.map((person) => person.auth_user_id)].filter(Boolean)));
+        const owners = new Map(team.map((person) => [person.auth_user_id, person.nome]));
         const leads: Lead[] = [];
         for (let offset = 0; ; offset += 500) {
           const { data, error: leadsError } = await supabase.from("leads")
-            .select("id,nome,telefone,email,origem,descricao,created_at")
-            .eq("owner_id", authId)
+            .select("id,nome,telefone,email,origem,descricao,created_at,owner_id")
+            .in("owner_id", scopeIds)
             .order("created_at", { ascending: false })
             .range(offset, offset + 499);
           if (leadsError) throw leadsError;
@@ -126,19 +146,19 @@ export default function MeusLeads() {
           const [opp, note, wa, sale, legacySale] = await Promise.all([
             supabase.from("opportunities")
               .select("id,lead_id,segmento,estagio,valor_credito,observacao,created_at,last_follow_up_at,won_at,lost_at")
-              .eq("vendedor_id", authId).in("lead_id", ids),
+              .in("vendedor_id", scopeIds).in("lead_id", ids),
             supabase.from("opportunity_notes")
               .select("id,lead_id,note,kind,created_at")
-              .eq("user_id", authId).in("lead_id", ids),
+              .in("user_id", scopeIds).in("lead_id", ids),
             supabase.from("whatsapp_conversations")
               .select("id,lead_id,last_message,last_message_at")
-              .eq("assigned_to", authId).in("lead_id", ids),
+              .in("assigned_to", scopeIds).in("lead_id", ids),
             supabase.from("vendas")
               .select("id,lead_id,cliente_lead_id,status")
-              .eq("vendedor_id", authId).in("lead_id", ids),
+              .in("vendedor_id", scopeIds).in("lead_id", ids),
             supabase.from("vendas")
               .select("id,lead_id,cliente_lead_id,status")
-              .eq("vendedor_id", authId).in("cliente_lead_id", ids),
+              .in("vendedor_id", scopeIds).in("cliente_lead_id", ids),
           ]);
           if (opp.error || note.error || wa.error || sale.error || legacySale.error) missingExtras = true;
           opportunityList.push(...((opp.data || []) as Opportunity[]));
@@ -165,7 +185,7 @@ export default function MeusLeads() {
           const notes = (byNote.get(lead.id) || []).sort((a, b) => b.created_at.localeCompare(a.created_at));
           const conversations = (byWA.get(lead.id) || []).sort((a, b) => (b.last_message_at || "").localeCompare(a.last_message_at || ""));
           return {
-            ...lead, opportunities, notes, conversations,
+            ...lead, ownerName: owners.get(lead.owner_id) || "Responsável não identificado", opportunities, notes, conversations,
             bought: bought.has(lead.id),
             segment: opportunities.find((o) => o.segmento)?.segmento || "Não informado",
             stage: opportunities[0]?.estagio || "Sem oportunidade",
@@ -179,6 +199,7 @@ export default function MeusLeads() {
         });
         if (cancelled) return;
         setItems(next);
+        setCascadeUsers(team);
         setPartial(missingExtras);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Não foi possível consultar os leads.");
@@ -188,11 +209,12 @@ export default function MeusLeads() {
     }
     load();
     return () => { cancelled = true; };
-  }, [authId, reloadKey]);
+  }, [authId, user?.unit_id, user?.hierarchy_level, user?.role, reloadKey]);
 
-  useEffect(() => { setPage(1); }, [search, inactivity, purchase, segment]);
+  useEffect(() => { setPage(1); }, [search, inactivity, purchase, segment, sellerFilter]);
   const segments = useMemo(() => [...new Set(items.map((lead) => lead.segment))].sort(), [items]);
   const filtered = useMemo(() => items.filter((lead) => {
+    if (sellerFilter !== "all" && lead.owner_id !== sellerFilter) return false;
     const query = normalize(search.trim());
     if (query && !normalize([lead.nome, lead.telefone, lead.email].join(" ")).includes(query)) return false;
     if (segment !== "all" && lead.segment !== segment) return false;
@@ -208,7 +230,8 @@ export default function MeusLeads() {
     const dateA = a.lastContactAt || a.created_at;
     const dateB = b.lastContactAt || b.created_at;
     return dateB.localeCompare(dateA);
-  }), [items, search, inactivity, purchase, segment]);
+  }), [items, search, inactivity, purchase, segment, sellerFilter]);
+  const recommendationsScope = useMemo(() => items.filter((lead) => sellerFilter === "all" || lead.owner_id === sellerFilter), [items, sellerFilter]);
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const selected = items.find((lead) => lead.id === selectedId) || null;
@@ -226,10 +249,11 @@ export default function MeusLeads() {
 
       <section className={styles.panel + " p-4"}>
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-          <div><span className="text-2xl font-black text-[#1E293F]">{items.length}</span><span className="ml-2 text-sm text-slate-500">leads registrados para você</span></div>
+          <div><span className="text-2xl font-black text-[#1E293F]">{items.length}</span><span className="ml-2 text-sm text-slate-500">leads {cascadeUsers.length > 1 ? "na sua cascata" : "vinculados a você"}</span></div>
           <span className="text-xs text-slate-500">Uma pessoa por cadastro • somente consulta</span>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {cascadeUsers.length > 1 && <select aria-label="Vendedor" className={styles.input} value={sellerFilter} onChange={(e) => setSellerFilter(e.target.value)}><option value="all">Todos da minha cascata</option>{cascadeUsers.map((u) => <option key={u.auth_user_id} value={u.auth_user_id}>{u.auth_user_id === authId ? "Meus leads" : u.nome}</option>)}</select>}
           <label className="relative xl:col-span-1">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
             <input aria-label="Buscar lead" className={styles.input + " pl-9"} placeholder="Nome, telefone ou e-mail" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -252,6 +276,8 @@ export default function MeusLeads() {
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Erro ao carregar: {error}</div>}
       {partial && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Alguns históricos vinculados não puderam ser consultados. A lista de leads foi mantida, mas o último contato ou a situação de compra podem estar incompletos.</div>}
 
+      {!loading && !error && <WeeklyMaxRecommendations leads={recommendationsScope} onShowHistory={setSelectedId} whatsappHref={whatsAppLink} disabled={partial} />}
+
       <section className={styles.panel + " overflow-hidden"}>
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 text-sm">
           <strong>{filtered.length} resultados</strong>
@@ -267,7 +293,7 @@ export default function MeusLeads() {
               return <div key={lead.id} className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-slate-50/70">
                 <button type="button" onClick={() => setSelectedId(lead.id)} className="min-w-[210px] flex-1 text-left">
                   <div className="font-bold text-[#1E293F] hover:text-[#A11C27]">{lead.nome}</div>
-                  <div className="mt-1 text-xs text-slate-500">{lead.telefone || lead.email || "Sem telefone cadastrado"} • {lead.segment}</div>
+                  <div className="mt-1 text-xs text-slate-500">{lead.telefone || lead.email || "Sem telefone cadastrado"} • {lead.segment}{cascadeUsers.length > 1 ? " • " + lead.ownerName : ""}</div>
                 </button>
                 <div className="min-w-[130px] text-xs">
                   <div className="font-semibold text-slate-700">{lead.lastContactAt ? time(lead.lastContactAt) : "Sem contato datado"}</div>
@@ -295,7 +321,7 @@ export default function MeusLeads() {
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-[#A11C27]">Histórico comercial</p>
               <h2 className="mt-1 text-xl font-black text-[#1E293F]">{selected.nome}</h2>
-              <p className="mt-1 text-sm text-slate-500">{selected.telefone || selected.email || "Sem contato cadastrado"}</p>
+              <p className="mt-1 text-sm text-slate-500">{selected.telefone || selected.email || "Sem contato cadastrado"} • {selected.ownerName}</p>
             </div>
             <button type="button" aria-label="Fechar histórico" className={styles.button} onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
           </div>

@@ -59,7 +59,7 @@ export const ACCESS_GUIDES: GuideDefinition[] = [
     group: "vendas",
     label: "Oportunidades",
     path: "/oportunidades",
-    pathPrefixes: ["/oportunidades", "/leads"],
+    pathPrefixes: ["/oportunidades", "/meus-leads", "/leads"],
     description: "Funil comercial, leads, qualificação, follow-ups, propostas e fechamento.",
     information: [
       { key: "commercial_values", label: "Ver valores de crédito e dados comerciais" },

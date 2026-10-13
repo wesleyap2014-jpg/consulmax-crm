@@ -35,7 +35,7 @@ if (!drawer.includes('copyEventLink("attendance")')) {
 `;
   drawer = drawer.replace(header, "$1" + handler);
 
-  const target = '<button className="cx-action-btn" onClick={() => downloadICS(ev)}><Download size={17} /> Adicionar calendário</button></div>';
+  const target = '<button className="cx-action-btn" onClick={() => downloadICS(ev)}><Download size={17} /> Adicionar calendário</button>}</div>';
   if (!drawer.includes(target)) throw new Error("[agenda-v11] barra de ações mudou");
   const actions = `<button className="cx-action-btn" onClick={() => downloadICS(ev)}><Download size={17} /> Adicionar calendário</button>{props.canEdit && !cancelled && (ev.tipo === "reuniao" || ev.tipo === "outro") && <button className="cx-action-btn" disabled={Boolean(shareBusy)} onClick={() => void copyEventLink("attendance")}><Copy size={17} /> {shareBusy === "attendance" ? "Gerando…" : "Copiar link de presença"}</button>}{props.canEdit && !cancelled && ev.tipo === "reuniao" && <button className="cx-action-btn" disabled={Boolean(shareBusy)} onClick={() => void copyEventLink("meeting")}><Copy size={17} /> {shareBusy === "meeting" ? "Preparando…" : "Copiar link da reunião"}</button>}</div>{shareStatus && <div className="cx-share-feedback" role="status">{shareStatus}</div>}{props.canEdit && !cancelled && (ev.tipo === "reuniao" || ev.tipo === "outro") && <p className="cx-share-hint">Presença: registra funcionários com acesso ao CRM. Reunião: permite entrar no Consulmax Meet.</p>}`;
   drawer = drawer.replace(target, actions);

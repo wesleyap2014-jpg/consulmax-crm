@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select("id,owner_id,descricao").in("id", ids).in("owner_id", scope);
     if (leadError) throw leadError;
     if ((leads || []).length !== ids.length) return json(res, 403, { error: "Fora da cascata autorizada" });
-    const [op, notes, chats] = await Promise.all([
+    const [op, notes, chats, sales] = await Promise.all([
       supabaseAdmin.from("opportunities")
         .select("lead_id,segmento,estagio,valor_credito,observacao,last_follow_up_at,lost_at,won_at,created_at")
         .in("lead_id", ids).in("vendedor_id", scope),
@@ -45,14 +45,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       supabaseAdmin.from("whatsapp_conversations")
         .select("lead_id,last_message_at,last_message").in("lead_id", ids).in("assigned_to", scope)
         .order("last_message_at", { ascending: false }).limit(100),
+      supabaseAdmin.from("vendas").select("lead_id,cliente_lead_id").in("vendedor_id", scope)
+        .or("lead_id.in.(" + ids.join(",") + "),cliente_lead_id.in.(" + ids.join(",") + ")"),
     ]);
-    if (op.error || notes.error || chats.error) throw Error("Não foi possível carregar histórico");
+    if (op.error || notes.error || chats.error || sales.error) throw Error("Não foi possível carregar histórico");
+    const buyers = new Set((sales.data || []).flatMap((row) => [row.lead_id, row.cliente_lead_id]).filter(Boolean));
     const data = (leads || []).map((lead) => {
       const opportunities = (op.data || []).filter((item) => item.lead_id === lead.id);
       const interactions = (notes.data || []).filter((item) => item.lead_id === lead.id).slice(0, 2);
       const chat = (chats.data || []).find((item) => item.lead_id === lead.id);
       return {
-        id: lead.id, ultima_mensagem: chat?.last_message_at || null,
+        id: lead.id, ja_comprou: buyers.has(lead.id), ultima_mensagem: chat?.last_message_at || null,
         resumo_whatsapp: scrub(chat?.last_message, 100),
         oportunidades: opportunities.slice(0, 3).map((o) => ({
           segmento: scrub(o.segmento, 30), etapa: scrub(o.estagio, 50),

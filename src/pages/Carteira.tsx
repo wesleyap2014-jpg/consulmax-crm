@@ -985,8 +985,13 @@ const Carteira: React.FC = () => {
 
         let adminFlag = false;
         try {
-          const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
-          adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
+          const { data, error } = await supabase.from("users")
+            .select("role,user_role,is_active")
+            .eq("auth_user_id", uid)
+            .maybeSingle();
+          if (error) throw error;
+          adminFlag = data?.is_active !== false &&
+            (String(data?.role || "").toLowerCase() === "admin" || String(data?.user_role || "").toLowerCase() === "admin");
         } catch {}
         setIsAdmin(adminFlag);
 
@@ -1300,12 +1305,21 @@ const Carteira: React.FC = () => {
 
   const excluirVenda = async (vendaId: string) => {
     try {
-      const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
+      const { data: deleted, error } = await supabase
+        .from("vendas")
+        .delete()
+        .eq("id", vendaId)
+        .eq("status", "nova")
+        .select("id");
       if (error) throw error;
+      if (!deleted?.some((row) => row.id === vendaId)) {
+        throw new Error("Nenhuma venda foi excluída. Verifique se ela ainda está em reserva e se você possui permissão para excluí-la.");
+      }
 
       const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
       if (!isAdmin) pendQuery.eq("vendedor_id", userId);
-      const { data: pend } = await pendQuery;
+      const { data: pend, error: reloadError } = await pendQuery;
+      if (reloadError) throw reloadError;
       setPendentes((pend ?? []) as Venda[]);
     } catch (e: any) {
       alert(e.message ?? "Erro ao excluir.");

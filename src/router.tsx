@@ -40,6 +40,7 @@ const LinksUteis = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));
 const PublicPonto = React.lazy(() => import("./pages/PublicPonto"));
+const PublicAgendaAttendance = React.lazy(() => import("./pages/PublicAgendaAttendance"));
 const PublicTrabalheConosco = React.lazy(() => import("./pages/PublicTrabalheConosco"));
 const PublicAreaCandidato = React.lazy(() => import("./pages/PublicAreaCandidato"));
 const PublicPoliticaPrivacidade = React.lazy(() => import("./pages/PublicPoliticaPrivacidade"));
@@ -81,6 +82,7 @@ export const router = createBrowserRouter([
 
   { path: "/ponto", element: withSuspense(<PublicPonto />) },
   { path: "/registro-ponto", element: <Navigate to="/ponto" replace /> },
+  { path: "/presenca/:token", element: withSuspense(<PublicAgendaAttendance />) },
   { path: "/ponto-eletronico", element: <Navigate to="/ponto" replace /> },
 
   { path: "/trabalhe-conosco", element: withSuspense(<PublicTrabalheConosco />) },

@@ -50,9 +50,5 @@ if (!src.includes("async function getAgendaAttendanceLink(") || !src.includes("a
 if (!src.includes(".cx-share-feedback{")) {
   src = src.replace(".cx-drawer-section{margin-top:14px;", ".cx-share-feedback{margin-top:8px;padding:9px 11px;border-radius:9px;background:#f1f5f9;color:#1E293F;font-size:11px;font-weight:800;overflow-wrap:anywhere}.cx-share-hint{margin:8px 0 0;color:#64748b;font-size:10px;line-height:1.5}.cx-drawer-section{margin-top:14px;");
 }
-const jsxLine = src.split(String.fromCharCode(10))[788];
-console.log("[agenda-v11-debug] lines=" + src.split(String.fromCharCode(10)).length + " line789=" + (jsxLine?.length || 0) + " overlay=" + src.split(String.fromCharCode(10)).map((line,i)=>line.includes('return <EventOverlay') ? [i+1,line.length] : null).filter(Boolean).map((v)=>v.join(':')).join(','));
-const pos = drawer.indexOf('Copiar link de presença');
-if(pos>=0) console.log("[agenda-v11-actions] " + drawer.slice(Math.max(0,pos-900),pos+800));
 if (src !== before) fs.writeFileSync(path, src);
 console.log("[agenda-v11] verificação: presença=" + src.includes('Copiar link de presença') + ", convidados=" + src.includes("Ver todos os convidados") + ", overlay=" + src.includes("<EventOverlay"));

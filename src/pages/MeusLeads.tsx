@@ -172,7 +172,7 @@ export default function MeusLeads() {
             // Cadastro não conta como conversa. Nunca apresentar "último contato" inventado.
             lastContactAt: freshest(
               ...opportunities.map((o) => o.last_follow_up_at),
-              ...notes.map((n) => n.created_at),
+              ...notes.filter((n) => ["follow_up", "manual", "meeting"].includes(String(n.kind || "").toLowerCase())).map((n) => n.created_at),
               ...conversations.map((w) => w.last_message_at),
             ),
           };

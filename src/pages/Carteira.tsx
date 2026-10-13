@@ -985,13 +985,8 @@ const Carteira: React.FC = () => {
 
         let adminFlag = false;
         try {
-          const { data, error } = await supabase.from("users")
-            .select("role,user_role,is_active")
-            .eq("auth_user_id", uid)
-            .maybeSingle();
-          if (error) throw error;
-          adminFlag = data?.is_active !== false &&
-            (String(data?.role || "").toLowerCase() === "admin" || String(data?.user_role || "").toLowerCase() === "admin");
+          const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
+          adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
         } catch {}
         setIsAdmin(adminFlag);
 

@@ -25,6 +25,7 @@ import {
   Link as LinkIcon,
   MessageCircle,
   Megaphone,
+  UsersRound,
   ShieldCheck,
   SlidersHorizontal,
   Trophy,
@@ -262,6 +263,7 @@ function groupForPath(pathname: string): GroupKey {
     isAnyPathActive(pathname, [
       "/planejamento",
       "/oportunidades",
+      "/meus-leads",
       "/atendimento-whatsapp",
       "/whatsapp",
       "/central-whatsapp",
@@ -462,6 +464,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         items: [
           { to: "/planejamento", label: "Sala de Guerra", icon: ClipboardList, end: true },
           { to: "/oportunidades", label: "Oportunidades", icon: Briefcase, showDot: navAlerts.oportunidades, end: true },
+          { to: "/meus-leads", label: "Meus Leads", icon: UsersRound, end: true },
           {
             to: "/atendimento-whatsapp",
             label: "WhatsApp",

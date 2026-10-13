@@ -17,9 +17,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!process.env.OPENAI_API_KEY) return json(res, 503, { error: "MAX indisponível" });
   try {
     const { data: me, error: profileError } = await supabaseAdmin.from("users")
-      .select("auth_user_id,role,user_role,hierarchy_level,unit_id,is_active")
+      .select("id,auth_user_id,role,user_role,hierarchy_level,unit_id,is_active")
       .eq("auth_user_id", user.id).maybeSingle();
     if (profileError || !me || me.is_active === false) return unauthorized(res);
+    const { data: assignment, error: assignmentError } = await supabaseAdmin
+      .from("user_access_assignments").select("access_profile_id").eq("user_id", me.id).maybeSingle();
+    if (assignmentError) throw assignmentError;
+    if (assignment?.access_profile_id) {
+      const { data: access, error: accessError } = await supabaseAdmin
+        .from("access_profiles").select("permissions,is_active")
+        .eq("id", assignment.access_profile_id).maybeSingle();
+      if (accessError || !access?.is_active ||
+        !(access.permissions?.oportunidades?.view === true || access.permissions?.["*"]?.view === true)) {
+        return json(res, 403, { error: "Acesso à guia não autorizado" });
+      }
+    }
     const { data: unit } = me.unit_id
       ? await supabaseAdmin.from("units").select("tipo").eq("id", me.unit_id).maybeSingle()
       : { data: null };

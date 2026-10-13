@@ -11,6 +11,16 @@ const patches = [
   "scripts/patch-marketing-radar-auto-ideas-v1.mjs",
   "scripts/patch-marketing-radar-idea-selection-v2.mjs",
   "scripts/patch-marketing-idea-inbox-v1.mjs",
+  "scripts/patch-agenda-preference-invites-v2.mjs",
+  "scripts/patch-agenda-internal-directory-realtime-v3.mjs",
+  "scripts/patch-agenda-cancellation-internal-v4.mjs",
+  "scripts/patch-agenda-meeting-ai-v5.mjs",
+  "scripts/patch-agenda-meeting-artifacts-v6.mjs",
+  "scripts/patch-agenda-internal-guest-picker-v7.mjs",
+  "scripts/patch-agenda-event-overlay-v8.mjs",
+  "scripts/patch-agenda-create-overlay-v9.mjs",
+  "scripts/patch-agenda-guest-management-v10.mjs",
+  "scripts/patch-agenda-share-actions-v11.mjs",
 ];
 
 for (const patch of patches) {

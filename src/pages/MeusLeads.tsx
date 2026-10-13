@@ -3,6 +3,7 @@ import { ArrowLeft, Clock3, History, MessageCircle, RefreshCw, Search, UsersRoun
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { supabase } from "@/lib/supabaseClient";
 import { useAccess } from "@/access/AccessContext";
+import WeeklyMaxRecommendations from "@/components/leads/WeeklyMaxRecommendations";
 
 type Lead = {
   id: string; nome: string; telefone: string | null; email: string | null;
@@ -230,6 +231,7 @@ export default function MeusLeads() {
     const dateB = b.lastContactAt || b.created_at;
     return dateB.localeCompare(dateA);
   }), [items, search, inactivity, purchase, segment, sellerFilter]);
+  const recommendationsScope = useMemo(() => items.filter((lead) => sellerFilter === "all" || lead.owner_id === sellerFilter), [items, sellerFilter]);
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const selected = items.find((lead) => lead.id === selectedId) || null;
@@ -273,6 +275,8 @@ export default function MeusLeads() {
 
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Erro ao carregar: {error}</div>}
       {partial && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Alguns históricos vinculados não puderam ser consultados. A lista de leads foi mantida, mas o último contato ou a situação de compra podem estar incompletos.</div>}
+
+      {!loading && !error && <WeeklyMaxRecommendations leads={recommendationsScope} onShowHistory={setSelectedId} whatsappHref={whatsAppLink} disabled={partial} />}
 
       <section className={styles.panel + " overflow-hidden"}>
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 text-sm">

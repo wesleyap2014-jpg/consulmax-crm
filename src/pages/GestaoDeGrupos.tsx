@@ -1318,9 +1318,9 @@ function OverlayOfertaLance({
                   {loading ? "Buscando..." : "Buscar cotas"}
                 </Button>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-1">
-                  <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
-                    Exportar PDF
-                  </Button>
+              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
+                Exportar PDF
+              </Button>
                 </div>
               </div>
             </div>

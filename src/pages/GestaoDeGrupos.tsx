@@ -1936,7 +1936,7 @@ export default function GestaoDeGrupos() {
             />
           </div>
         </div>
-      )
+      )}
     </div>
   );
 }

@@ -34,6 +34,8 @@ type DraftAction = Pick<WeekAction, "what" | "why" | "where_" | "when_" | "who" 
 type ReviewDraft = { outcome: Outcome | ""; notes: string };
 type View = "planejamento" | "revisao";
 type HistoryRow = WeekPlan & { total: number; realizados: number; revisados: number };
+type TeamWeek = { person: Person; plan: WeekPlan | null; actions: WeekAction[] };
+const ALL_TEAM = "__todos__";
 
 function isoLocal(d: Date) {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
@@ -92,6 +94,8 @@ export default function SalaDeGuerraSemanal() {
   const [meId, setMeId] = useState("");
   const [people, setPeople] = useState<Person[]>([]);
   const [personId, setPersonId] = useState("");
+  const [teamRows, setTeamRows] = useState<TeamWeek[]>([]);
+  const [loadingTeamWeek, setLoadingTeamWeek] = useState(false);
   const [plan, setPlan] = useState<WeekPlan | null>(null);
   const [actions, setActions] = useState<WeekAction[]>([]);
   const [reviews, setReviews] = useState<Record<string, ReviewDraft>>({});
@@ -106,6 +110,15 @@ export default function SalaDeGuerraSemanal() {
   const [draft, setDraft] = useState<DraftAction>(() => emptyDraft(""));
   const [message, setMessage] = useState<{ kind: "error" | "ok"; text: string } | null>(null);
   const latestLoad = useRef(0);
+  const latestTeamLoad = useRef(0);
+  const canSelectEveryone = canReadTeamPlans && people.length > 1;
+  const isEveryone = canSelectEveryone && personId === ALL_TEAM;
+  const teamPlans = teamRows.filter(row => Boolean(row.plan)).length;
+  const teamClosed = teamRows.filter(row => Boolean(row.plan?.review_closed_at)).length;
+  const teamActionCount = teamRows.reduce((sum, row) => sum + row.actions.length, 0);
+  const teamDone = teamRows.reduce((sum, row) =>
+    sum + row.actions.filter(item => item.review_outcome === "realizado").length, 0);
+  const teamProgress = teamActionCount ? Math.round(teamDone * 100 / teamActionCount) : 0;
 
   const person = people.find(p => p.id === personId);
   const myOwnWeek = Boolean(meId) && meId === personId;
@@ -174,7 +187,8 @@ export default function SalaDeGuerraSemanal() {
         const list = team.some(p => p.id === own.id) ? team : [own as Person, ...team];
         setMeId(own.id);
         setPeople(list);
-        setPersonId(own.id);
+        // Visão gerencial abre por padrão em Todos; acesso individual fica no seletor.
+        setPersonId(canReadTeamPlans && list.length > 1 ? ALL_TEAM : own.id);
       } catch (e) {
         if (active) showError(e, "Não foi possível carregar o perfil de acesso.");
       } finally {
@@ -220,14 +234,82 @@ export default function SalaDeGuerraSemanal() {
     }
   }, []);
 
-  useEffect(() => { if (personId) void loadWeek(personId, weekStart); }, [personId, weekStart, loadWeek]);
+  useEffect(() => {
+    if (personId && personId !== ALL_TEAM) {
+      void loadWeek(personId, weekStart);
+    } else {
+      latestLoad.current++;
+      setPlan(null);
+      setActions([]);
+      setReviews({});
+      setLoadingWeek(false);
+    }
+  }, [personId, weekStart, loadWeek]);
+
+  const loadTeamWeek = useCallback(async (members: Person[], start: string) => {
+    const ticket = ++latestTeamLoad.current;
+    setLoadingTeamWeek(true);
+    try {
+      const memberIds = members.map(member => member.id);
+      if (!memberIds.length) { setTeamRows([]); return; }
+      const { data: plansData, error: plansError } = await supabase.from("weekly_plans")
+        .select("*").in("user_id", memberIds).eq("date_start", start)
+        .order("created_at", { ascending: true });
+      if (plansError) throw plansError;
+      const byMember = new Map<string, WeekPlan>();
+      for (const item of (plansData || []) as WeekPlan[]) {
+        if (!byMember.has(item.user_id)) byMember.set(item.user_id, item);
+      }
+      const ids = [...byMember.values()].map(item => item.id);
+      const byPlan = new Map<string, WeekAction[]>();
+      if (ids.length) {
+        const { data: actionsData, error: actionsError } = await supabase.from("weekly_plan_items")
+          .select("*").in("plan_id", ids).order("created_at", { ascending: true });
+        if (actionsError) throw actionsError;
+        for (const item of (actionsData || []) as WeekAction[]) {
+          const list = byPlan.get(item.plan_id) || [];
+          list.push(item);
+          byPlan.set(item.plan_id, list);
+        }
+      }
+      if (ticket !== latestTeamLoad.current) return;
+      setTeamRows(members.map(member => {
+        const memberPlan = byMember.get(member.id) || null;
+        return { person: member, plan: memberPlan, actions: memberPlan ? (byPlan.get(memberPlan.id) || []) : [] };
+      }));
+    } catch (error) {
+      if (ticket === latestTeamLoad.current) {
+        setTeamRows([]);
+        showError(error, "Não foi possível carregar a visão de todos os planejamentos.");
+      }
+    } finally {
+      if (ticket === latestTeamLoad.current) setLoadingTeamWeek(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isEveryone) void loadTeamWeek(people, weekStart);
+    else {
+      latestTeamLoad.current++;
+      setTeamRows([]);
+      setLoadingTeamWeek(false);
+    }
+  }, [isEveryone, people, weekStart, loadTeamWeek]);
 
   const loadHistory = useCallback(async (userId: string) => {
     if (!userId) return;
     setLoadingHistory(true);
     try {
-      const { data, error } = await supabase.from("weekly_plans").select("*")
-        .eq("user_id", userId).order("date_start", { ascending: false }).limit(52);
+      let historyQuery = supabase.from("weekly_plans").select("*")
+        .order("date_start", { ascending: false }).limit(userId === ALL_TEAM ? 250 : 52);
+      if (userId === ALL_TEAM) {
+        const ids = people.map(member => member.id);
+        if (!ids.length) { setHistory([]); return; }
+        historyQuery = historyQuery.in("user_id", ids);
+      } else {
+        historyQuery = historyQuery.eq("user_id", userId);
+      }
+      const { data, error } = await historyQuery;
       if (error) throw error;
       const plans = (data || []) as WeekPlan[];
       const ids = plans.map(p => p.id);
@@ -255,7 +337,7 @@ export default function SalaDeGuerraSemanal() {
     } finally {
       setLoadingHistory(false);
     }
-  }, []);
+  }, [people]);
 
   useEffect(() => { if (personId && showHistory) void loadHistory(personId); }, [personId, showHistory, loadHistory]);
 
@@ -482,12 +564,13 @@ export default function SalaDeGuerraSemanal() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(310px,1fr)_auto] lg:items-end">
           <div className="min-w-0">
             <Label htmlFor="sg-colaborador" className="mb-2 block text-xs font-bold text-slate-700">
-              {people.length > 1 ? "Planejamento de" : "Responsável"}
+              {canSelectEveryone ? "Planejamento de" : "Responsável"}
             </Label>
             {loadingUser ? <p className="py-2 text-sm text-slate-500">Carregando perfil…</p> :
-              <select id="sg-colaborador" value={personId} disabled={people.length <= 1 || busy}
+              <select id="sg-colaborador" value={personId} disabled={!canSelectEveryone || busy}
                 onChange={e => { setPersonId(e.target.value); setMessage(null); }}
                 className="h-11 w-full max-w-xl rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800">
+                {canSelectEveryone && <option value={ALL_TEAM}>Todos ({people.length} colaboradores ativos)</option>}
                 {people.map(p => <option key={p.id} value={p.id}>{p.nome || p.email || "Usuário"}</option>)}
               </select>}
           </div>
@@ -504,7 +587,10 @@ export default function SalaDeGuerraSemanal() {
             </div>
           </div>
         </div>
-        {!myOwnWeek && personId && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        {isEveryone && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <UsersRound className="mr-1 inline h-3.5 w-3.5" /> Visão de todos os colaboradores ativos da sua equipe, conforme a cascata. Selecione um nome para abrir o planejamento individual.
+        </p>}
+        {!isEveryone && !myOwnWeek && personId && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
           <UsersRound className="mr-1 inline h-3.5 w-3.5" /> Acompanhamento da equipe: somente leitura. O próprio colaborador registra e revisa suas ações.
         </p>}
       </section>
@@ -530,6 +616,9 @@ export default function SalaDeGuerraSemanal() {
                         {h.review_closed_at ? "Revisada" : "Aberta"}
                       </span>
                     </div>
+                    {isEveryone && <p className="mt-1 text-xs font-semibold text-slate-700">
+                      {people.find(p => p.id === h.user_id)?.nome || "Colaborador"}
+                    </p>}
                     <p className="mt-1 text-xs text-slate-500">{h.total} ações · {h.realizados} realizadas · {h.revisados} revisadas</p>
                   </button>
                 ))}
@@ -552,11 +641,13 @@ export default function SalaDeGuerraSemanal() {
             <ClipboardCheck className="h-4 w-4" /> Revisar
           </button>
           </div>
-          {!loadingWeek && (
+          {!loadingWeek && !loadingTeamWeek && (
             <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
               <span className={"h-2 w-2 rounded-full " +
-                (closed ? "bg-emerald-500" : plan ? "bg-[#B5A573]" : "bg-slate-300")} />
-              {closed ? "Semana revisada" : plan ? plannedTotal + " compromisso(s) planejado(s)" : "Aguardando planejamento"}
+                (isEveryone ? teamPlans > 0 ? "bg-[#B5A573]" : "bg-slate-300" :
+                  closed ? "bg-emerald-500" : plan ? "bg-[#B5A573]" : "bg-slate-300")} />
+              {isEveryone ? teamPlans + " de " + people.length + " colaboradores planejaram" :
+                closed ? "Semana revisada" : plan ? plannedTotal + " compromisso(s) planejado(s)" : "Aguardando planejamento"}
             </span>
           )}
         </div>

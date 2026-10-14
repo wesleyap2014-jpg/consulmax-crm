@@ -1547,7 +1547,7 @@ export default function GestaoDeGrupos() {
     return (
       <button
         type="button"
-        className={`inline-flex items-center gap-1 ${active ? "text-foreground" : "text-muted-foreground"} hover:text-foreground`}
+        className={`inline-flex items-center justify-center gap-1 whitespace-nowrap ${active ? "text-white" : "text-slate-200"} hover:text-white`}
         onClick={() => {
           if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
           else {

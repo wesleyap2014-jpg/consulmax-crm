@@ -1277,50 +1277,81 @@ function OverlayOfertaLance({
   };
 
   const total = linhas.length;
+  const distinctGroups = new Set(linhas.map(item => item.administradora + ":" + item.grupo)).size;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-xl font-semibold inline-flex items-center gap-2">
-            <Target className="h-5 w-5" /> Oferta de Lance
-          </h2>
-          <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
-            <X className="h-4 w-4" /> Fechar
-          </Button>
-        </div>
-
-        <div className="p-5 space-y-4 overflow-hidden">
-          <div className="flex flex-col md:flex-row md:items-end gap-3">
-            <div className="flex-1">
-              <Label>Data da Assembleia</Label>
-              <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-5" role="presentation">
+      <section role="dialog" aria-modal="true" aria-labelledby="oferta-lance-title"
+        className="flex max-h-[94vh] w-full max-w-[92vw] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl max-sm:max-w-[98vw]">
+        <header className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-[#1E293F] to-[#33445D] px-5 py-5 text-white sm:px-6">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/15 bg-white/10">
+                <Target className="h-5 w-5 text-[#E5CF9B]" />
+              </span>
+              <div>
+                <h2 id="oferta-lance-title" className="text-lg font-extrabold tracking-tight sm:text-xl">Oferta de Lance</h2>
+                <p className="mt-1 text-xs text-slate-200">Confira as cotas encarteiradas, referências e estratégias para a assembleia selecionada.</p>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Button onClick={listar} disabled={!dataAsm || loading} className="inline-flex items-center gap-2">
-                {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                Listar
-              </Button>
-              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
-                Exportar PDF
-              </Button>
+            <button type="button" aria-label="Fechar oferta de lance" onClick={onClose}
+              className="rounded-lg border border-white/20 p-2 text-white transition-colors hover:bg-white/10">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/50 px-4 py-5 sm:px-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="min-w-[200px] flex-1 sm:max-w-[330px]">
+                <Label htmlFor="oferta-data-assembleia" className="mb-2 block text-xs font-extrabold text-[#1E293F]">
+                  Data da assembleia
+                </Label>
+                <Input id="oferta-data-assembleia" type="date" className="h-11 rounded-xl border-slate-200 bg-white font-semibold"
+                  value={dataAsm} onChange={(event) => { setDataAsm(event.target.value); setLinhas([]); }} />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" onClick={listar} disabled={!dataAsm || loading}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#A11C27] px-5 font-semibold text-white hover:bg-[#831622]">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Target className="h-4 w-4" />}
+                  {loading ? "Buscando..." : "Buscar cotas"}
+                </Button>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-1">
+                  <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
+                    Exportar PDF
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Selecione a data e busque os grupos com assembleia cadastrada. A consulta não altera as cotas.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Data consultada</p>
+              <p className="mt-1 text-base font-extrabold tabular-nums text-[#1E293F]">{dataAsm ? formatBR(toYMD(dataAsm)) : "—"}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Cotas listadas</p>
+              <p className="mt-1 text-xl font-black tabular-nums text-[#1E293F]">{loading ? "..." : total}</p>
+            </div>
+            <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-3.5 sm:col-span-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Grupos encontrados</p>
+              <p className="mt-1 text-xl font-black tabular-nums text-[#1E293F]">{loading ? "..." : distinctGroups}</p>
             </div>
           </div>
 
-          <div className="text-sm text-muted-foreground">
-            {dataAsm ? (
-              <>
-                Assembleia em {formatBR(toYMD(dataAsm))} • <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">{total} cotas</span>
-              </>
-            ) : (
-              <>
-                Informe a data e clique em <b>Listar</b>.
-              </>
-            )}
-          </div>
-
-          <div className="rounded-xl border overflow-auto max-h-[52vh]">
-            <table className="min-w-[1080px] w-full text-sm">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-[#1E293F]">Relação de cotas</h3>
+                <p className="mt-0.5 text-[11px] text-slate-500">Ordenada por cliente, administradora, grupo e cota.</p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">{total} registros</span>
+            </div>
+            <div className="rounded-xl border overflow-auto max-h-[52vh] border-0 rounded-none">
+                          <table className="min-w-[1080px] w-full text-sm">
               <thead className="sticky top-0 bg-muted/60 backdrop-blur">
                 <tr>
                   <th className="p-2 text-left">Administradora</th>
@@ -1378,9 +1409,11 @@ function OverlayOfertaLance({
                 )}
               </tbody>
             </table>
+            </div>
           </div>
+          <p className="text-xs text-slate-500">Os dados são informativos. As referências seguem a apuração cadastrada para cada grupo.</p>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

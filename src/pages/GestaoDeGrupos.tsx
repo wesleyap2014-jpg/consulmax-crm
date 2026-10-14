@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import GroupBidModalitySettings from "@/components/gestao-grupos/GroupBidModalitySettings";
+import GroupMedianHistory from "@/components/gestao-grupos/GroupMedianHistory";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1890,6 +1891,7 @@ export default function GestaoDeGrupos() {
                                 <p className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">Nenhuma modalidade configurada para este grupo.</p>
                               )}
                             </section>
+                            {!stub && <GroupMedianHistory group={{ id: r.id, codigo: r.codigo, administradora: r.administradora, segmento: r.segmento, modalities: availableModes }} />}
                           </div>
                         </td>
                       </tr>

@@ -2,11 +2,15 @@
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { useMemo, useState, useEffect, type CSSProperties, type FC } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAccess } from "@/access/AccessContext";
+import { guideKeyForPath } from "@/access/permissionCatalog";
 import { useWhatsAppUnread } from "@/components/whatsapp/WhatsAppNotificationsProvider";
 import type { LucideIcon } from "lucide-react";
 import {
   BadgeCheck,
   BarChart3,
+  Bot,
+  Home,
   Briefcase,
   Calculator,
   Calendar,
@@ -258,50 +262,29 @@ function isAnyPathActive(pathname: string, prefixes: string[]) {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p));
 }
 
-function groupForPath(pathname: string): GroupKey {
-  if (
-    isAnyPathActive(pathname, [
-      "/planejamento",
-      "/oportunidades",
-      "/meus-leads",
-      "/atendimento-whatsapp",
-      "/whatsapp",
-      "/central-whatsapp",
-      "/atendimento",
-      "/agenda",
-      "/simuladores",
-      "/central-grupos",
-      "/grupos-disponiveis",
-      "/propostas",
-      "/propostas-pro-max",
-      "/ranking",
-      "/estoque-contempladas",
-    ])
-  ) {
-    return "vendas";
-  }
+function groupForPath(pathname: string): GroupKey | null {
+  // Atalhos globais são úteis em qualquer fase e não devem abrir um grupo por engano.
+  if (pathname === "/" || isAnyPathActive(pathname, [
+    "/inicio", "/perfil", "/whatsapp", "/atendimento-whatsapp",
+    "/central-whatsapp", "/atendimento", "/agenda",
+  ])) return null;
 
-  if (isAnyPathActive(pathname, ["/carteira", "/seguros", "/giro-de-carteira", "/gestao-de-grupos"])) {
-    return "pos";
-  }
-
-  if (isAnyPathActive(pathname, ["/marketing"])) {
-    return "marketing";
-  }
-
-  if (isAnyPathActive(pathname, ["/meus-parceiros"])) {
-    return "admin";
-  }
-
-  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes", "/processos", "/rh"])) {
-    return "admin";
-  }
-
-  if (isAnyPathActive(pathname, ["/central-projetos", "/gestao-de-projetos", "/projetos", "/links", "/procedimentos"])) {
-    return "max";
-  }
-
-  return "fin";
+  if (isAnyPathActive(pathname, ["/marketing", "/meus-parceiros"])) return "marketing";
+  if (isAnyPathActive(pathname, [
+    "/planejamento", "/oportunidades", "/meus-leads", "/leads",
+    "/central-grupos", "/grupos-disponiveis", "/radar-ofertas",
+    "/estoque-contempladas", "/simuladores", "/propostas",
+  ])) return "vendas";
+  if (isAnyPathActive(pathname, [
+    "/clientes", "/processos", "/carteira", "/seguros",
+    "/gestao-de-grupos", "/giro-de-carteira",
+  ])) return "pos";
+  if (isAnyPathActive(pathname, ["/ranking", "/relatorios", "/comissoes", "/fluxo-de-caixa"])) return "fin";
+  if (isAnyPathActive(pathname, ["/usuarios", "/parametros", "/rh", "/robos"])) return "admin";
+  if (isAnyPathActive(pathname, [
+    "/central-projetos", "/gestao-de-projetos", "/projetos", "/links", "/procedimentos",
+  ])) return "max";
+  return null;
 }
 
 function itemIsVisible(item: FlatItem, authUserId: string | null) {
@@ -313,6 +296,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const pathname = location.pathname;
   const { hasUnread: hasWhatsappUnread, unreadCount: whatsappUnreadCount } =
     useWhatsAppUnread();
+  const { canViewGuide } = useAccess();
 
   const [isSmall, setIsSmall] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -336,12 +320,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     }
   });
 
-  const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
+  const currentGroup = useMemo<GroupKey | null>(() => groupForPath(pathname), [pathname]);
   const [openGroup, setOpenGroup] = useState<GroupKey | null>(currentGroup);
-  const [openPortfolio, setOpenPortfolio] = useState(
-    () => pathname === "/carteira" || pathname.startsWith("/carteira/") || pathname === "/seguros" || pathname.startsWith("/seguros/"),
-  );
-
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -372,17 +352,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   useEffect(() => {
     if (!collapsed) setOpenGroup(currentGroup);
   }, [currentGroup, collapsed]);
-
-  useEffect(() => {
-    if (
-      pathname === "/carteira" ||
-      pathname.startsWith("/carteira/") ||
-      pathname === "/seguros" ||
-      pathname.startsWith("/seguros/")
-    ) {
-      setOpenPortfolio(true);
-    }
-  }, [pathname]);
 
   useEffect(() => {
     if (isSmall) setMobileOpen(false);
@@ -456,8 +425,37 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     };
   }, []);
 
+  const quickLinks = useMemo<FlatItem[]>(() => [
+    { to: "/inicio", label: "Início", icon: Home, end: true },
+    {
+      to: "/atendimento-whatsapp",
+      label: "WhatsApp",
+      icon: MessageCircle,
+      showDot: hasWhatsappUnread,
+      alertLabel: whatsappUnreadCount === 1
+        ? "Há uma conversa com nova mensagem no WhatsApp"
+        : "Há " + whatsappUnreadCount + " conversas com novas mensagens no WhatsApp",
+      end: true,
+      activeMatch: (p) => p === "/atendimento-whatsapp"
+        || p.startsWith("/atendimento-whatsapp")
+        || p.startsWith("/whatsapp")
+        || p === "/central-whatsapp"
+        || p === "/atendimento",
+    },
+    { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
+  ], [hasWhatsappUnread, whatsappUnreadCount, navAlerts.agenda]);
+
   const navGroups = useMemo<Record<GroupKey, NavGroup>>(
     () => ({
+      marketing: {
+        title: "Marketing & Prospecção",
+        icon: Megaphone,
+        items: [
+          { to: "/marketing", label: "Central de Marketing", icon: Megaphone, end: true },
+          { to: "/marketing/esteira", label: "Esteira Criativa", icon: FolderKanban, end: true },
+          { to: "/meus-parceiros", label: "Meus Parceiros", icon: Handshake, end: true },
+        ],
+      },
       vendas: {
         title: "Vendas",
         icon: Briefcase,
@@ -465,19 +463,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           { to: "/planejamento", label: "Sala de Guerra", icon: ClipboardList, end: true },
           { to: "/oportunidades", label: "Oportunidades", icon: Briefcase, showDot: navAlerts.oportunidades, end: true },
           { to: "/meus-leads", label: "Meus Leads", icon: UsersRound, end: true },
-          {
-            to: "/atendimento-whatsapp",
-            label: "WhatsApp",
-            icon: MessageCircle,
-            showDot: hasWhatsappUnread,
-            alertLabel:
-              whatsappUnreadCount === 1
-                ? "Há uma conversa com nova mensagem no WhatsApp"
-                : `Há ${whatsappUnreadCount} conversas com novas mensagens no WhatsApp`,
-            end: true,
-            activeMatch: (p) => p === "/atendimento-whatsapp" || p.startsWith("/atendimento-whatsapp") || p.startsWith("/whatsapp") || p === "/central-whatsapp" || p === "/atendimento",
-          },
-          { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
+          { to: "/central-grupos", label: "Central de Grupos", icon: Database, end: true },
+          { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
           {
             to: "/simuladores",
             label: "Simuladores",
@@ -485,7 +472,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             end: false,
             activeMatch: (p) => p.startsWith("/simuladores"),
           },
-          { to: "/central-grupos", label: "Central de Grupos", icon: Database, end: true },
           { to: "/propostas", label: "Propostas", icon: FileText, end: true },
           {
             to: "/propostas-pro-max",
@@ -494,47 +480,39 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             end: false,
             activeMatch: (p) => p.startsWith("/propostas-pro-max"),
           },
-          { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
-          { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
         ],
       },
       pos: {
-        title: "Pós-venda",
-        icon: Wallet,
+        title: "Clientes & Carteira",
+        icon: UsersRound,
         items: [
-          { to: "/carteira", label: "Consórcios", icon: Wallet, end: true },
-          { to: "/seguros", label: "Seguros", icon: ShieldCheck, end: true },
-          { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
-          { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
-        ],
-      },
-      marketing: {
-        title: "Marketing",
-        icon: Megaphone,
-        items: [
-          { to: "/marketing", label: "Central de Marketing", icon: Megaphone, end: true },
-          { to: "/marketing/esteira", label: "Esteira Criativa", icon: FolderKanban, end: true },
-        ],
-      },
-      admin: {
-        title: "Administrativo",
-        icon: SlidersHorizontal,
-        items: [
-          { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
-          { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
-          { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
-          { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
-          { to: "/meus-parceiros", label: "Meus Parceiros", icon: Handshake, end: true },
+          { to: "/clientes", label: "Clientes", icon: UsersRound, end: true },
           { to: "/processos", label: "Processos", icon: ClipboardList, end: true },
-          { to: "/rh", label: "RH", icon: ClipboardList, end: true },
+          { to: "/carteira", label: "Carteira de Consórcios", icon: Wallet, end: true },
+          { to: "/seguros", label: "Seguros", icon: ShieldCheck, end: true },
+          { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
+          { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
         ],
       },
       fin: {
-        title: "Financeiro",
-        icon: LineChart,
+        title: "Gestão & Resultados",
+        icon: BarChart3,
         items: [
+          { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
+          { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
           { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
           { to: "/fluxo-de-caixa", label: "Fluxo de Caixa", icon: LineChart, onlyForWesley: true, showDot: navAlerts.fluxoCaixa, end: true },
+        ],
+      },
+      admin: {
+        title: "Administração",
+        icon: SlidersHorizontal,
+        items: [
+          { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
+          { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
+          // Ferramenta administrativa preexistente, mantida apenas para usuário autorizado.
+          { to: "/robos/area-restrita-maggi", label: "Robô Área Restrita", icon: Bot, onlyForWesley: true, end: true },
+          { to: "/rh", label: "RH", icon: ClipboardList, end: true },
         ],
       },
       max: {
@@ -547,8 +525,18 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         ],
       },
     }),
-    [hasWhatsappUnread, navAlerts, whatsappUnreadCount]
+    [navAlerts],
   );
+
+  // A estrutura dos acessos existentes é preservada; a mudança é apenas a posição no menu.
+  const canRenderItem = (item: FlatItem) => {
+    if (!itemIsVisible(item, authUserId)) return false;
+    const guideKey = guideKeyForPath(item.to);
+    return !guideKey || canViewGuide(guideKey);
+  };
+
+  const groupHasVisibleItems = (key: GroupKey) =>
+    navGroups[key].items.some((item) => canRenderItem(item));
 
   const widthClass = useMemo(() => {
     if (isSmall) return "w-[92vw] max-w-[360px]";
@@ -559,10 +547,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const pillPadding = collapsed ? "md:px-2.5 px-3" : "px-3";
   const mobileTapFx = "active:scale-[0.99] active:opacity-90";
 
-  const flatItems = useMemo(() => {
-    const groupOrder: GroupKey[] = ["vendas", "marketing", "pos", "admin", "fin", "max"];
-    return groupOrder.flatMap((key) => navGroups[key].items);
-  }, [navGroups]);
+  const groupOrder: GroupKey[] = ["marketing", "vendas", "pos", "fin", "admin", "max"];
+  const flatItems = useMemo(
+    () => [...quickLinks, ...groupOrder.flatMap((key) => navGroups[key].items)],
+    [quickLinks, navGroups],
+  );
 
   const handleNav = () => {
     if (isSmall) setMobileOpen(false);
@@ -578,7 +567,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
      ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`;
 
   const renderNavItem = (item: FlatItem, compact = false) => {
-    if (!itemIsVisible(item, authUserId)) return null;
+    if (!canRenderItem(item)) return null;
 
     const Icon = item.icon;
 
@@ -606,6 +595,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   const renderSectionPill = (key: GroupKey) => {
     const group = navGroups[key];
+    if (!groupHasVisibleItems(key)) return null;
     const Icon = group.icon;
     const isOpen = openGroup === key;
     const isActive = currentGroup === key;
@@ -632,54 +622,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </span>
       </button>
-    );
-  };
-
-  const isPortfolioActive =
-    pathname === "/carteira" ||
-    pathname.startsWith("/carteira/") ||
-    pathname === "/seguros" ||
-    pathname.startsWith("/seguros/");
-
-  const renderGroupItems = (key: GroupKey) => {
-    if (key !== "pos") {
-      return navGroups[key].items.map((item) => renderNavItem(item));
-    }
-
-    const [consorcios, seguros, ...otherPostSalesItems] = navGroups.pos.items;
-
-    return (
-      <>
-        <div className="grid gap-2">
-          <button
-            type="button"
-            onClick={() => setOpenPortfolio((value) => !value)}
-            className={`${pillPadding} py-2.5 rounded-2xl transition-colors w-full flex items-center justify-between
-                        ${mobileTapFx}
-                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
-            style={isPortfolioActive ? activePillStyle : glassHoverPill}
-            aria-expanded={openPortfolio}
-            title="Carteira"
-          >
-            <span className="flex items-center gap-2">
-              <Wallet className="h-4 w-4" />
-              <span className="font-semibold">Carteira</span>
-            </span>
-            <span className="opacity-90" aria-hidden>
-              {openPortfolio ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            </span>
-          </button>
-
-          {openPortfolio && (
-            <div className="ml-4 grid gap-2">
-              {renderNavItem(consorcios)}
-              {renderNavItem(seguros)}
-            </div>
-          )}
-        </div>
-
-        {otherPostSalesItems.map((item) => renderNavItem(item))}
-      </>
     );
   };
 
@@ -720,10 +662,10 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         )}
 
         <Link
-          to="/oportunidades"
+          to="/inicio"
           className="relative z-[1] flex items-center gap-3 mb-2"
           onClick={handleNav}
-          aria-label="Ir para Oportunidades"
+          aria-label="Ir para Início"
         >
           <img
             src={LOGO_URL}
@@ -766,16 +708,19 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
         {(!collapsed || isSmall) && (
           <>
-            {(["vendas", "marketing", "pos", "admin", "fin", "max"] as GroupKey[]).map((key) => (
+            <div className="grid gap-2 border-b border-slate-300/40 pb-4 mb-1" aria-label="Acessos rápidos">
+              {quickLinks.map((item) => renderNavItem(item))}
+            </div>
+            {groupOrder.map((key) => groupHasVisibleItems(key) ? (
               <div key={key} className="grid gap-2">
                 {renderSectionPill(key)}
                 {openGroup === key && (
                   <div className="ml-4 grid gap-2">
-                    {renderGroupItems(key)}
+                    {navGroups[key].items.map((item) => renderNavItem(item))}
                   </div>
                 )}
               </div>
-            ))}
+            ) : null)}
           </>
         )}
       </nav>

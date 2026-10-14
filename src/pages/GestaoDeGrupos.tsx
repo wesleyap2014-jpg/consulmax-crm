@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import GroupBidModalitySettings from "@/components/gestao-grupos/GroupBidModalitySettings";
-import MaxGroupIntelligence, { type MaxGroup } from "@/components/gestao-grupos/MaxGroupIntelligence";
+import GroupMedianHistory from "@/components/gestao-grupos/GroupMedianHistory";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,12 +19,11 @@ import {
   ChevronUp,
   ChevronDown,
   Bell,
-  BrainCircuit,
-  Sparkles,
+  CalendarCheck2,
+  Info,
   Layers3,
   CalendarDays,
   BarChart3,
-  ChevronRight,
 } from "lucide-react";
 
 /* =========================================================
@@ -1235,8 +1234,6 @@ export default function GestaoDeGrupos() {
   const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
   const [fAdmin, setFAdmin] = useState("");
-  const [maxSelectedId, setMaxSelectedId] = useState("");
-  const maxPanelRef = useRef<HTMLDivElement | null>(null);
   const [adminScope, setAdminScope] = useState<string>("");
   const [bidRules, setBidRules] = useState<Array<{ administradora: string; scope: string; segmento: string; group_id: string | null; modalities: Array<{ key: string; label: string }> }>>([]);
   const loadBidRules = useCallback(async () => {
@@ -1271,15 +1268,8 @@ export default function GestaoDeGrupos() {
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<{
-    participantes: number | null;
-    prox_vencimento: string | null;
-    prox_sorteio: string | null;
-    prox_assembleia: string | null;
-    faixa_min: number | null;
-    faixa_max: number | null;
-  } | null>(null);
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [asmOpen, setAsmOpen] = useState<boolean>(false);
   const [lfOpen, setLfOpen] = useState<boolean>(false);
   const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
@@ -1462,20 +1452,10 @@ export default function GestaoDeGrupos() {
   }, [rows, adminScope, fAdmin, fSeg, fGrupo, fFaixa, fMedianaAlvo]);
 
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
-  const maxGroups = useMemo<MaxGroup[]>(() => filtered.filter(r => !isStubId(r.id)).map(r => ({
-    id: r.id, codigo: r.codigo, administradora: r.administradora, segmento: r.segmento,
-    participantes: r.participantes, prox_vencimento: r.prox_vencimento,
-    prox_sorteio: r.prox_sorteio, prox_assembleia: r.prox_assembleia,
-    modalidades: modesForRow(r)
-  })), [filtered, bidRules]);
   const registeredGroups = filtered.filter(r => !isStubId(r.id)).length;
   const configuredGroups = filtered.filter(r => !isStubId(r.id) && bidRules.some(rule => rule.scope === "grupo" && rule.group_id === r.id)).length;
   const nextAssembly = filtered.map(r => toYMD(r.prox_assembleia))
     .filter((v): v is string => Boolean(v) && v >= todayYMDLocal()).sort()[0] || null;
-  const openMaxForGroup = (id: string) => {
-    setMaxSelectedId(id);
-    maxPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
 
   function cmpDateNearestToToday(a?: string | null, b?: string | null): number {
     const today = new Date(todayYMDLocal() + "T00:00:00");
@@ -1568,7 +1548,7 @@ export default function GestaoDeGrupos() {
     return (
       <button
         type="button"
-        className={`inline-flex items-center gap-1 ${active ? "text-foreground" : "text-muted-foreground"} hover:text-foreground`}
+        className={`inline-flex items-center justify-center gap-1 whitespace-nowrap ${active ? "text-white" : "text-slate-200"} hover:text-white`}
         onClick={() => {
           if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
           else {
@@ -1583,28 +1563,34 @@ export default function GestaoDeGrupos() {
     );
   }
 
-  async function salvarLinha(id: string) {
-    if (!editDraft) return;
-    const { error } = await supabase
-      .from("groups")
-      .update({
-        participantes: editDraft.participantes,
-        prox_vencimento: editDraft.prox_vencimento,
-        prox_sorteio: editDraft.prox_sorteio,
-        prox_assembleia: editDraft.prox_assembleia,
-        faixa_min: editDraft.faixa_min,
-        faixa_max: editDraft.faixa_max,
-      })
-      .eq("id", id);
-    if (error) {
-      console.error(error);
-      alert("Erro ao salvar.");
-      return;
-    }
-    setEditingId(null);
-    setEditDraft(null);
-    await carregar();
-  }
+  const editGroup = (id: string) => {
+    const group = grupos.find((item) => item.id === id);
+    if (!group || isStubId(id)) return;
+    setEditingGroupId(id);
+    setEditorPrefill(null);
+    setEditorOpen(true);
+  };
+
+  const toggleDetails = (id: string) => {
+    setExpandedGroupId((current) => current === id ? null : id);
+  };
+
+  // Destaca o calendário sem alterar a data original persistida nem o fuso do CRM.
+  const calendarCell = (value: string | null, emphasize = false) => {
+    const ymd = toYMD(value);
+    if (!ymd) return <span className="text-slate-400">—</span>;
+    const days = Math.round((Date.parse(ymd + "T12:00:00Z") - Date.parse(todayYMDLocal() + "T12:00:00Z")) / 86400000);
+    const upcoming = days >= 0 && days <= 5;
+    const classes = upcoming && emphasize
+      ? "border-amber-200 bg-amber-50 text-amber-800"
+      : emphasize ? "border-slate-200 bg-slate-50 text-[#1E293F]"
+      : "border-transparent bg-transparent text-slate-700";
+    return (
+      <span className={"inline-flex whitespace-nowrap items-center rounded-lg border px-2 py-1 text-xs font-bold tabular-nums " + classes}>
+        {formatBR(ymd)}
+      </span>
+    );
+  };
 
   return (
     <div className="min-h-full space-y-5 bg-gradient-to-b from-slate-50/70 via-background to-background p-4 md:p-6">
@@ -1614,11 +1600,11 @@ export default function GestaoDeGrupos() {
           <div>
             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-rose-700"><Layers3 className="h-4 w-4" /> Pós-vendas · Inteligência operacional</div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">Gestão de Grupos</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-500">Assembleias, modalidades de lance e decisões estratégicas em uma única visão.</p>
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">Datas, apurações e modalidades de lance em uma visão objetiva e organizada.</p>
           </div>
-          <Button type="button" onClick={() => maxPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex items-center gap-2 rounded-xl bg-rose-700 text-white hover:bg-rose-800">
-            <Sparkles className="h-4 w-4" /> Abrir inteligência MAX <ChevronRight className="h-4 w-4" />
-          </Button>
+          <div className="hidden sm:flex items-center gap-2 rounded-xl border border-rose-100 bg-rose-50/70 px-3 py-2 text-xs font-semibold text-rose-800">
+            <CalendarCheck2 className="h-4 w-4" /> Controle de assembleias e vencimentos
+          </div>
         </div>
       </div>
       {todayBadge && (
@@ -1669,14 +1655,10 @@ export default function GestaoDeGrupos() {
           <p className="mt-1 text-xs text-slate-500">Data mais próxima no filtro</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><Sparkles className="h-4 w-4 text-rose-600" /> Regras por grupo</span>
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><Settings className="h-4 w-4 text-rose-600" /> Regras por grupo</span>
           <p className="mt-2 text-2xl font-bold text-slate-950">{configuredGroups}</p>
           <p className="mt-1 text-xs text-slate-500">Personalizações individuais</p>
         </div>
-      </div>
-
-      <div ref={maxPanelRef} className="scroll-mt-6">
-        <MaxGroupIntelligence groups={maxGroups} selectedId={maxSelectedId} onSelect={setMaxSelectedId} />
       </div>
 
       <GroupBidModalitySettings groups={grupos.filter((g) => !isStubId(g.id))} onSaved={loadBidRules} />
@@ -1762,188 +1744,164 @@ export default function GestaoDeGrupos() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-bold tracking-tight text-slate-900">Relação de Grupos</h3>
-          <p className="text-xs text-slate-500">{filtered.length} grupo(s) nesta seleção. Clique no número ou no MAX para analisar.</p>
+          <p className="text-xs text-slate-500">{filtered.length} grupo(s) nesta seleção. Abra Mais detalhes para conferir modalidades, próxima assembleia e editar.</p>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-auto">
-        <table className="min-w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="p-2 text-left">ADMINISTRADORA</th>
-              <th className="p-2 text-left">SEGMENTO</th>
-              <th className="p-2 text-left">GRUPO</th>
-              <th className="p-2 text-right">PARTIC.</th>
-              <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
-              <th className="p-2 text-right">Tot. Entr.</th>
-              <th className="p-2 text-left">Modalidades de Lance</th>
-              <th className="p-2 text-center">Apuração</th>
-              <th className="p-2 text-center">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
-              <th className="p-2 text-center">{headerSort("Vencimento", "prox_vencimento")}</th>
-              <th className="p-2 text-center">{headerSort("Sorteio", "prox_sorteio")}</th>
-              <th className="p-2 text-center">{headerSort("Assembleia", "prox_assembleia")}</th>
-              <th className="p-2 text-right">Ref</th>
-              <th className="p-2 text-center">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1050px] border-collapse text-sm">
+            <thead className="bg-[#1E293F] text-[10px] uppercase tracking-[0.07em] text-slate-100">
               <tr>
-                <td colSpan={14} className="p-6 text-center text-muted-foreground">
-                  <Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…
-                </td>
+                <th scope="col" className="px-3 py-4 text-left font-semibold">Administradora</th>
+                <th scope="col" className="px-3 py-4 text-left font-semibold">Segmento</th>
+                <th scope="col" className="px-3 py-4 text-left font-semibold">Grupo</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">Participantes</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">Tot. Entr.</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">Última Assemb.</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Vencimento", "prox_vencimento")}</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Sorteio", "prox_sorteio")}</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">REF</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">Mais detalhes</th>
               </tr>
-            ) : sorted.length === 0 ? (
-              <tr>
-                <td colSpan={14} className="p-6 text-center text-muted-foreground">
-                  Sem registros para os filtros aplicados.
-                </td>
-              </tr>
-            ) : (
-              sorted.map((r) => {
-                const isEditing = editingId === r.id;
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr><td colSpan={11} className="px-6 py-12 text-center text-slate-500"><Loader2 className="mr-2 inline h-5 w-5 animate-spin" /> Carregando grupos…</td></tr>
+              ) : sorted.length === 0 ? (
+                <tr><td colSpan={11} className="px-6 py-12 text-center text-slate-500">Sem grupos para os filtros selecionados.</td></tr>
+              ) : sorted.map((r) => {
+                const expanded = expandedGroupId === r.id;
+                const stub = isStubId(r.id);
+                const availableModes = modesForRow(r);
                 return (
-                  <tr key={r.id} className="border-b border-slate-100 odd:bg-slate-50/30 transition-colors hover:bg-rose-50/30">
-                    <td className="p-2">{r.administradora}</td>
-                    <td className="p-2">{r.segmento}</td>
-                    <td className="p-3 font-semibold">
-                      {isStubId(r.id) ? r.codigo : <button type="button" className="group inline-flex items-center gap-1.5 font-semibold text-slate-900 hover:text-rose-700" onClick={() => openMaxForGroup(r.id)} title="Analisar grupo com MAX">
-                        {r.codigo} <Sparkles className="h-3.5 w-3.5 text-rose-600 opacity-0 transition-opacity group-hover:opacity-100" />
-                      </button>}
-                    </td>
-                    <td className="p-2 text-right">
-                      {isEditing ? (
-                        <Input
-                          className="h-8 w-28 ml-auto text-right"
-                          type="number"
-                          min={0}
-                          value={editDraft?.participantes ?? ""}
-                          onChange={(e) => setEditDraft((d) => ({ ...(d as any), participantes: e.target.value === "" ? null : Number(e.target.value) }))}
-                        />
-                      ) : (
-                        r.participantes ?? "—"
-                      )}
-                    </td>
-                    <td className="p-2 text-center">
-                      {isEditing ? (
-                        <div className="flex items-center gap-2 justify-center">
-                          <Input
-                            className="h-8 w-28"
-                            type="number"
-                            step="0.01"
-                            value={editDraft?.faixa_min ?? ""}
-                            onChange={(e) => setEditDraft((d) => ({ ...(d as any), faixa_min: e.target.value === "" ? null : Number(e.target.value) }))}
-                            placeholder="mín"
-                          />
-                          <span className="text-muted-foreground">—</span>
-                          <Input
-                            className="h-8 w-28"
-                            type="number"
-                            step="0.01"
-                            value={editDraft?.faixa_max ?? ""}
-                            onChange={(e) => setEditDraft((d) => ({ ...(d as any), faixa_max: e.target.value === "" ? null : Number(e.target.value) }))}
-                            placeholder="máx"
-                          />
-                        </div>
-                      ) : r.faixa_min != null && r.faixa_max != null ? (
-                        r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) +
-                        " — " +
-                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
-                    <td className="p-3 min-w-[250px]">
-                      <div className="flex flex-wrap gap-1">
-                        {modesForRow(r).map((mode) => {
-                          const k = String(mode.key).toLowerCase();
-                          const is25 = k === "fixo_25";
-                          const is50 = k === "fixo_50" || (normalizeBidScope(r.administradora).includes("maggi") && (k === "fixo_35" || /fixo\s*35\s*%/i.test(mode.label)));
-                          const isLivre = k === "livre";
-                          const known = is25 || is50 || isLivre;
-                          const ofertas = is25 ? r.fix25_ofertas : is50 ? r.fix50_ofertas : r.ll_ofertas;
-                          const entregas = is25 ? r.fix25_entregas : is50 ? r.fix50_entregas : r.ll_entregas;
-                          return <span key={mode.key} className="inline-flex flex-col rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs whitespace-nowrap shadow-sm" title={known ? "Ofertas e entregas da última assembleia" : "Modalidade configurada; resultado ainda não registrado no modelo atual"}>
-                            <strong className="text-slate-800">{mode.label}</strong>
-                            <span className="text-muted-foreground">{known ? `${ofertas} ofertas · ${entregas} entregas` : "Sem apuração integrada"}</span>
-                            {isLivre && r.mediana != null && <span className="text-muted-foreground">Mediana: {toPct4(r.mediana)}</span>}
-                          </span>;
-                        })}
-                        {modesForRow(r).length === 0 && <span className="text-muted-foreground text-xs">Nenhuma modalidade configurada</span>}
-                      </div>
-                    </td>
-                    <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
-                    <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
-                    <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
-                    <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
-                    <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
-                    <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
-                    <td className="p-2 text-center">
-                      {isStubId(r.id) ? (
-                        <Button
-                          variant="secondary"
-                          className="inline-flex items-center gap-2"
-                          onClick={() => {
-                            setEditorPrefill({
-                              administradora: r.administradora,
-                              segmento: r.segmento,
-                              codigo: r.codigo,
-                              participantes: r.participantes,
-                              faixa_min: r.faixa_min,
-                              faixa_max: r.faixa_max,
-                              prox_vencimento: r.prox_vencimento,
-                              prox_sorteio: r.prox_sorteio,
-                              prox_assembleia: r.prox_assembleia,
-                              prazo_encerramento_meses: r.prazo_encerramento_meses,
-                            });
-                            setEditorOpen(true);
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" /> Cadastrar
-                        </Button>
-                      ) : editingId === r.id ? (
-                        <div className="flex items-center justify-center gap-2">
-                          <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => { setEditingId(null); setEditDraft(null); }}>
-                            <X className="h-4 w-4" /> Cancelar
-                          </Button>
-                          <Button className="inline-flex items-center gap-2" onClick={() => salvarLinha(r.id)}>
-                            <Save className="h-4 w-4" /> Salvar
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex flex-wrap items-center justify-center gap-2">
-                          <Button type="button" variant="outline" className="inline-flex items-center gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => openMaxForGroup(r.id)}>
-                            <BrainCircuit className="h-4 w-4" /> MAX
-                          </Button>
-                        <Button
-                          variant="secondary"
-                          className="inline-flex items-center gap-2"
-                          onClick={() => {
-                            const g = grupos.find((x) => x.id === r.id);
-                            if (!g) return;
-                            setEditingId(r.id);
-                            setEditDraft({
-                              participantes: g.participantes,
-                              prox_vencimento: g.prox_vencimento,
-                              prox_sorteio: g.prox_sorteio,
-                              prox_assembleia: g.prox_assembleia,
-                              faixa_min: g.faixa_min,
-                              faixa_max: g.faixa_max,
-                            });
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" /> Editar
-                        </Button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
+                  <React.Fragment key={r.id}>
+                    <tr className={expanded ? "bg-rose-50/50" : "bg-white hover:bg-slate-50/80"}>
+                      <td className="px-3 py-3.5 text-left font-semibold text-slate-700">{r.administradora}</td>
+                      <td className="px-3 py-3.5 text-left text-slate-600">{r.segmento}</td>
+                      <td className="px-3 py-3.5 text-left">
+                        <button type="button" className="inline-flex rounded-lg bg-[#1E293F]/5 px-2.5 py-1.5 font-extrabold text-[#1E293F] transition-colors hover:bg-rose-50 hover:text-rose-800" onClick={() => toggleDetails(r.id)} aria-expanded={expanded} title={"Ver detalhes do grupo " + r.codigo}>{r.codigo}</button>
+                      </td>
+                      <td className="px-3 py-3.5 text-center font-medium tabular-nums text-slate-700">{r.participantes == null ? "—" : r.participantes.toLocaleString("pt-BR")}</td>
+                      <td className="px-3 py-3.5 text-center"><span className="inline-flex min-w-9 items-center justify-center rounded-lg bg-slate-100 px-2 py-1 font-bold tabular-nums text-slate-700">{r.total_entregas}</span></td>
+                      <td className="px-2 py-3.5 text-center">{calendarCell(r.apuracao_dia)}</td>
+                      <td className="px-3 py-3.5 text-center font-medium tabular-nums text-slate-700">{r.prazo_encerramento_meses == null ? "—" : r.prazo_encerramento_meses + " meses"}</td>
+                      <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_vencimento, true)}</td>
+                      <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_sorteio, true)}</td>
+                      <td className="px-3 py-3.5 text-center font-bold tabular-nums text-[#1E293F]">{r.referencia ?? "—"}</td>
+                      <td className="px-3 py-3.5 text-center">
+                        <button type="button" onClick={() => toggleDetails(r.id)} aria-expanded={expanded} aria-controls={"group-details-" + r.id} className={"inline-flex whitespace-nowrap items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-all " + (expanded ? "border-rose-200 bg-rose-100 text-rose-800" : "border-slate-200 bg-white text-slate-700 hover:border-rose-200 hover:text-rose-800")}>
+                          <span>{expanded ? "Recolher" : "Detalhes"}</span>
+                          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded && (
+                      <tr id={"group-details-" + r.id}>
+                        <td colSpan={11} className="border-t border-rose-100 bg-gradient-to-b from-rose-50/45 to-slate-50/60 p-0">
+                          <div className="space-y-5 px-5 py-5 md:px-7">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <h4 className="text-base font-extrabold text-[#1E293F]">Grupo {r.codigo} <span className="text-sm font-medium text-slate-500">• {r.administradora} / {r.segmento}</span></h4>
+                                <p className="mt-1 text-xs text-slate-500">Informações completas do grupo e resultados da última assembleia registrada.</p>
+                              </div>
+                              {stub ? (
+                                <Button type="button" className="inline-flex items-center gap-2 rounded-xl bg-[#A11C27] text-white hover:bg-[#831622]" onClick={() => {
+                                  setEditingGroupId(null);
+                                  setEditorPrefill({
+                                    administradora: r.administradora, segmento: r.segmento, codigo: r.codigo,
+                                    participantes: r.participantes, faixa_min: r.faixa_min, faixa_max: r.faixa_max,
+                                    prox_vencimento: r.prox_vencimento, prox_sorteio: r.prox_sorteio,
+                                    prox_assembleia: r.prox_assembleia, prazo_encerramento_meses: r.prazo_encerramento_meses,
+                                  });
+                                  setEditorOpen(true);
+                                }}><Pencil className="h-4 w-4" /> Cadastrar grupo</Button>
+                              ) : (
+                                <Button type="button" className="inline-flex items-center gap-2 rounded-xl bg-[#A11C27] text-white hover:bg-[#831622]" onClick={() => editGroup(r.id)}><Pencil className="h-4 w-4" /> Editar informações do grupo</Button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                              <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Próxima assembleia</p>
+                                <p className="flex items-center gap-2 text-base font-extrabold tabular-nums text-[#A11C27]"><CalendarDays className="h-4 w-4" /> {formatBR(toYMD(r.prox_assembleia))}</p>
+                              </div>
+                              <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Faixa de crédito</p>
+                                <p className="text-xs font-extrabold leading-6 text-[#1E293F]">{r.faixa_min == null ? "—" : r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })} <span className="text-slate-400">a</span> {r.faixa_max == null ? "—" : r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}</p>
+                              </div>
+                              <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Lance livre • mediana</p>
+                                <p className="text-base font-extrabold text-[#1E293F]">{toPct4(r.mediana)}</p>
+                              </div>
+                              <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Última assembleia</p>
+                                <p className="text-base font-extrabold tabular-nums text-[#1E293F]">{formatBR(toYMD(r.apuracao_dia))}</p>
+                              </div>
+                            </div>
+                            <section aria-label={"Modalidades do grupo " + r.codigo}>
+                              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <h5 className="text-sm font-extrabold text-[#1E293F]">Modalidades de lance</h5>
+                                  <p className="mt-1 text-xs text-slate-500">São exibidas somente as modalidades vinculadas às configurações do grupo, segmento ou administradora.</p>
+                                </div>
+                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">{availableModes.length} modalidade(s)</span>
+                              </div>
+                              {availableModes.length ? (
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                                  {availableModes.map((mode) => {
+                                    const key = String(mode.key).toLowerCase();
+                                    const is25 = key === "fixo_25";
+                                    const is50 = key === "fixo_50" || (normalizeBidScope(r.administradora).includes("maggi") && (key === "fixo_35" || /fixo\s*35\s*%/i.test(mode.label)));
+                                    const isFree = key === "livre";
+                                    const integrated = is25 || is50 || isFree;
+                                    const offers = is25 ? r.fix25_ofertas : is50 ? r.fix50_ofertas : r.ll_ofertas;
+                                    const deliveries = is25 ? r.fix25_entregas : is50 ? r.fix50_entregas : r.ll_entregas;
+                                    return (
+                                      <div key={mode.key} className="flex min-h-[124px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                                        <div className="mb-3 flex items-center gap-2">
+                                          <span className="h-2 w-2 shrink-0 rounded-full bg-[#B5A573]" />
+                                          <h6 className="text-sm font-extrabold text-[#1E293F]">{mode.label}</h6>
+                                        </div>
+                                        {integrated ? (
+                                          <>
+                                            <div className="grid grid-cols-2 gap-2">
+                                              <div className="rounded-lg bg-slate-50 px-3 py-2">
+                                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Ofertas</p>
+                                                <p className="mt-1 text-lg font-black tabular-nums text-slate-800">{offers}</p>
+                                              </div>
+                                              <div className="rounded-lg bg-rose-50/70 px-3 py-2">
+                                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Entregas</p>
+                                                <p className="mt-1 text-lg font-black tabular-nums text-[#A11C27]">{deliveries}</p>
+                                              </div>
+                                            </div>
+                                            {isFree && <p className="mt-3 text-xs font-semibold text-slate-600">Mediana: <span className="font-extrabold text-[#1E293F]">{toPct4(r.mediana)}</span></p>}
+                                          </>
+                                        ) : (
+                                          <div className="flex gap-2 rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                                            <Info className="h-4 w-4 shrink-0 text-slate-400" />
+                                            <span>Modalidade configurada. Resultados ainda não integrados ao histórico.</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <p className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">Nenhuma modalidade configurada para este grupo.</p>
+                              )}
+                            </section>
+                            {!stub && <GroupMedianHistory group={{ id: r.id, codigo: r.codigo, administradora: r.administradora, segmento: r.segmento, modalities: availableModes }} />}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
-              })
-            )}
-          </tbody>
-        </table>
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="text-sm text-muted-foreground">
@@ -1963,12 +1921,19 @@ export default function GestaoDeGrupos() {
       {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} gruposBase={grupos} drawsByDate={drawsByDate} lastAsmByGroup={lastAsmByGroup} />}
 
       {editorOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) { setEditorOpen(false); setEditorPrefill(null); setEditingGroupId(null); } }}>
+          <div role="dialog" aria-modal="true" aria-label={editingGroupId ? "Editar grupo" : "Cadastrar grupo"} className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl md:p-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-extrabold text-[#1E293F]">{editingGroupId ? "Editar informações do grupo" : "Cadastrar grupo"}</h3>
+                <p className="text-xs text-slate-500">Confira os dados e datas antes de salvar.</p>
+              </div>
+              <button type="button" aria-label="Fechar" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-50" onClick={() => { setEditorOpen(false); setEditorPrefill(null); setEditingGroupId(null); }}><X className="h-4 w-4" /></button>
+            </div>
             <EditorGrupo
-              group={null}
+              group={editingGroupId ? grupos.find((item) => item.id === editingGroupId) || null : null}
               prefill={editorPrefill ?? {}}
-              onClose={() => { setEditorOpen(false); setEditorPrefill(null); }}
+              onClose={() => { setEditorOpen(false); setEditorPrefill(null); setEditingGroupId(null); }}
               onSaved={async () => { await carregar(); }}
             />
           </div>

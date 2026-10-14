@@ -445,14 +445,17 @@ type LinhaAsm = {
   ll_maior: number | null;
   ll_menor: number | null;
   prazo_enc_meses: number | null;
+  modality_results: BidOutcomeMap;
 };
 
 function OverlayAssembleias({
   gruposBase,
+  bidRules,
   onClose,
   onSaved,
 }: {
   gruposBase: Grupo[];
+  bidRules: BidRule[];
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
@@ -463,6 +466,8 @@ function OverlayAssembleias({
   const [nextAsm, setNextAsm] = useState<string>("");
   const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const prazoAtualById = useMemo(() => {
     const m = new Map<string, number | null>();
@@ -472,35 +477,89 @@ function OverlayAssembleias({
 
   const administradoras = useMemo(() => Array.from(new Set(gruposBase.map((g) => g.administradora))).sort(), [gruposBase]);
 
+  const groupsMap = useMemo(() => new Map(gruposBase.map(g => [g.id, g])), [gruposBase]);
+
   useEffect(() => {
+    let canceled = false;
+    setHistoryError("");
     if (!date) {
       setLinhas([]);
+      setLoadingExisting(false);
       return;
     }
-    const subset = gruposBase
-      .filter((g) => !isStubId(g.id))
-      .filter((g) => sameDay(g.prox_assembleia, date) && (!adminSel || g.administradora === adminSel))
-      .map<LinhaAsm>((g) => ({
-        group_id: g.id,
-        codigo: g.codigo,
-        fix25_entregas: 0,
-        fix25_ofertas: 0,
-        fix50_entregas: 0,
-        fix50_ofertas: 0,
-        ll_entregas: 0,
-        ll_ofertas: 0,
-        ll_maior: null,
-        ll_menor: null,
-        prazo_enc_meses: g.prazo_encerramento_meses ?? null,
-      }));
-    setLinhas(subset);
+    const relevant = gruposBase
+      .filter(g => !isStubId(g.id))
+      .filter(g => sameDay(g.prox_assembleia, date) && (!adminSel || g.administradora === adminSel));
+    if (!relevant.length) {
+      setLinhas([]);
+      setLoadingExisting(false);
+      return;
+    }
+    // Reabrir uma assembleia não pode zerar os valores já registrados, inclusive modalidades ocultas.
+    setLoadingExisting(true);
+    void (async () => {
+      const { data, error } = await supabase.from("assembly_results")
+        .select("group_id,fixed25_deliveries,fixed25_offers,fixed50_deliveries,fixed50_offers,ll_deliveries,ll_offers,ll_high,ll_low,modality_results")
+        .eq("date", date).in("group_id", relevant.map(g => g.id));
+      if (canceled) return;
+      if (error) {
+        setHistoryError("Não foi possível carregar resultados já cadastrados. Para evitar sobrescrever históricos, o salvamento está bloqueado.");
+        setLinhas([]);
+      } else {
+        const existing = new Map((data || []).map((item: any) => [item.group_id, item]));
+        setLinhas(relevant.map(g => {
+          const row = (existing.get(g.id) || {}) as Record<string, any>;
+          return {
+            group_id: g.id,
+            codigo: g.codigo,
+            fix25_entregas: Number(row.fixed25_deliveries || 0),
+            fix25_ofertas: Number(row.fixed25_offers || 0),
+            fix50_entregas: Number(row.fixed50_deliveries || 0),
+            fix50_ofertas: Number(row.fixed50_offers || 0),
+            ll_entregas: Number(row.ll_deliveries || 0),
+            ll_ofertas: Number(row.ll_offers || 0),
+            ll_maior: row.ll_high == null ? null : Number(row.ll_high),
+            ll_menor: row.ll_low == null ? null : Number(row.ll_low),
+            prazo_enc_meses: g.prazo_encerramento_meses ?? null,
+            modality_results: sanitizeBidResults(row.modality_results),
+          };
+        }));
+      }
+      setLoadingExisting(false);
+    })();
+    return () => { canceled = true; };
   }, [date, adminSel, gruposBase]);
 
-  const upd = (id: string, campo: keyof LinhaAsm, val: number | null) => {
-    setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
-  };
-
-  const podeSalvar = Boolean(date) && linhas.length > 0 && Boolean(nextDue) && Boolean(nextDraw) && Boolean(nextAsm);
+  function modeResult(row: LinhaAsm, group: Grupo, mode: BidModality): BidOutcome {
+    const stored = row.modality_results[mode.key];
+    if (stored) return stored;
+    const slot = legacyBidSlot(group, mode);
+    if (slot === "ll") return { offers: row.ll_ofertas, deliveries: row.ll_entregas };
+    if (slot === "fix25") return { offers: row.fix25_ofertas, deliveries: row.fix25_entregas };
+    if (slot === "fix50") return { offers: row.fix50_ofertas, deliveries: row.fix50_entregas };
+    return { offers: 0, deliveries: 0 };
+  }
+  function updateMode(id: string, mode: BidModality, field: keyof BidOutcome, val: number) {
+    setLinhas(current => current.map(row => {
+      if (row.group_id !== id) return row;
+      const group = groupsMap.get(id);
+      if (!group) return row;
+      const outcome = { ...modeResult(row, group, mode), [field]: val };
+      const slot = legacyBidSlot(group, mode);
+      return {
+        ...row,
+        modality_results: { ...row.modality_results, [mode.key]: outcome },
+        ...(slot === "ll" ? { ll_ofertas: outcome.offers, ll_entregas: outcome.deliveries } : {}),
+        ...(slot === "fix25" ? { fix25_ofertas: outcome.offers, fix25_entregas: outcome.deliveries } : {}),
+        ...(slot === "fix50" ? { fix50_ofertas: outcome.offers, fix50_entregas: outcome.deliveries } : {}),
+      };
+    }));
+  }
+  function updateValue(id: string, key: "ll_maior" | "ll_menor" | "prazo_enc_meses", val: number | null) {
+    setLinhas(current => current.map(row => row.group_id === id ? { ...row, [key]: val } : row));
+  }
+  const podeSalvar = Boolean(date) && linhas.length > 0 && Boolean(nextDue) && Boolean(nextDraw)
+    && Boolean(nextAsm) && !loadingExisting && !historyError;
 
   function buildPreSaveWarnings() {
     const issuesLL: { codigo: string; maior: number; menor: number }[] = [];
@@ -508,7 +567,9 @@ function OverlayAssembleias({
     const blanks: { codigo: string; campos: string[] }[] = [];
 
     linhas.forEach((l) => {
-      if (l.ll_maior != null && l.ll_menor != null && l.ll_maior < l.ll_menor) {
+      const group = groupsMap.get(l.group_id);
+      const hasLL = !!group && modesForGroup(group, bidRules).some(mode => legacyBidSlot(group, mode) === "ll");
+      if (hasLL && l.ll_maior != null && l.ll_menor != null && l.ll_maior < l.ll_menor) {
         issuesLL.push({ codigo: l.codigo, maior: l.ll_maior, menor: l.ll_menor });
       }
 
@@ -519,8 +580,8 @@ function OverlayAssembleias({
       }
 
       const campos: string[] = [];
-      if (l.ll_maior == null) campos.push("LL Maior %");
-      if (l.ll_menor == null) campos.push("LL Menor %");
+      if (hasLL && l.ll_maior == null) campos.push("LL Maior %");
+      if (hasLL && l.ll_menor == null) campos.push("LL Menor %");
       if (l.prazo_enc_meses == null) campos.push("Pz Enc (meses)");
       if (campos.length > 0) blanks.push({ codigo: l.codigo, campos });
     });
@@ -563,6 +624,10 @@ function OverlayAssembleias({
   }
 
   const handleSave = async () => {
+    if (loadingExisting || historyError) {
+      alert("Aguarde o carregamento dos históricos antes de salvar.");
+      return;
+    }
     if (!date) {
       alert("Informe a data da Assembleia (Ocorrida em).");
       return;
@@ -662,6 +727,10 @@ function OverlayAssembleias({
           ll_low: r.ll_menor,
           median: calcMediana(r.ll_maior, r.ll_menor),
           reference_number: referenceNumber,
+          modality_results: {
+            ...r.modality_results,
+            ...(grupo ? Object.fromEntries(modesForGroup(grupo, bidRules).map(mode => [mode.key, modeResult(r, grupo, mode)])) : {}),
+          },
         };
       });
 
@@ -774,79 +843,89 @@ function OverlayAssembleias({
               <CardTitle className="text-base">Grupos dessa assembleia</CardTitle>
             </CardHeader>
             <CardContent className="h-full flex flex-col">
-              {!date || linhas.length === 0 ? (
+              {loadingExisting ? (
+                <p className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Consultando resultados existentes…
+                </p>
+              ) : historyError ? (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{historyError}</div>
+              ) : !date || linhas.length === 0 ? (
                 <div className="text-sm text-muted-foreground">
                   {date ? "Nenhum grupo encontrado com os filtros selecionados." : "Informe a data para listar os grupos."}
                 </div>
               ) : (
-                <div className="flex-1 min-h-0 rounded-xl border overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-muted/70 backdrop-blur">
-                      <tr>
-                        <th className="p-2 text-left">Grupo</th>
-                        <th className="p-2 text-center">25% Entregas</th>
-                        <th className="p-2 text-center">25% Ofertas</th>
-                        <th className="p-2 text-center">{adminSel && normalizeAdmin(adminSel).toLowerCase().includes("maggi") ? "35%" : "50%"} Entregas</th>
-                        <th className="p-2 text-center">{adminSel && normalizeAdmin(adminSel).toLowerCase().includes("maggi") ? "35%" : "50%"} Ofertas</th>
-                        <th className="p-2 text-center">LL Entregas</th>
-                        <th className="p-2 text-center">LL Ofertas</th>
-                        <th className="p-2 text-center">LL Maior %</th>
-                        <th className="p-2 text-center">LL Menor %</th>
-                        <th className="p-2 text-center">Pz Enc (meses)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {linhas.map((l) => (
-                        <tr key={l.group_id} className="odd:bg-muted/30">
-                          <td className="p-2 font-medium">{l.codigo}</td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={l.ll_maior ?? ""}
-                              onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))}
-                            />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={l.ll_menor ?? ""}
-                              onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))}
-                            />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.prazo_enc_meses ?? ""}
-                              onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))}
-                            />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="max-h-[46vh] space-y-3 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/40 p-3">
+                  {linhas.map((line) => {
+                    const group = groupsMap.get(line.group_id);
+                    if (!group) return null;
+                    const modes = modesForGroup(group, bidRules);
+                    const hasLL = modes.some(mode => legacyBidSlot(group, mode) === "ll");
+                    return (
+                      <section key={line.group_id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label={"Resultados grupo " + line.codigo}>
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-base font-extrabold text-[#1E293F]">Grupo {line.codigo}</h3>
+                            <p className="mt-0.5 text-xs text-slate-500">{group.administradora} · {group.segmento}</p>
+                          </div>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                            {modes.length} modalidade(s) configurada(s)
+                          </span>
+                        </div>
+
+                        {modes.length === 0 ? (
+                          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Nenhuma modalidade foi habilitada para este grupo. Revise a configuração de modalidades.</p>
+                        ) : (
+                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            {modes.map(mode => {
+                              const outcome = modeResult(line, group, mode);
+                              const free = legacyBidSlot(group, mode) === "ll";
+                              return (
+                                <div key={mode.key} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                                  <div className="mb-3 flex items-center gap-2 border-b border-slate-200 pb-2">
+                                    <span className="h-2 w-2 rounded-full bg-[#A11C27]" />
+                                    <h4 className="min-w-0 text-sm font-bold text-[#1E293F]">{mode.label}</h4>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <Label htmlFor={"entregas-" + line.group_id + "-" + mode.key} className="mb-1 block text-xs font-semibold">Entregas</Label>
+                                      <Input id={"entregas-" + line.group_id + "-" + mode.key} type="number" min={0} step={1} className="h-10 bg-white text-center tabular-nums" value={outcome.deliveries}
+                                        onChange={(event) => updateMode(line.group_id, mode, "deliveries", Number(event.target.value))} />
+                                    </div>
+                                    <div>
+                                      <Label htmlFor={"ofertas-" + line.group_id + "-" + mode.key} className="mb-1 block text-xs font-semibold">Ofertas</Label>
+                                      <Input id={"ofertas-" + line.group_id + "-" + mode.key} type="number" min={0} step={1} className="h-10 bg-white text-center tabular-nums" value={outcome.offers}
+                                        onChange={(event) => updateMode(line.group_id, mode, "offers", Number(event.target.value))} />
+                                    </div>
+                                  </div>
+                                  {free && (
+                                    <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3">
+                                      <div>
+                                        <Label htmlFor={"ll-maior-" + line.group_id} className="mb-1 block text-xs font-semibold">Lance maior (%)</Label>
+                                        <Input id={"ll-maior-" + line.group_id} type="number" min={0} step="0.01" className="h-10 bg-white text-center" value={line.ll_maior ?? ""}
+                                          onChange={(event) => updateValue(line.group_id, "ll_maior", event.target.value === "" ? null : Number(event.target.value))} />
+                                      </div>
+                                      <div>
+                                        <Label htmlFor={"ll-menor-" + line.group_id} className="mb-1 block text-xs font-semibold">Lance menor (%)</Label>
+                                        <Input id={"ll-menor-" + line.group_id} type="number" min={0} step="0.01" className="h-10 bg-white text-center" value={line.ll_menor ?? ""}
+                                          onChange={(event) => updateValue(line.group_id, "ll_menor", event.target.value === "" ? null : Number(event.target.value))} />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2">
+                          <p className="text-xs text-slate-500">Prazo de encerramento do grupo (meses)</p>
+                          <Input type="number" min={0} aria-label={"Prazo do grupo " + line.codigo} className="h-9 w-28 text-center tabular-nums"
+                            value={line.prazo_enc_meses ?? ""}
+                            onChange={(event) => updateValue(line.group_id, "prazo_enc_meses", event.target.value === "" ? null : Number(event.target.value))} />
+                        </div>
+                      </section>
+                    );
+                  })}
                 </div>
               )}
 

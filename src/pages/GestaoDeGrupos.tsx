@@ -451,11 +451,13 @@ type LinhaAsm = {
 function OverlayAssembleias({
   gruposBase,
   bidRules,
+  bidRulesReady,
   onClose,
   onSaved,
 }: {
   gruposBase: Grupo[];
   bidRules: BidRule[];
+  bidRulesReady: boolean;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
@@ -559,7 +561,7 @@ function OverlayAssembleias({
     setLinhas(current => current.map(row => row.group_id === id ? { ...row, [key]: val } : row));
   }
   const podeSalvar = Boolean(date) && linhas.length > 0 && Boolean(nextDue) && Boolean(nextDraw) && Boolean(nextAsm);
-  const bloqueadoPeloHistorico = loadingExisting || Boolean(historyError);
+  const bloqueadoPeloHistorico = loadingExisting || Boolean(historyError) || !bidRulesReady;
 
   function buildPreSaveWarnings() {
     const issuesLL: { codigo: string; maior: number; menor: number }[] = [];
@@ -624,8 +626,8 @@ function OverlayAssembleias({
   }
 
   const handleSave = async () => {
-    if (loadingExisting || historyError) {
-      alert("Aguarde o carregamento dos históricos antes de salvar.");
+    if (loadingExisting || historyError || !bidRulesReady) {
+      alert("Aguarde a consulta dos históricos e da configuração das modalidades antes de salvar.");
       return;
     }
     if (!date) {
@@ -843,7 +845,9 @@ function OverlayAssembleias({
               <CardTitle className="text-base">Grupos dessa assembleia</CardTitle>
             </CardHeader>
             <CardContent className="h-full flex flex-col">
-              {loadingExisting ? (
+              {!bidRulesReady ? (
+                <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Não foi possível confirmar as modalidades configuradas. Atualize a página antes de informar resultados, para evitar lançamentos incorretos.</p>
+              ) : loadingExisting ? (
                 <p className="flex items-center gap-2 py-6 text-sm text-slate-500">
                   <Loader2 className="h-4 w-4 animate-spin" /> Consultando resultados existentes…
                 </p>
@@ -1370,14 +1374,16 @@ export default function GestaoDeGrupos() {
   const [fAdmin, setFAdmin] = useState("");
   const [adminScope, setAdminScope] = useState<string>("");
   const [bidRules, setBidRules] = useState<BidRule[]>([]);
+  const [bidRulesReady, setBidRulesReady] = useState(false);
   const loadBidRules = useCallback(async () => {
     const { data, error } = await supabase.from("group_bid_modality_rules").select("administradora,scope,segmento,group_id,modalities");
-    if (error) { console.warn("Configurações de lance indisponíveis:", error.message); return; }
+    if (error) { console.warn("Configurações de lance indisponíveis:", error.message); setBidRulesReady(false); return; }
     setBidRules((data || []).map((v: any) => ({
       administradora: String(v.administradora || ""), scope: String(v.scope || ""),
       segmento: String(v.segmento || ""), group_id: v.group_id ?? null,
       modalities: Array.isArray(v.modalities) ? v.modalities.filter((m: any) => m && typeof m.key === "string" && typeof m.label === "string") : []
     })));
+    setBidRulesReady(true);
   }, []);
   useEffect(() => { void loadBidRules(); }, [loadBidRules]);
   const normalizeBidScope = normBid;
@@ -2103,7 +2109,7 @@ export default function GestaoDeGrupos() {
         Total de entregas (linhas filtradas): <span className="font-semibold text-foreground">{totalEntregas}</span>
       </div>
 
-      {asmOpen && <OverlayAssembleias gruposBase={grupos} bidRules={bidRules} onClose={() => setAsmOpen(false)} onSaved={async () => await carregar()} />}
+      {asmOpen && <OverlayAssembleias gruposBase={grupos} bidRules={bidRules} bidRulesReady={bidRulesReady} onClose={() => setAsmOpen(false)} onSaved={async () => await carregar()} />}
       {lfOpen && (
         <OverlayLoteria
           onClose={() => setLfOpen(false)}

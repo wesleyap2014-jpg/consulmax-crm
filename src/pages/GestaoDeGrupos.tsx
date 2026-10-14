@@ -1663,81 +1663,135 @@ export default function GestaoDeGrupos() {
 
       <GroupBidModalitySettings groups={grupos.filter((g) => !isStubId(g.id))} onSaved={loadBidRules} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
-        <Card className="lg:col-span-3 rounded-2xl border-slate-200 shadow-sm transition-shadow hover:shadow-md">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
-            <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setLfOpen(true)}>
-              <Percent className="h-4 w-4" />
-              Informar resultados
-            </Button>
-          </CardHeader>
-          <CardContent className="text-sm grid grid-cols-5 gap-2 items-center">
-            <div className="col-span-5 text-xs text-muted-foreground">
-              {loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}
-            </div>
-            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map((v, i) => (
-              <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">
-                {v}
+      <section aria-labelledby="operacoes-assembleias" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2 px-1">
+          <div>
+            <h2 id="operacoes-assembleias" className="text-base font-extrabold tracking-tight text-[#1E293F]">Operações das assembleias</h2>
+            <p className="mt-1 text-xs text-slate-500">Acesse os lançamentos e acompanhe os resultados dos grupos.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <Card className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+            <div className="h-1 w-full bg-[#A11C27]" />
+            <CardHeader className="flex flex-row items-center gap-3 space-y-0 px-5 pb-3 pt-5">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-rose-50 text-[#A11C27]">
+                <Percent className="h-5 w-5" />
               </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-3 rounded-2xl border-slate-200 shadow-sm transition-shadow hover:shadow-md">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setAsmOpen(true)}>
-              <Settings className="h-4 w-4" /> Informar resultados
-            </Button>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">Informe resultados por data. Atualizaremos próximas datas.</CardContent>
-        </Card>
-
-        <Card className="lg:col-span-3 rounded-2xl border-slate-200 shadow-sm transition-shadow hover:shadow-md">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
-            <div className="flex gap-2">
-              <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setOfertaOpen(true)}>
-                <Target className="h-4 w-4" />
-                Abrir
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-[#1E293F]">Loteria Federal</CardTitle>
+                <p className="mt-1 text-xs text-slate-500">Referência oficial dos sorteios.</p>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col justify-between gap-4 px-5 pb-5 pt-0">
+              <div className="min-h-[54px] rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3">
+                {loteria?.data_sorteio ? (
+                  <>
+                    <p className="mb-2 text-[11px] font-semibold text-slate-500">Sorteio de {formatBR(toYMD(loteria.data_sorteio))}</p>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {([loteria.primeiro, loteria.segundo, loteria.terceiro, loteria.quarto, loteria.quinto] as string[]).map((numero, index) => (
+                        <span key={index} className="rounded-lg border border-slate-200 bg-white px-1 py-1.5 text-center font-mono text-xs font-bold tabular-nums text-slate-800">{numero || "—"}</span>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="flex min-h-7 items-center text-xs text-slate-500">Nenhum resultado selecionado.</p>
+                )}
+              </div>
+              <Button type="button" variant="outline" className="h-10 w-full justify-center gap-2 rounded-xl border-rose-200 bg-white font-semibold text-[#A11C27] hover:bg-rose-50 hover:text-[#831622]" onClick={() => setLfOpen(true)}>
+                <Percent className="h-4 w-4" /> Informar resultados
               </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Lista <b>cotas</b> encarteiradas (ativas) para os grupos com assembleia na data informada, com referência calculada.
-          </CardContent>
-        </Card>
-      </div>
+            </CardContent>
+          </Card>
 
-      <Card className="rounded-2xl border-slate-200 shadow-sm">
-        <CardHeader className="pb-3">
-          <CardTitle className="inline-flex items-center gap-2 text-base text-slate-900">
-            <FilterIcon className="h-4 w-4" /> Filtros
-          </CardTitle>
+          <Card className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+            <div className="h-1 w-full bg-[#B5A573]" />
+            <CardHeader className="flex flex-row items-center gap-3 space-y-0 px-5 pb-3 pt-5">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-800">
+                <CalendarCheck2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-[#1E293F]">Assembleias</CardTitle>
+                <p className="mt-1 text-xs text-slate-500">Apuração e próximas datas.</p>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col justify-between gap-4 px-5 pb-5 pt-0">
+              <div className="flex min-h-[54px] items-center rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3">
+                <p className="text-xs leading-relaxed text-slate-600">Registre os resultados da assembleia e atualize as datas dos grupos.</p>
+              </div>
+              <Button type="button" variant="outline" className="h-10 w-full justify-center gap-2 rounded-xl border-amber-200 bg-white font-semibold text-amber-900 hover:bg-amber-50 hover:text-amber-950" onClick={() => setAsmOpen(true)}>
+                <Settings className="h-4 w-4" /> Informar resultados
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md md:col-span-2 xl:col-span-1">
+            <div className="h-1 w-full bg-[#1E293F]" />
+            <CardHeader className="flex flex-row items-center gap-3 space-y-0 px-5 pb-3 pt-5">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-[#1E293F]">
+                <Target className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-[#1E293F]">Oferta de Lance</CardTitle>
+                <p className="mt-1 text-xs text-slate-500">Cotas ativas e referências.</p>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col justify-between gap-4 px-5 pb-5 pt-0">
+              <div className="flex min-h-[54px] items-center rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3">
+                <p className="text-xs leading-relaxed text-slate-600">Consulte cotas encarteiradas com assembleia na data informada e referência calculada.</p>
+              </div>
+              <Button type="button" variant="outline" className="h-10 w-full justify-center gap-2 rounded-xl border-slate-300 bg-white font-semibold text-[#1E293F] hover:bg-slate-100 hover:text-[#1E293F]" onClick={() => setOfertaOpen(true)}>
+                <Target className="h-4 w-4" /> Abrir oferta de lance
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      <Card className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 border-b border-slate-100 bg-slate-50/50 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#1E293F]/[0.07] text-[#1E293F]">
+              <FilterIcon className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-base font-extrabold text-[#1E293F]">Filtros de grupos</CardTitle>
+              <p className="mt-1 text-xs text-slate-500">Encontre grupos por administradora, segmento, crédito ou mediana.</p>
+            </div>
+          </div>
+          <Button type="button" variant="ghost" size="sm" className="h-9 rounded-lg px-3 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900" disabled={!adminScope && !fAdmin && !fSeg && !fGrupo && !fFaixa && !fMedianaAlvo}
+            onClick={() => { setAdminScope(""); setFAdmin(""); setFSeg(""); setFGrupo(""); setFFaixa(""); setFMedianaAlvo(""); }}>
+            <X className="mr-1.5 h-3.5 w-3.5" /> Limpar filtros
+          </Button>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-3">
-          <div>
-            <Label>Administradora</Label>
-            <Input value={fAdmin} onChange={(e) => setFAdmin(e.target.value)} placeholder="Filtrar Administradora" />
+        <CardContent className="px-5 pb-5 pt-5">
+          <div className="grid grid-cols-1 items-start gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+            <div className="space-y-2">
+              <Label htmlFor="filtro-grupo-admin" className="text-xs font-bold text-slate-700">Administradora</Label>
+              <Input id="filtro-grupo-admin" className="h-11 rounded-xl border-slate-200 bg-white text-sm focus-visible:ring-[#A11C27]/20" value={fAdmin} onChange={(e) => setFAdmin(e.target.value)} placeholder="Buscar administradora" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="filtro-grupo-segmento" className="text-xs font-bold text-slate-700">Segmento</Label>
+              <Input id="filtro-grupo-segmento" className="h-11 rounded-xl border-slate-200 bg-white text-sm focus-visible:ring-[#A11C27]/20" value={fSeg} onChange={(e) => setFSeg(e.target.value)} placeholder="Ex.: Imóvel" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="filtro-grupo-codigo" className="text-xs font-bold text-slate-700">Grupo</Label>
+              <Input id="filtro-grupo-codigo" className="h-11 rounded-xl border-slate-200 bg-white text-sm focus-visible:ring-[#A11C27]/20" value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Número do grupo" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="filtro-grupo-credito" className="text-xs font-bold text-slate-700">Faixa de crédito</Label>
+              <Input id="filtro-grupo-credito" className="h-11 rounded-xl border-slate-200 bg-white text-sm focus-visible:ring-[#A11C27]/20" value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="Ex.: 80000-120000" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="filtro-grupo-mediana" className="text-xs font-bold text-slate-700">Mediana do lance livre (%)</Label>
+              <Input id="filtro-grupo-mediana" className="h-11 rounded-xl border-slate-200 bg-white text-sm focus-visible:ring-[#A11C27]/20" type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="Ex.: 45" />
+              <p className="text-[11px] leading-snug text-slate-500">Margem de ±30% do valor informado.</p>
+            </div>
           </div>
-          <div>
-            <Label>Segmento</Label>
-            <Input value={fSeg} onChange={(e) => setFSeg(e.target.value)} placeholder="Filtrar Segmento" />
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
+            <span>Os filtros são combinados automaticamente.</span>
+            <span className="font-semibold tabular-nums text-slate-700">{filtered.length} grupo(s) encontrado(s)</span>
           </div>
-          <div>
-            <Label>Grupo</Label>
-            <Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" />
-          </div>
-          <div>
-            <Label>Faixa de Crédito</Label>
-            <Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" />
-          </div>
-          <div>
-            <Label>% Lance Livre (mediana ±30%)</Label>
-            <Input type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="ex.: 45" />
-          </div>
-          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 31,5% e 58,5%.</div>
         </CardContent>
       </Card>
 

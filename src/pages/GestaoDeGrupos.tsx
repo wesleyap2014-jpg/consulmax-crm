@@ -558,8 +558,8 @@ function OverlayAssembleias({
   function updateValue(id: string, key: "ll_maior" | "ll_menor" | "prazo_enc_meses", val: number | null) {
     setLinhas(current => current.map(row => row.group_id === id ? { ...row, [key]: val } : row));
   }
-  const podeSalvar = Boolean(date) && linhas.length > 0 && Boolean(nextDue) && Boolean(nextDraw)
-    && Boolean(nextAsm) && !loadingExisting && !historyError;
+  const podeSalvar = Boolean(date) && linhas.length > 0 && Boolean(nextDue) && Boolean(nextDraw) && Boolean(nextAsm);
+  const bloqueadoPeloHistorico = loadingExisting || Boolean(historyError);
 
   function buildPreSaveWarnings() {
     const issuesLL: { codigo: string; maior: number; menor: number }[] = [];
@@ -930,12 +930,12 @@ function OverlayAssembleias({
               )}
 
               <div className="flex justify-end pt-3">
-                <Button disabled={!podeSalvar || loading} onClick={handleSave} className="inline-flex items-center gap-2">
+                <Button disabled={!podeSalvar || loading || bloqueadoPeloHistorico} onClick={handleSave} className="inline-flex items-center gap-2">
                   {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                   <Save className="h-4 w-4" /> Salvar Resultados
                 </Button>
               </div>
-              {!podeSalvar && (
+              {!podeSalvar && !bloqueadoPeloHistorico && (
                 <div className="pt-2 text-xs text-muted-foreground">
                   Para salvar: informe a data da assembleia, e as datas obrigatórias (próx. vencimento, sorteio e assembleia) e tenha grupos listados.
                 </div>

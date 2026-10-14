@@ -55,6 +55,59 @@ type Grupo = {
   prazo_encerramento_meses: number | null;
 };
 
+type BidModality = { key: string; label: string; percentage?: number | null };
+type BidRule = {
+  administradora: string;
+  scope: string;
+  segmento: string;
+  group_id: string | null;
+  modalities: BidModality[];
+};
+type BidOutcome = { offers: number; deliveries: number };
+type BidOutcomeMap = Record<string, BidOutcome>;
+
+function normBid(value: string) {
+  const normalized = String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/consorcios?|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
+  if (normalized === "bb" || normalized === "bancodobrasil" || normalized === "bbcons") return "bancodobrasil";
+  return normalized;
+}
+function modesForGroup(group: Pick<Grupo, "id" | "administradora" | "segmento">, rules: BidRule[]): BidModality[] {
+  const own = rules.find(r => r.scope === "grupo" && r.group_id === group.id);
+  const relevant = rules.filter(r => normBid(r.administradora) === normBid(group.administradora));
+  const active = own || relevant.find(r => r.scope === "segmento" && normBid(r.segmento) === normBid(group.segmento))
+    || relevant.find(r => r.scope === "administradora");
+  // Apenas quando não há configuração definida: compatibilidade com grupos legados.
+  return active ? active.modalities : [
+    { key: "fixo_25", label: "Fixo 25%" },
+    { key: "fixo_50", label: normBid(group.administradora).includes("maggi") ? "Fixo 35%" : "Fixo 50%" },
+    { key: "livre", label: "Lance Livre" },
+  ];
+}
+function legacyBidSlot(group: Pick<Grupo, "administradora">, mode: BidModality): "ll" | "fix25" | "fix50" | null {
+  const key = String(mode.key).toLowerCase();
+  const label = String(mode.label).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const percentage = mode.percentage;
+  if (key === "livre" || /lance\s*livre/.test(label)) return "ll";
+  if (key === "fixo_25" || (percentage === 25 && /fixo/.test(label)) || /fixo\s*25\s*%/.test(label)) return "fix25";
+  const maggi = normBid(group.administradora).includes("maggi");
+  if (key === "fixo_50" || (maggi && (key === "fixo_35" || (percentage === 35 && /fixo/.test(label)) || /fixo\s*35\s*%/.test(label)))) return "fix50";
+  return null;
+}
+function sanitizeBidResults(data: unknown): BidOutcomeMap {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const result: BidOutcomeMap = {};
+  Object.entries(data).forEach(([key, row]) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return;
+    const r = row as Record<string, unknown>;
+    const offers = Number(r.offers), deliveries = Number(r.deliveries);
+    if (Number.isFinite(offers) && Number.isFinite(deliveries)) {
+      result[key] = { offers, deliveries };
+    }
+  });
+  return result;
+}
+
 type LoteriaFederal = {
   data_sorteio: string;
   primeiro: string;
@@ -392,14 +445,19 @@ type LinhaAsm = {
   ll_maior: number | null;
   ll_menor: number | null;
   prazo_enc_meses: number | null;
+  modality_results: BidOutcomeMap;
 };
 
 function OverlayAssembleias({
   gruposBase,
+  bidRules,
+  bidRulesReady,
   onClose,
   onSaved,
 }: {
   gruposBase: Grupo[];
+  bidRules: BidRule[];
+  bidRulesReady: boolean;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
@@ -410,6 +468,8 @@ function OverlayAssembleias({
   const [nextAsm, setNextAsm] = useState<string>("");
   const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const prazoAtualById = useMemo(() => {
     const m = new Map<string, number | null>();
@@ -419,35 +479,89 @@ function OverlayAssembleias({
 
   const administradoras = useMemo(() => Array.from(new Set(gruposBase.map((g) => g.administradora))).sort(), [gruposBase]);
 
+  const groupsMap = useMemo(() => new Map(gruposBase.map(g => [g.id, g])), [gruposBase]);
+
   useEffect(() => {
+    let canceled = false;
+    setHistoryError("");
     if (!date) {
       setLinhas([]);
+      setLoadingExisting(false);
       return;
     }
-    const subset = gruposBase
-      .filter((g) => !isStubId(g.id))
-      .filter((g) => sameDay(g.prox_assembleia, date) && (!adminSel || g.administradora === adminSel))
-      .map<LinhaAsm>((g) => ({
-        group_id: g.id,
-        codigo: g.codigo,
-        fix25_entregas: 0,
-        fix25_ofertas: 0,
-        fix50_entregas: 0,
-        fix50_ofertas: 0,
-        ll_entregas: 0,
-        ll_ofertas: 0,
-        ll_maior: null,
-        ll_menor: null,
-        prazo_enc_meses: g.prazo_encerramento_meses ?? null,
-      }));
-    setLinhas(subset);
+    const relevant = gruposBase
+      .filter(g => !isStubId(g.id))
+      .filter(g => sameDay(g.prox_assembleia, date) && (!adminSel || g.administradora === adminSel));
+    if (!relevant.length) {
+      setLinhas([]);
+      setLoadingExisting(false);
+      return;
+    }
+    // Reabrir uma assembleia não pode zerar os valores já registrados, inclusive modalidades ocultas.
+    setLoadingExisting(true);
+    void (async () => {
+      const { data, error } = await supabase.from("assembly_results")
+        .select("group_id,fixed25_deliveries,fixed25_offers,fixed50_deliveries,fixed50_offers,ll_deliveries,ll_offers,ll_high,ll_low,modality_results")
+        .eq("date", date).in("group_id", relevant.map(g => g.id));
+      if (canceled) return;
+      if (error) {
+        setHistoryError("Não foi possível carregar resultados já cadastrados. Para evitar sobrescrever históricos, o salvamento está bloqueado.");
+        setLinhas([]);
+      } else {
+        const existing = new Map((data || []).map((item: any) => [item.group_id, item]));
+        setLinhas(relevant.map(g => {
+          const row = (existing.get(g.id) || {}) as Record<string, any>;
+          return {
+            group_id: g.id,
+            codigo: g.codigo,
+            fix25_entregas: Number(row.fixed25_deliveries || 0),
+            fix25_ofertas: Number(row.fixed25_offers || 0),
+            fix50_entregas: Number(row.fixed50_deliveries || 0),
+            fix50_ofertas: Number(row.fixed50_offers || 0),
+            ll_entregas: Number(row.ll_deliveries || 0),
+            ll_ofertas: Number(row.ll_offers || 0),
+            ll_maior: row.ll_high == null ? null : Number(row.ll_high),
+            ll_menor: row.ll_low == null ? null : Number(row.ll_low),
+            prazo_enc_meses: g.prazo_encerramento_meses ?? null,
+            modality_results: sanitizeBidResults(row.modality_results),
+          };
+        }));
+      }
+      setLoadingExisting(false);
+    })();
+    return () => { canceled = true; };
   }, [date, adminSel, gruposBase]);
 
-  const upd = (id: string, campo: keyof LinhaAsm, val: number | null) => {
-    setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
-  };
-
+  function modeResult(row: LinhaAsm, group: Grupo, mode: BidModality): BidOutcome {
+    const stored = row.modality_results[mode.key];
+    if (stored) return stored;
+    const slot = legacyBidSlot(group, mode);
+    if (slot === "ll") return { offers: row.ll_ofertas, deliveries: row.ll_entregas };
+    if (slot === "fix25") return { offers: row.fix25_ofertas, deliveries: row.fix25_entregas };
+    if (slot === "fix50") return { offers: row.fix50_ofertas, deliveries: row.fix50_entregas };
+    return { offers: 0, deliveries: 0 };
+  }
+  function updateMode(id: string, mode: BidModality, field: keyof BidOutcome, val: number) {
+    setLinhas(current => current.map(row => {
+      if (row.group_id !== id) return row;
+      const group = groupsMap.get(id);
+      if (!group) return row;
+      const outcome = { ...modeResult(row, group, mode), [field]: val };
+      const slot = legacyBidSlot(group, mode);
+      return {
+        ...row,
+        modality_results: { ...row.modality_results, [mode.key]: outcome },
+        ...(slot === "ll" ? { ll_ofertas: outcome.offers, ll_entregas: outcome.deliveries } : {}),
+        ...(slot === "fix25" ? { fix25_ofertas: outcome.offers, fix25_entregas: outcome.deliveries } : {}),
+        ...(slot === "fix50" ? { fix50_ofertas: outcome.offers, fix50_entregas: outcome.deliveries } : {}),
+      };
+    }));
+  }
+  function updateValue(id: string, key: "ll_maior" | "ll_menor" | "prazo_enc_meses", val: number | null) {
+    setLinhas(current => current.map(row => row.group_id === id ? { ...row, [key]: val } : row));
+  }
   const podeSalvar = Boolean(date) && linhas.length > 0 && Boolean(nextDue) && Boolean(nextDraw) && Boolean(nextAsm);
+  const bloqueadoPeloHistorico = loadingExisting || Boolean(historyError) || !bidRulesReady;
 
   function buildPreSaveWarnings() {
     const issuesLL: { codigo: string; maior: number; menor: number }[] = [];
@@ -455,7 +569,9 @@ function OverlayAssembleias({
     const blanks: { codigo: string; campos: string[] }[] = [];
 
     linhas.forEach((l) => {
-      if (l.ll_maior != null && l.ll_menor != null && l.ll_maior < l.ll_menor) {
+      const group = groupsMap.get(l.group_id);
+      const hasLL = !!group && modesForGroup(group, bidRules).some(mode => legacyBidSlot(group, mode) === "ll");
+      if (hasLL && l.ll_maior != null && l.ll_menor != null && l.ll_maior < l.ll_menor) {
         issuesLL.push({ codigo: l.codigo, maior: l.ll_maior, menor: l.ll_menor });
       }
 
@@ -466,8 +582,8 @@ function OverlayAssembleias({
       }
 
       const campos: string[] = [];
-      if (l.ll_maior == null) campos.push("LL Maior %");
-      if (l.ll_menor == null) campos.push("LL Menor %");
+      if (hasLL && l.ll_maior == null) campos.push("LL Maior %");
+      if (hasLL && l.ll_menor == null) campos.push("LL Menor %");
       if (l.prazo_enc_meses == null) campos.push("Pz Enc (meses)");
       if (campos.length > 0) blanks.push({ codigo: l.codigo, campos });
     });
@@ -510,6 +626,10 @@ function OverlayAssembleias({
   }
 
   const handleSave = async () => {
+    if (loadingExisting || historyError || !bidRulesReady) {
+      alert("Aguarde a consulta dos históricos e da configuração das modalidades antes de salvar.");
+      return;
+    }
     if (!date) {
       alert("Informe a data da Assembleia (Ocorrida em).");
       return;
@@ -609,6 +729,10 @@ function OverlayAssembleias({
           ll_low: r.ll_menor,
           median: calcMediana(r.ll_maior, r.ll_menor),
           reference_number: referenceNumber,
+          modality_results: {
+            ...r.modality_results,
+            ...(grupo ? Object.fromEntries(modesForGroup(grupo, bidRules).map(mode => [mode.key, modeResult(r, grupo, mode)])) : {}),
+          },
         };
       });
 
@@ -721,89 +845,101 @@ function OverlayAssembleias({
               <CardTitle className="text-base">Grupos dessa assembleia</CardTitle>
             </CardHeader>
             <CardContent className="h-full flex flex-col">
-              {!date || linhas.length === 0 ? (
+              {!bidRulesReady ? (
+                <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Não foi possível confirmar as modalidades configuradas. Atualize a página antes de informar resultados, para evitar lançamentos incorretos.</p>
+              ) : loadingExisting ? (
+                <p className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Consultando resultados existentes…
+                </p>
+              ) : historyError ? (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{historyError}</div>
+              ) : !date || linhas.length === 0 ? (
                 <div className="text-sm text-muted-foreground">
                   {date ? "Nenhum grupo encontrado com os filtros selecionados." : "Informe a data para listar os grupos."}
                 </div>
               ) : (
-                <div className="flex-1 min-h-0 rounded-xl border overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-muted/70 backdrop-blur">
-                      <tr>
-                        <th className="p-2 text-left">Grupo</th>
-                        <th className="p-2 text-center">25% Entregas</th>
-                        <th className="p-2 text-center">25% Ofertas</th>
-                        <th className="p-2 text-center">{adminSel && normalizeAdmin(adminSel).toLowerCase().includes("maggi") ? "35%" : "50%"} Entregas</th>
-                        <th className="p-2 text-center">{adminSel && normalizeAdmin(adminSel).toLowerCase().includes("maggi") ? "35%" : "50%"} Ofertas</th>
-                        <th className="p-2 text-center">LL Entregas</th>
-                        <th className="p-2 text-center">LL Ofertas</th>
-                        <th className="p-2 text-center">LL Maior %</th>
-                        <th className="p-2 text-center">LL Menor %</th>
-                        <th className="p-2 text-center">Pz Enc (meses)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {linhas.map((l) => (
-                        <tr key={l.group_id} className="odd:bg-muted/30">
-                          <td className="p-2 font-medium">{l.codigo}</td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={l.ll_maior ?? ""}
-                              onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))}
-                            />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={l.ll_menor ?? ""}
-                              onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))}
-                            />
-                          </td>
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.prazo_enc_meses ?? ""}
-                              onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))}
-                            />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="max-h-[46vh] space-y-3 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/40 p-3">
+                  {linhas.map((line) => {
+                    const group = groupsMap.get(line.group_id);
+                    if (!group) return null;
+                    const modes = modesForGroup(group, bidRules);
+                    const hasLL = modes.some(mode => legacyBidSlot(group, mode) === "ll");
+                    return (
+                      <section key={line.group_id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label={"Resultados grupo " + line.codigo}>
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-base font-extrabold text-[#1E293F]">Grupo {line.codigo}</h3>
+                            <p className="mt-0.5 text-xs text-slate-500">{group.administradora} · {group.segmento}</p>
+                          </div>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                            {modes.length} modalidade(s) configurada(s)
+                          </span>
+                        </div>
+
+                        {modes.length === 0 ? (
+                          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Nenhuma modalidade foi habilitada para este grupo. Revise a configuração de modalidades.</p>
+                        ) : (
+                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            {modes.map(mode => {
+                              const outcome = modeResult(line, group, mode);
+                              const free = legacyBidSlot(group, mode) === "ll";
+                              return (
+                                <div key={mode.key} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                                  <div className="mb-3 flex items-center gap-2 border-b border-slate-200 pb-2">
+                                    <span className="h-2 w-2 rounded-full bg-[#A11C27]" />
+                                    <h4 className="min-w-0 text-sm font-bold text-[#1E293F]">{mode.label}</h4>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <Label htmlFor={"entregas-" + line.group_id + "-" + mode.key} className="mb-1 block text-xs font-semibold">Entregas</Label>
+                                      <Input id={"entregas-" + line.group_id + "-" + mode.key} type="number" min={0} step={1} className="h-10 bg-white text-center tabular-nums" value={outcome.deliveries}
+                                        onChange={(event) => updateMode(line.group_id, mode, "deliveries", Number(event.target.value))} />
+                                    </div>
+                                    <div>
+                                      <Label htmlFor={"ofertas-" + line.group_id + "-" + mode.key} className="mb-1 block text-xs font-semibold">Ofertas</Label>
+                                      <Input id={"ofertas-" + line.group_id + "-" + mode.key} type="number" min={0} step={1} className="h-10 bg-white text-center tabular-nums" value={outcome.offers}
+                                        onChange={(event) => updateMode(line.group_id, mode, "offers", Number(event.target.value))} />
+                                    </div>
+                                  </div>
+                                  {free && (
+                                    <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3">
+                                      <div>
+                                        <Label htmlFor={"ll-maior-" + line.group_id} className="mb-1 block text-xs font-semibold">Lance maior (%)</Label>
+                                        <Input id={"ll-maior-" + line.group_id} type="number" min={0} step="0.01" className="h-10 bg-white text-center" value={line.ll_maior ?? ""}
+                                          onChange={(event) => updateValue(line.group_id, "ll_maior", event.target.value === "" ? null : Number(event.target.value))} />
+                                      </div>
+                                      <div>
+                                        <Label htmlFor={"ll-menor-" + line.group_id} className="mb-1 block text-xs font-semibold">Lance menor (%)</Label>
+                                        <Input id={"ll-menor-" + line.group_id} type="number" min={0} step="0.01" className="h-10 bg-white text-center" value={line.ll_menor ?? ""}
+                                          onChange={(event) => updateValue(line.group_id, "ll_menor", event.target.value === "" ? null : Number(event.target.value))} />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2">
+                          <p className="text-xs text-slate-500">Prazo de encerramento do grupo (meses)</p>
+                          <Input type="number" min={0} aria-label={"Prazo do grupo " + line.codigo} className="h-9 w-28 text-center tabular-nums"
+                            value={line.prazo_enc_meses ?? ""}
+                            onChange={(event) => updateValue(line.group_id, "prazo_enc_meses", event.target.value === "" ? null : Number(event.target.value))} />
+                        </div>
+                      </section>
+                    );
+                  })}
                 </div>
               )}
 
               <div className="flex justify-end pt-3">
-                <Button disabled={!podeSalvar || loading} onClick={handleSave} className="inline-flex items-center gap-2">
+                <Button disabled={!podeSalvar || loading || bloqueadoPeloHistorico} onClick={handleSave} className="inline-flex items-center gap-2">
                   {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                   <Save className="h-4 w-4" /> Salvar Resultados
                 </Button>
               </div>
-              {!podeSalvar && (
+              {!podeSalvar && !bloqueadoPeloHistorico && (
                 <div className="pt-2 text-xs text-muted-foreground">
                   Para salvar: informe a data da assembleia, e as datas obrigatórias (próx. vencimento, sorteio e assembleia) e tenha grupos listados.
                 </div>
@@ -1222,6 +1358,7 @@ type LinhaUI = {
   prox_sorteio: string | null;
   prox_assembleia: string | null;
   referencia: number | null;
+  modality_results: BidOutcomeMap;
 };
 
 type SortKey = "mediana" | "prox_assembleia" | "prox_sorteio" | "prox_vencimento" | "prazo_encerramento_meses";
@@ -1233,37 +1370,24 @@ export default function GestaoDeGrupos() {
   const [loteria, setLoteria] = useState<LoteriaFederal | null>(null);
   const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
+  const [lastModalityResults, setLastModalityResults] = useState<Map<string, BidOutcomeMap>>(new Map());
   const [fAdmin, setFAdmin] = useState("");
   const [adminScope, setAdminScope] = useState<string>("");
-  const [bidRules, setBidRules] = useState<Array<{ administradora: string; scope: string; segmento: string; group_id: string | null; modalities: Array<{ key: string; label: string }> }>>([]);
+  const [bidRules, setBidRules] = useState<BidRule[]>([]);
+  const [bidRulesReady, setBidRulesReady] = useState(false);
   const loadBidRules = useCallback(async () => {
     const { data, error } = await supabase.from("group_bid_modality_rules").select("administradora,scope,segmento,group_id,modalities");
-    if (error) { console.warn("Configurações de lance indisponíveis:", error.message); return; }
+    if (error) { console.warn("Configurações de lance indisponíveis:", error.message); setBidRulesReady(false); return; }
     setBidRules((data || []).map((v: any) => ({
       administradora: String(v.administradora || ""), scope: String(v.scope || ""),
       segmento: String(v.segmento || ""), group_id: v.group_id ?? null,
       modalities: Array.isArray(v.modalities) ? v.modalities.filter((m: any) => m && typeof m.key === "string" && typeof m.label === "string") : []
     })));
+    setBidRulesReady(true);
   }, []);
   useEffect(() => { void loadBidRules(); }, [loadBidRules]);
-  const normalizeBidScope = (v: string) => {
-    const cleaned = String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
-      .replace(/consorcios?|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
-    // Os grupos antigos usam "BB CONSÓRCIOS" e o cadastro usa "Banco do Brasil".
-    if (cleaned === "bb" || cleaned === "bancodobrasil" || cleaned === "bbcons") return "bancodobrasil";
-    return cleaned;
-  };
-  const modesForRow = (r: LinhaUI) => {
-    // A regra de grupo está vinculada ao UUID, que é mais confiável que o nome da administradora.
-    const groupRule = bidRules.find(x => x.scope === "grupo" && x.group_id === r.id);
-    const candidates = bidRules.filter(rule => normalizeBidScope(rule.administradora) === normalizeBidScope(r.administradora));
-    const rule = groupRule
-      || candidates.find(x => x.scope === "segmento" && normalizeBidScope(x.segmento) === normalizeBidScope(r.segmento))
-      || candidates.find(x => x.scope === "administradora");
-    return rule ? rule.modalities : [
-      { key: "fixo_25", label: "Fixo 25%" }, { key: "fixo_50", label: normalizeBidScope(r.administradora).includes("maggi") ? "Fixo 35%" : "Fixo 50%" }, { key: "livre", label: "Lance Livre" }
-    ];
-  };
+  const normalizeBidScope = normBid;
+  const modesForRow = (r: Pick<Grupo, "id" | "administradora" | "segmento">) => modesForGroup(r, bidRules);
   const [fSeg, setFSeg] = useState("");
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
@@ -1286,7 +1410,10 @@ export default function GestaoDeGrupos() {
       const t25 = r?.fixed25_deliveries || 0;
       const t50 = r?.fixed50_deliveries || 0;
       const tLL = r?.ll_deliveries || 0;
-      const total = t25 + t50 + tLL;
+      const custom = lastModalityResults.get(g.id) || {};
+      const additional = modesForGroup(g, bidRules).filter(mode => !legacyBidSlot(g, mode))
+        .reduce((sum, mode) => sum + (custom[mode.key]?.deliveries || 0), 0);
+      const total = t25 + t50 + tLL + additional;
       const med = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
       const key = toYMD(g.prox_sorteio) as string | null;
       const bilhetes = key ? drawsByDate[key] ?? null : null;
@@ -1300,6 +1427,7 @@ export default function GestaoDeGrupos() {
         faixa_min: g.faixa_min,
         faixa_max: g.faixa_max,
         total_entregas: total,
+        modality_results: custom,
         fix25_entregas: t25,
         fix25_ofertas: r?.fixed25_offers || 0,
         fix50_entregas: t50,
@@ -1323,7 +1451,7 @@ export default function GestaoDeGrupos() {
     });
 
     setRows(linhas);
-  }, [grupos, lastAsmByGroup, drawsByDate]);
+  }, [grupos, lastAsmByGroup, lastModalityResults, bidRules, drawsByDate]);
 
   const carregar = async () => {
     setLoading(true);
@@ -1401,6 +1529,23 @@ export default function GestaoDeGrupos() {
       (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
     }
     setLastAsmByGroup(byGroup);
+
+    const customByGroup = new Map<string, BidOutcomeMap>();
+    if (reais.length > 0) {
+      const { data: customRows, error: customError } = await supabase.from("assembly_results")
+        .select("group_id,date,modality_results")
+        .in("group_id", reais)
+        .order("date", { ascending: false })
+        .limit(1000);
+      if (customError) console.warn("Não foi possível carregar apuração das modalidades adicionais:", customError.message);
+      else (customRows || []).forEach((row: any) => {
+        if (customByGroup.has(row.group_id)) return;
+        // Mesmo registro exibido como última assembleia pela view legada.
+        if (toYMD(row.date) !== toYMD(byGroup.get(row.group_id)?.date)) return;
+        customByGroup.set(row.group_id, sanitizeBidResults(row.modality_results));
+      });
+    }
+    setLastModalityResults(customByGroup);
 
     const dateSet = new Set<string>();
     for (const gRow of gruposBase) {
@@ -1576,13 +1721,14 @@ export default function GestaoDeGrupos() {
   };
 
   // Destaca o calendário sem alterar a data original persistida nem o fuso do CRM.
-  const calendarCell = (value: string | null, emphasize = false) => {
+  const calendarCell = (value: string | null, emphasize = false, primary = false) => {
     const ymd = toYMD(value);
     if (!ymd) return <span className="text-slate-400">—</span>;
     const days = Math.round((Date.parse(ymd + "T12:00:00Z") - Date.parse(todayYMDLocal() + "T12:00:00Z")) / 86400000);
     const upcoming = days >= 0 && days <= 5;
-    const classes = upcoming && emphasize
-      ? "border-amber-200 bg-amber-50 text-amber-800"
+    const classes = primary
+      ? "border-rose-200 bg-rose-50 text-[#A11C27]"
+      : upcoming && emphasize ? "border-amber-200 bg-amber-50 text-amber-800"
       : emphasize ? "border-slate-200 bg-slate-50 text-[#1E293F]"
       : "border-transparent bg-transparent text-slate-700";
     return (
@@ -1804,7 +1950,7 @@ export default function GestaoDeGrupos() {
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px] border-collapse text-sm">
+          <table className="w-full min-w-[1180px] border-collapse text-sm">
             <thead className="bg-[#1E293F] text-[10px] uppercase tracking-[0.07em] text-slate-100">
               <tr>
                 <th scope="col" className="px-3 py-4 text-left font-semibold">Administradora</th>
@@ -1816,15 +1962,16 @@ export default function GestaoDeGrupos() {
                 <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Vencimento", "prox_vencimento")}</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Sorteio", "prox_sorteio")}</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Próx. Assemb.", "prox_assembleia")}</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">REF</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">Mais detalhes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan={11} className="px-6 py-12 text-center text-slate-500"><Loader2 className="mr-2 inline h-5 w-5 animate-spin" /> Carregando grupos…</td></tr>
+                <tr><td colSpan={12} className="px-6 py-12 text-center text-slate-500"><Loader2 className="mr-2 inline h-5 w-5 animate-spin" /> Carregando grupos…</td></tr>
               ) : sorted.length === 0 ? (
-                <tr><td colSpan={11} className="px-6 py-12 text-center text-slate-500">Sem grupos para os filtros selecionados.</td></tr>
+                <tr><td colSpan={12} className="px-6 py-12 text-center text-slate-500">Sem grupos para os filtros selecionados.</td></tr>
               ) : sorted.map((r) => {
                 const expanded = expandedGroupId === r.id;
                 const stub = isStubId(r.id);
@@ -1843,6 +1990,7 @@ export default function GestaoDeGrupos() {
                       <td className="px-3 py-3.5 text-center font-medium tabular-nums text-slate-700">{r.prazo_encerramento_meses == null ? "—" : r.prazo_encerramento_meses + " meses"}</td>
                       <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_vencimento, true)}</td>
                       <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_sorteio, true)}</td>
+                      <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_assembleia, true, true)}</td>
                       <td className="px-3 py-3.5 text-center font-bold tabular-nums text-[#1E293F]">{r.referencia ?? "—"}</td>
                       <td className="px-3 py-3.5 text-center">
                         <button type="button" onClick={() => toggleDetails(r.id)} aria-expanded={expanded} aria-controls={"group-details-" + r.id} className={"inline-flex whitespace-nowrap items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-all " + (expanded ? "border-rose-200 bg-rose-100 text-rose-800" : "border-slate-200 bg-white text-slate-700 hover:border-rose-200 hover:text-rose-800")}>
@@ -1853,7 +2001,7 @@ export default function GestaoDeGrupos() {
                     </tr>
                     {expanded && (
                       <tr id={"group-details-" + r.id}>
-                        <td colSpan={11} className="border-t border-rose-100 bg-gradient-to-b from-rose-50/45 to-slate-50/60 p-0">
+                        <td colSpan={12} className="border-t border-rose-100 bg-gradient-to-b from-rose-50/45 to-slate-50/60 p-0">
                           <div className="space-y-5 px-5 py-5 md:px-7">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
@@ -1904,13 +2052,12 @@ export default function GestaoDeGrupos() {
                               {availableModes.length ? (
                                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                                   {availableModes.map((mode) => {
-                                    const key = String(mode.key).toLowerCase();
-                                    const is25 = key === "fixo_25";
-                                    const is50 = key === "fixo_50" || (normalizeBidScope(r.administradora).includes("maggi") && (key === "fixo_35" || /fixo\s*35\s*%/i.test(mode.label)));
-                                    const isFree = key === "livre";
-                                    const integrated = is25 || is50 || isFree;
-                                    const offers = is25 ? r.fix25_ofertas : is50 ? r.fix50_ofertas : r.ll_ofertas;
-                                    const deliveries = is25 ? r.fix25_entregas : is50 ? r.fix50_entregas : r.ll_entregas;
+                                    const slot = legacyBidSlot(r, mode);
+                                    const custom = r.modality_results[mode.key];
+                                    const known = Boolean(slot || custom);
+                                    const offers = custom?.offers ?? (slot === "fix25" ? r.fix25_ofertas : slot === "fix50" ? r.fix50_ofertas : r.ll_ofertas);
+                                    const deliveries = custom?.deliveries ?? (slot === "fix25" ? r.fix25_entregas : slot === "fix50" ? r.fix50_entregas : r.ll_entregas);
+                                    const isFree = slot === "ll";
                                     return (
                                       <div key={mode.key} className="flex min-h-[124px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                                         <div className="mb-3 flex items-center gap-2">
@@ -1962,7 +2109,7 @@ export default function GestaoDeGrupos() {
         Total de entregas (linhas filtradas): <span className="font-semibold text-foreground">{totalEntregas}</span>
       </div>
 
-      {asmOpen && <OverlayAssembleias gruposBase={grupos} onClose={() => setAsmOpen(false)} onSaved={async () => await carregar()} />}
+      {asmOpen && <OverlayAssembleias gruposBase={grupos} bidRules={bidRules} bidRulesReady={bidRulesReady} onClose={() => setAsmOpen(false)} onSaved={async () => await carregar()} />}
       {lfOpen && (
         <OverlayLoteria
           onClose={() => setLfOpen(false)}

@@ -24,6 +24,8 @@ import {
   Layers3,
   CalendarDays,
   BarChart3,
+  ExternalLink,
+  FileDown,
 } from "lucide-react";
 
 /* =========================================================
@@ -325,35 +327,62 @@ function OverlayLoteria({
     quinto: "",
   });
   const [loading, setLoading] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState(false);
+  const [existing, setExisting] = useState(false);
+  const [readError, setReadError] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    (async () => {
-      if (!data) return;
-      const { data: d, error } = await supabase.from("lottery_draws").select("*").eq("draw_date", data).single();
-      if (error && error.code !== "PGRST116") console.error(error);
-      if (d) {
+    let active = true;
+    setSaveError("");
+    setReadError("");
+    setExisting(false);
+    if (!data) {
+      setForm({ data_sorteio: "", primeiro: "", segundo: "", terceiro: "", quarto: "", quinto: "" });
+      setLoadingExisting(false);
+      return;
+    }
+    setLoadingExisting(true);
+    setForm({ data_sorteio: data, primeiro: "", segundo: "", terceiro: "", quarto: "", quinto: "" });
+    void (async () => {
+      const { data: result, error } = await supabase.from("lottery_draws")
+        .select("draw_date,first,second,third,fourth,fifth").eq("draw_date", data).maybeSingle();
+      if (!active) return;
+      if (error) {
+        console.error(error);
+        setReadError("Não foi possível verificar os resultados já registrados. Tente novamente.");
+      } else if (result) {
+        setExisting(true);
         setForm({
           data_sorteio: data,
-          primeiro: d.first,
-          segundo: d.second,
-          terceiro: d.third,
-          quarto: d.fourth,
-          quinto: d.fifth,
+          primeiro: String(result.first ?? ""),
+          segundo: String(result.second ?? ""),
+          terceiro: String(result.third ?? ""),
+          quarto: String(result.fourth ?? ""),
+          quinto: String(result.fifth ?? ""),
         });
-      } else {
-        setForm((f) => ({ ...f, data_sorteio: data, primeiro: "", segundo: "", terceiro: "", quarto: "", quinto: "" }));
       }
+      setLoadingExisting(false);
     })();
+    return () => { active = false; };
   }, [data]);
 
-  const canSave =
-    Boolean(data) && Boolean(form.primeiro) && Boolean(form.segundo) && Boolean(form.terceiro) && Boolean(form.quarto) && Boolean(form.quinto);
+  const prizes = [
+    ["primeiro", "1º prêmio"],
+    ["segundo", "2º prêmio"],
+    ["terceiro", "3º prêmio"],
+    ["quarto", "4º prêmio"],
+    ["quinto", "5º prêmio"],
+  ] as const;
+  const canSave = Boolean(data) && !loadingExisting && !readError &&
+    prizes.every(([key]) => /^\d{5}$/.test(form[key]));
 
   const handleSave = async () => {
-    if (!canSave) return;
+    if (!canSave || loading) return;
+    setSaveError("");
     try {
       setLoading(true);
-      await supabase.from("lottery_draws").upsert({
+      const { error } = await supabase.from("lottery_draws").upsert({
         draw_date: data,
         first: form.primeiro,
         second: form.segundo,
@@ -361,70 +390,96 @@ function OverlayLoteria({
         fourth: form.quarto,
         fifth: form.quinto,
       });
+      if (error) throw error;
       onSaved({ ...form, data_sorteio: data });
       onClose();
-    } catch {
-      alert("Erro ao salvar o resultado da Loteria.");
+    } catch (error) {
+      console.error("Falha ao salvar Loteria Federal:", error);
+      setSaveError("Não foi possível salvar os resultados. Confira a conexão e tente novamente.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl">
-        <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-lg font-semibold inline-flex items-center gap-2">
-            <Percent className="h-5 w-5" />
-            Informar resultados – Loteria Federal
-          </h2>
-          <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
-            <X className="h-4 w-4" /> Fechar
-          </Button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <div>
-            <Label>Data do sorteio</Label>
-            <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {([
-              ["primeiro", "Primeiro Prêmio"],
-              ["segundo", "Segundo Prêmio"],
-              ["terceiro", "Terceiro Prêmio"],
-              ["quarto", "Quarto Prêmio"],
-              ["quinto", "Quinto Prêmio"],
-            ] as const).map(([key, label]) => (
-              <div key={key} className="flex flex-col gap-1">
-                <Label>{label}</Label>
-                <Input
-                  maxLength={6}
-                  inputMode="numeric"
-                  pattern="\d*"
-                  placeholder="00000"
-                  value={(form as any)[key]}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      [key]: sanitizeBilhete5(e.target.value),
-                    }))
-                  }
-                />
-                <span className="text-xs text-muted-foreground">5 dígitos; se digitar 6, guarda os últimos 5.</span>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6" role="presentation">
+      <section role="dialog" aria-modal="true" aria-labelledby="federal-title" className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <header className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-[#1E293F] to-[#33445D] px-5 py-5 text-white sm:px-6">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/15 bg-white/10">
+                <Percent className="h-5 w-5 text-[#E5CF9B]" />
+              </span>
+              <div>
+                <h2 id="federal-title" className="text-lg font-extrabold tracking-tight sm:text-xl">Resultados da Loteria Federal</h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate-200">Confira os cinco prêmios oficiais antes de registrar a referência dos grupos.</p>
               </div>
-            ))}
+            </div>
+            <button type="button" aria-label="Fechar resultados da Loteria Federal" className="rounded-lg border border-white/20 p-2 text-white hover:bg-white/10" onClick={onClose}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#B5A573]/30 bg-amber-50/60 px-4 py-3">
+            <div>
+              <p className="text-sm font-bold text-[#1E293F]">Consultar resultado oficial</p>
+              <p className="mt-0.5 text-xs text-slate-600">Acesse a Caixa em outra aba e confira os números deste sorteio.</p>
+            </div>
+            <a href="https://loterias.caixa.gov.br/Paginas/Federal.aspx" target="_blank" rel="noopener noreferrer"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-[#B5A573]/60 bg-white px-4 text-xs font-extrabold text-[#1E293F] transition-colors hover:bg-amber-50">
+              <ExternalLink className="h-4 w-4" /> Abrir Caixa
+            </a>
+          </div>
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="federal-data-sorteio" className="text-xs font-extrabold text-[#1E293F]">Data do sorteio</Label>
+              {loadingExisting ? <span className="text-xs text-slate-500">Consultando registros…</span> :
+                existing ? <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">Resultado já registrado</span> : null}
+            </div>
+            <Input id="federal-data-sorteio" type="date" value={data} onChange={(event) => setData(event.target.value)}
+              className="h-11 rounded-xl border-slate-200 bg-slate-50 text-sm font-semibold" />
           </div>
 
-          <div className="flex justify-end">
-            <Button disabled={!canSave || loading} onClick={handleSave} className="inline-flex items-center gap-2">
-              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-              <Save className="h-4 w-4" /> Salvar
+          <div>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-extrabold text-[#1E293F]">Bilhetes premiados</h3>
+              <span className="text-[11px] text-slate-500">Cinco dígitos por prêmio</span>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {prizes.map(([key, label], index) => (
+                <div key={key} className={"rounded-xl border p-3.5 " + (index === 0 ? "border-rose-200 bg-rose-50/40 sm:col-span-2" : "border-slate-200 bg-slate-50/40")}>
+                  <Label htmlFor={"federal-" + key} className="mb-2 flex items-center gap-2 text-xs font-bold text-[#1E293F]">
+                    <span className={"grid h-6 w-6 place-items-center rounded-lg text-[11px] font-extrabold " + (index === 0 ? "bg-[#A11C27] text-white" : "bg-[#1E293F]/10 text-[#1E293F]")}>{index + 1}</span>
+                    {label}
+                  </Label>
+                  <Input id={"federal-" + key} inputMode="numeric" maxLength={6} placeholder="00000" autoComplete="off"
+                    disabled={!data || loadingExisting || loading || !!readError}
+                    value={form[key]} className="h-11 rounded-lg border-slate-200 bg-white text-center font-mono text-lg font-extrabold tracking-[0.2em] tabular-nums text-[#1E293F]"
+                    onChange={(event) => setForm(current => ({ ...current, [key]: event.target.value.replace(/\D/g, "").slice(-5) }))}
+                    onBlur={() => setForm(current => ({
+                      ...current,
+                      [key]: current[key] ? current[key].padStart(5, "0") : "",
+                    }))} />
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">Bilhetes com menos de cinco dígitos são completados com zeros à esquerda ao sair do campo.</p>
+          </div>
+          {readError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{readError}</p>}
+          {saveError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{saveError}</p>}
+        </div>
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/70 px-5 py-4 sm:px-6">
+          <span className="text-xs text-slate-500">Os valores só serão atualizados ao salvar.</span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" className="rounded-xl" onClick={onClose}>Cancelar</Button>
+            <Button type="button" disabled={!canSave || loading} onClick={handleSave} className="gap-2 rounded-xl bg-[#A11C27] font-semibold text-white hover:bg-[#831622]">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Salvar resultados
             </Button>
           </div>
-        </div>
-      </div>
+        </footer>
+      </section>
     </div>
   );
 }
@@ -1222,50 +1277,81 @@ function OverlayOfertaLance({
   };
 
   const total = linhas.length;
+  const distinctGroups = new Set(linhas.map(item => item.administradora + ":" + item.grupo)).size;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-xl font-semibold inline-flex items-center gap-2">
-            <Target className="h-5 w-5" /> Oferta de Lance
-          </h2>
-          <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
-            <X className="h-4 w-4" /> Fechar
-          </Button>
-        </div>
-
-        <div className="p-5 space-y-4 overflow-hidden">
-          <div className="flex flex-col md:flex-row md:items-end gap-3">
-            <div className="flex-1">
-              <Label>Data da Assembleia</Label>
-              <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-5" role="presentation">
+      <section role="dialog" aria-modal="true" aria-labelledby="oferta-lance-title"
+        className="flex max-h-[94vh] w-full max-w-[92vw] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl max-sm:max-w-[98vw]">
+        <header className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-[#1E293F] to-[#33445D] px-5 py-5 text-white sm:px-6">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/15 bg-white/10">
+                <Target className="h-5 w-5 text-[#E5CF9B]" />
+              </span>
+              <div>
+                <h2 id="oferta-lance-title" className="text-lg font-extrabold tracking-tight sm:text-xl">Oferta de Lance</h2>
+                <p className="mt-1 text-xs text-slate-200">Confira as cotas encarteiradas, referências e estratégias para a assembleia selecionada.</p>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Button onClick={listar} disabled={!dataAsm || loading} className="inline-flex items-center gap-2">
-                {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                Listar
-              </Button>
+            <button type="button" aria-label="Fechar oferta de lance" onClick={onClose}
+              className="rounded-lg border border-white/20 p-2 text-white transition-colors hover:bg-white/10">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/50 px-4 py-5 sm:px-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="min-w-[200px] flex-1 sm:max-w-[330px]">
+                <Label htmlFor="oferta-data-assembleia" className="mb-2 block text-xs font-extrabold text-[#1E293F]">
+                  Data da assembleia
+                </Label>
+                <Input id="oferta-data-assembleia" type="date" className="h-11 rounded-xl border-slate-200 bg-white font-semibold"
+                  value={dataAsm} onChange={(event) => { setDataAsm(event.target.value); setLinhas([]); }} />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" onClick={listar} disabled={!dataAsm || loading}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#A11C27] px-5 font-semibold text-white hover:bg-[#831622]">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Target className="h-4 w-4" />}
+                  {loading ? "Buscando..." : "Buscar cotas"}
+                </Button>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-1">
               <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
                 Exportar PDF
               </Button>
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Selecione a data e busque os grupos com assembleia cadastrada. A consulta não altera as cotas.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Data consultada</p>
+              <p className="mt-1 text-base font-extrabold tabular-nums text-[#1E293F]">{dataAsm ? formatBR(toYMD(dataAsm)) : "—"}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Cotas listadas</p>
+              <p className="mt-1 text-xl font-black tabular-nums text-[#1E293F]">{loading ? "..." : total}</p>
+            </div>
+            <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-3.5 sm:col-span-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Grupos encontrados</p>
+              <p className="mt-1 text-xl font-black tabular-nums text-[#1E293F]">{loading ? "..." : distinctGroups}</p>
             </div>
           </div>
 
-          <div className="text-sm text-muted-foreground">
-            {dataAsm ? (
-              <>
-                Assembleia em {formatBR(toYMD(dataAsm))} • <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">{total} cotas</span>
-              </>
-            ) : (
-              <>
-                Informe a data e clique em <b>Listar</b>.
-              </>
-            )}
-          </div>
-
-          <div className="rounded-xl border overflow-auto max-h-[52vh]">
-            <table className="min-w-[1080px] w-full text-sm">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-[#1E293F]">Relação de cotas</h3>
+                <p className="mt-0.5 text-[11px] text-slate-500">Ordenada por cliente, administradora, grupo e cota.</p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">{total} registros</span>
+            </div>
+            <div className="rounded-xl border overflow-auto max-h-[52vh] border-0 rounded-none">
+                          <table className="min-w-[1080px] w-full text-sm">
               <thead className="sticky top-0 bg-muted/60 backdrop-blur">
                 <tr>
                   <th className="p-2 text-left">Administradora</th>
@@ -1323,9 +1409,11 @@ function OverlayOfertaLance({
                 )}
               </tbody>
             </table>
+            </div>
           </div>
+          <p className="text-xs text-slate-500">Os dados são informativos. As referências seguem a apuração cadastrada para cada grupo.</p>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -1726,7 +1814,7 @@ export default function GestaoDeGrupos() {
     if (!ymd) return <span className="text-slate-400">—</span>;
     const days = Math.round((Date.parse(ymd + "T12:00:00Z") - Date.parse(todayYMDLocal() + "T12:00:00Z")) / 86400000);
     const upcoming = days >= 0 && days <= 5;
-    const classes = primary
+    const classes = primary && upcoming
       ? "border-rose-200 bg-rose-50 text-[#A11C27]"
       : upcoming && emphasize ? "border-amber-200 bg-amber-50 text-amber-800"
       : emphasize ? "border-slate-200 bg-slate-50 text-[#1E293F]"

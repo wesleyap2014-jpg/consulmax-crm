@@ -2152,7 +2152,7 @@ export default function GestaoDeGrupos() {
                                           <span className="h-2 w-2 shrink-0 rounded-full bg-[#B5A573]" />
                                           <h6 className="text-sm font-extrabold text-[#1E293F]">{mode.label}</h6>
                                         </div>
-                                        {integrated ? (
+                                        {known ? (
                                           <>
                                             <div className="grid grid-cols-2 gap-2">
                                               <div className="rounded-lg bg-slate-50 px-3 py-2">

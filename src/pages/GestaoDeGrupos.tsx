@@ -24,6 +24,8 @@ import {
   Layers3,
   CalendarDays,
   BarChart3,
+  ExternalLink,
+  FileDown,
 } from "lucide-react";
 
 /* =========================================================
@@ -1726,7 +1728,7 @@ export default function GestaoDeGrupos() {
     if (!ymd) return <span className="text-slate-400">—</span>;
     const days = Math.round((Date.parse(ymd + "T12:00:00Z") - Date.parse(todayYMDLocal() + "T12:00:00Z")) / 86400000);
     const upcoming = days >= 0 && days <= 5;
-    const classes = primary
+    const classes = primary && upcoming
       ? "border-rose-200 bg-rose-50 text-[#A11C27]"
       : upcoming && emphasize ? "border-amber-200 bg-amber-50 text-amber-800"
       : emphasize ? "border-slate-200 bg-slate-50 text-[#1E293F]"

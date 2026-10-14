@@ -133,16 +133,47 @@ export default function SalaDeGuerraSemanal() {
         const { data: auth, error: authError } = await supabase.auth.getUser();
         if (authError || !auth?.user) throw authError || new Error("Sessão expirada.");
         const { data: own, error: ownError } = await supabase.from("users")
-          .select("id,nome,email,user_role").eq("auth_user_id", auth.user.id).single();
+          .select("id,nome,email,user_role,hierarchy_level,unit_id,is_active")
+          .eq("auth_user_id", auth.user.id).single();
         if (ownError || !own) throw ownError || new Error("Usuário não localizado.");
-        const { data: visible, error: teamError } = await supabase.rpc("sala_guerra_equipe");
-        if (teamError) throw teamError;
+        if (own.is_active !== true) throw new Error("Usuário inativo: acesso ao planejamento indisponível.");
+
+        let team: Person[] = [own as Person];
+        if (canReadTeamPlans && own.user_role === "admin") {
+          // O perfil master pode estar cadastrado como 'gestor_filial' no legado,
+          // mas a unidade Matriz determina a visibilidade de toda a empresa.
+          let isMatriz = false;
+          if (own.unit_id) {
+            const { data: unit, error: unitError } = await supabase.from("units")
+              .select("tipo").eq("id", own.unit_id).single();
+            if (unitError) throw unitError;
+            isMatriz = String(unit?.tipo || "").toLowerCase() === "matriz";
+          }
+
+          let userQuery = supabase.from("users")
+            .select("id,nome,email,user_role")
+            .eq("is_active", true)
+            .order("nome", { ascending: true });
+          if (own.hierarchy_level === "gestor_filial" && !isMatriz) {
+            // Gestor de filial não herda a visibilidade da matriz.
+            userQuery = own.unit_id
+              ? userQuery.eq("unit_id", own.unit_id)
+              : userQuery.eq("id", own.id);
+          }
+          const { data: visible, error: teamError } = await userQuery;
+          if (teamError) throw teamError;
+          team = (visible || []) as Person[];
+        } else if (canReadTeamPlans && own.hierarchy_level === "gestor_filial") {
+          // Mantém a cascata de gestores não-admin suportada pela função existente.
+          const { data: visible, error: teamError } = await supabase.rpc("sala_guerra_equipe");
+          if (teamError) throw teamError;
+          team = (visible || []) as Person[];
+        }
+
         if (!active) return;
-        const fullList = ((visible || []) as Person[]);
-        const myPerson = fullList.find(p => p.id === own.id) || (own as Person);
-        const list = canReadTeamPlans ? fullList : fullList.filter(p => p.id === own.id);
+        const list = team.some(p => p.id === own.id) ? team : [own as Person, ...team];
         setMeId(own.id);
-        setPeople(list.length ? list : [myPerson]);
+        setPeople(list);
         setPersonId(own.id);
       } catch (e) {
         if (active) showError(e, "Não foi possível carregar o perfil de acesso.");

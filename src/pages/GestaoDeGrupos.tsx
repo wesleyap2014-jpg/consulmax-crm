@@ -1715,13 +1715,14 @@ export default function GestaoDeGrupos() {
   };
 
   // Destaca o calendário sem alterar a data original persistida nem o fuso do CRM.
-  const calendarCell = (value: string | null, emphasize = false) => {
+  const calendarCell = (value: string | null, emphasize = false, primary = false) => {
     const ymd = toYMD(value);
     if (!ymd) return <span className="text-slate-400">—</span>;
     const days = Math.round((Date.parse(ymd + "T12:00:00Z") - Date.parse(todayYMDLocal() + "T12:00:00Z")) / 86400000);
     const upcoming = days >= 0 && days <= 5;
-    const classes = upcoming && emphasize
-      ? "border-amber-200 bg-amber-50 text-amber-800"
+    const classes = primary
+      ? "border-rose-200 bg-rose-50 text-[#A11C27]"
+      : upcoming && emphasize ? "border-amber-200 bg-amber-50 text-amber-800"
       : emphasize ? "border-slate-200 bg-slate-50 text-[#1E293F]"
       : "border-transparent bg-transparent text-slate-700";
     return (
@@ -1983,7 +1984,7 @@ export default function GestaoDeGrupos() {
                       <td className="px-3 py-3.5 text-center font-medium tabular-nums text-slate-700">{r.prazo_encerramento_meses == null ? "—" : r.prazo_encerramento_meses + " meses"}</td>
                       <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_vencimento, true)}</td>
                       <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_sorteio, true)}</td>
-                      <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_assembleia, true)}</td>
+                      <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_assembleia, true, true)}</td>
                       <td className="px-3 py-3.5 text-center font-bold tabular-nums text-[#1E293F]">{r.referencia ?? "—"}</td>
                       <td className="px-3 py-3.5 text-center">
                         <button type="button" onClick={() => toggleDetails(r.id)} aria-expanded={expanded} aria-controls={"group-details-" + r.id} className={"inline-flex whitespace-nowrap items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-all " + (expanded ? "border-rose-200 bg-rose-100 text-rose-800" : "border-slate-200 bg-white text-slate-700 hover:border-rose-200 hover:text-rose-800")}>

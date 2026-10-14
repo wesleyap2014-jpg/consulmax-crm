@@ -2,6 +2,7 @@
 // Reaproveita weekly_plans e weekly_plan_items; históricos e playbooks anteriores são preservados no banco.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAccess } from "@/access/AccessContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -80,6 +81,9 @@ function outlineTone(value: Outcome | null) {
 
 export default function SalaDeGuerraSemanal() {
   const today = useMemo(() => isoLocal(new Date()), []);
+  const { canAction, canInfo } = useAccess();
+  const canEditPlan = canAction("sala_guerra", "edit_plan");
+  const canReadTeamPlans = canInfo("sala_guerra", "team_plan");
   const [weekStart, setWeekStart] = useState(() => mondayOf(isoLocal(new Date())));
   const [view, setView] = useState<View>(() => {
     const day = new Date().getDay();
@@ -134,8 +138,9 @@ export default function SalaDeGuerraSemanal() {
         const { data: visible, error: teamError } = await supabase.rpc("sala_guerra_equipe");
         if (teamError) throw teamError;
         if (!active) return;
-        const list = ((visible || []) as Person[]);
-        const myPerson = list.find(p => p.id === own.id) || (own as Person);
+        const fullList = ((visible || []) as Person[]);
+        const myPerson = fullList.find(p => p.id === own.id) || (own as Person);
+        const list = canReadTeamPlans ? fullList : fullList.filter(p => p.id === own.id);
         setMeId(own.id);
         setPeople(list.length ? list : [myPerson]);
         setPersonId(own.id);
@@ -146,7 +151,7 @@ export default function SalaDeGuerraSemanal() {
       }
     })();
     return () => { active = false; };
-  }, []);
+  }, [canReadTeamPlans]);
 
   const loadWeek = useCallback(async (userId: string, firstDate: string) => {
     if (!userId) return;
@@ -224,7 +229,7 @@ export default function SalaDeGuerraSemanal() {
   useEffect(() => { if (personId && showHistory) void loadHistory(personId); }, [personId, showHistory, loadHistory]);
 
   const createWeek = async (start = weekStart): Promise<WeekPlan | null> => {
-    if (!myOwnWeek || busy) return null;
+    if (!myOwnWeek || !canEditPlan || busy) return null;
     setBusy(true);
     try {
       // Usa semana existente antes de criar; mantém compatibilidade com planejamentos antigos.
@@ -253,7 +258,7 @@ export default function SalaDeGuerraSemanal() {
   };
 
   const openEditor = (item?: WeekAction) => {
-    if (!myOwnWeek || !plan || closed) return;
+    if (!myOwnWeek || !canEditPlan || !plan || closed) return;
     setEditId(item?.id || null);
     setDraft(item
       ? { what: item.what || "", why: item.why || "", where_: item.where_ || "",
@@ -264,7 +269,7 @@ export default function SalaDeGuerraSemanal() {
   };
 
   const saveAction = async () => {
-    if (!plan || !myOwnWeek || !draft.what?.trim() || busy || closed) return;
+    if (!plan || !myOwnWeek || !canEditPlan || !draft.what?.trim() || busy || closed) return;
     setBusy(true);
     try {
       const data = {
@@ -295,7 +300,7 @@ export default function SalaDeGuerraSemanal() {
   };
 
   const deleteAction = async (item: WeekAction) => {
-    if (!plan || !myOwnWeek || busy || closed) return;
+    if (!plan || !myOwnWeek || !canEditPlan || busy || closed) return;
     if (!window.confirm("Excluir este compromisso da semana?")) return;
     setBusy(true);
     try {
@@ -313,7 +318,7 @@ export default function SalaDeGuerraSemanal() {
     setReviews(current => ({ ...current, [id]: { ...current[id], ...patch } }));
 
   const saveReviews = async (finish: boolean) => {
-    if (!plan || !myOwnWeek || busy || closed) return;
+    if (!plan || !myOwnWeek || !canEditPlan || busy || closed) return;
     if (finish && (!actions.length || actions.some(a => !reviews[a.id]?.outcome))) {
       setMessage({ kind: "error", text: "Marque o resultado de todas as ações antes de concluir a semana." });
       return;
@@ -348,7 +353,7 @@ export default function SalaDeGuerraSemanal() {
   };
 
   const reopenWeek = async () => {
-    if (!plan || !myOwnWeek || busy || !closed) return;
+    if (!plan || !myOwnWeek || !canEditPlan || busy || !closed) return;
     if (!window.confirm("Reabrir a revisão desta semana para correções?")) return;
     setBusy(true);
     try {
@@ -363,7 +368,7 @@ export default function SalaDeGuerraSemanal() {
   };
 
   const carryPending = async () => {
-    if (!plan || !myOwnWeek || busy || !closed) return;
+    if (!plan || !myOwnWeek || !canEditPlan || busy || !closed) return;
     const pending = actions.filter(a => a.review_outcome !== "realizado");
     if (!pending.length) {
       setMessage({ kind: "ok", text: "Todas as ações foram realizadas. Nada para transferir." });
@@ -409,7 +414,7 @@ export default function SalaDeGuerraSemanal() {
 
   const switchWeek = (date: string) => { if (!busy) { setWeekStart(date); setMessage(null); } };
   const subtleButton = "h-9 rounded-lg border-slate-200 text-slate-700 hover:bg-slate-100";
-  const canEdit = myOwnWeek && !closed && !loadingWeek;
+  const canEdit = myOwnWeek && canEditPlan && !closed && !loadingWeek;
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5 p-3 pb-10 sm:p-5 lg:p-6">
@@ -529,7 +534,7 @@ export default function SalaDeGuerraSemanal() {
                 {myOwnWeek ? "Comece com 3 a 5 compromissos importantes. Leva poucos minutos."
                   : "Este colaborador ainda não cadastrou o planejamento desta semana."}
               </p>
-              {myOwnWeek && <Button disabled={busy} onClick={() => void createWeek()}
+              {myOwnWeek && canEditPlan && <Button disabled={busy} onClick={() => void createWeek()}
                 className="mt-1 gap-2 rounded-xl bg-[#A11C27] text-white hover:bg-[#831622]">
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Começar minha semana
@@ -654,7 +659,7 @@ export default function SalaDeGuerraSemanal() {
                   })}
                 </div>
               )}
-              {myOwnWeek && !closed && actions.length > 0 && (
+              {myOwnWeek && canEditPlan && !closed && actions.length > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
                   <p className="text-xs text-slate-600">{reviewedTotal} de {actions.length} compromissos avaliados</p>
                   <div className="flex flex-wrap gap-2">
@@ -675,7 +680,7 @@ export default function SalaDeGuerraSemanal() {
                     <p className="font-bold text-emerald-900">Revisão concluída</p>
                     <p className="text-xs text-emerald-800">Registrada em {plan.review_closed_at ? new Date(plan.review_closed_at).toLocaleString("pt-BR") : "—"}.</p>
                   </div>
-                  {myOwnWeek && <div className="flex flex-wrap gap-2">
+                  {myOwnWeek && canEditPlan && <div className="flex flex-wrap gap-2">
                     <Button variant="outline" disabled={busy} onClick={() => void reopenWeek()} className="gap-1.5 rounded-xl">
                       <RotateCcw className="h-4 w-4" /> Reabrir
                     </Button>

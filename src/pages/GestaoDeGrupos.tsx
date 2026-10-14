@@ -1354,6 +1354,7 @@ type LinhaUI = {
   prox_sorteio: string | null;
   prox_assembleia: string | null;
   referencia: number | null;
+  modality_results: BidOutcomeMap;
 };
 
 type SortKey = "mediana" | "prox_assembleia" | "prox_sorteio" | "prox_vencimento" | "prazo_encerramento_meses";
@@ -1365,6 +1366,7 @@ export default function GestaoDeGrupos() {
   const [loteria, setLoteria] = useState<LoteriaFederal | null>(null);
   const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
+  const [lastModalityResults, setLastModalityResults] = useState<Map<string, BidOutcomeMap>>(new Map());
   const [fAdmin, setFAdmin] = useState("");
   const [adminScope, setAdminScope] = useState<string>("");
   const [bidRules, setBidRules] = useState<BidRule[]>([]);
@@ -1402,7 +1404,10 @@ export default function GestaoDeGrupos() {
       const t25 = r?.fixed25_deliveries || 0;
       const t50 = r?.fixed50_deliveries || 0;
       const tLL = r?.ll_deliveries || 0;
-      const total = t25 + t50 + tLL;
+      const custom = lastModalityResults.get(g.id) || {};
+      const additional = modesForGroup(g, bidRules).filter(mode => !legacyBidSlot(g, mode))
+        .reduce((sum, mode) => sum + (custom[mode.key]?.deliveries || 0), 0);
+      const total = t25 + t50 + tLL + additional;
       const med = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
       const key = toYMD(g.prox_sorteio) as string | null;
       const bilhetes = key ? drawsByDate[key] ?? null : null;
@@ -1416,6 +1421,7 @@ export default function GestaoDeGrupos() {
         faixa_min: g.faixa_min,
         faixa_max: g.faixa_max,
         total_entregas: total,
+        modality_results: custom,
         fix25_entregas: t25,
         fix25_ofertas: r?.fixed25_offers || 0,
         fix50_entregas: t50,
@@ -1439,7 +1445,7 @@ export default function GestaoDeGrupos() {
     });
 
     setRows(linhas);
-  }, [grupos, lastAsmByGroup, drawsByDate]);
+  }, [grupos, lastAsmByGroup, lastModalityResults, bidRules, drawsByDate]);
 
   const carregar = async () => {
     setLoading(true);
@@ -1517,6 +1523,23 @@ export default function GestaoDeGrupos() {
       (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
     }
     setLastAsmByGroup(byGroup);
+
+    const customByGroup = new Map<string, BidOutcomeMap>();
+    if (reais.length > 0) {
+      const { data: customRows, error: customError } = await supabase.from("assembly_results")
+        .select("group_id,date,modality_results")
+        .in("group_id", reais)
+        .order("date", { ascending: false })
+        .limit(1000);
+      if (customError) console.warn("Não foi possível carregar apuração das modalidades adicionais:", customError.message);
+      else (customRows || []).forEach((row: any) => {
+        if (customByGroup.has(row.group_id)) return;
+        // Mesmo registro exibido como última assembleia pela view legada.
+        if (toYMD(row.date) !== toYMD(byGroup.get(row.group_id)?.date)) return;
+        customByGroup.set(row.group_id, sanitizeBidResults(row.modality_results));
+      });
+    }
+    setLastModalityResults(customByGroup);
 
     const dateSet = new Set<string>();
     for (const gRow of gruposBase) {
@@ -2022,13 +2045,12 @@ export default function GestaoDeGrupos() {
                               {availableModes.length ? (
                                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                                   {availableModes.map((mode) => {
-                                    const key = String(mode.key).toLowerCase();
-                                    const is25 = key === "fixo_25";
-                                    const is50 = key === "fixo_50" || (normalizeBidScope(r.administradora).includes("maggi") && (key === "fixo_35" || /fixo\s*35\s*%/i.test(mode.label)));
-                                    const isFree = key === "livre";
-                                    const integrated = is25 || is50 || isFree;
-                                    const offers = is25 ? r.fix25_ofertas : is50 ? r.fix50_ofertas : r.ll_ofertas;
-                                    const deliveries = is25 ? r.fix25_entregas : is50 ? r.fix50_entregas : r.ll_entregas;
+                                    const slot = legacyBidSlot(r, mode);
+                                    const custom = r.modality_results[mode.key];
+                                    const known = Boolean(slot || custom);
+                                    const offers = custom?.offers ?? (slot === "fix25" ? r.fix25_ofertas : slot === "fix50" ? r.fix50_ofertas : r.ll_ofertas);
+                                    const deliveries = custom?.deliveries ?? (slot === "fix25" ? r.fix25_entregas : slot === "fix50" ? r.fix50_entregas : r.ll_entregas);
+                                    const isFree = slot === "ll";
                                     return (
                                       <div key={mode.key} className="flex min-h-[124px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                                         <div className="mb-3 flex items-center gap-2">

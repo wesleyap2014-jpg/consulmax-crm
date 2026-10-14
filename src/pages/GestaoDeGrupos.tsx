@@ -55,6 +55,59 @@ type Grupo = {
   prazo_encerramento_meses: number | null;
 };
 
+type BidModality = { key: string; label: string; percentage?: number | null };
+type BidRule = {
+  administradora: string;
+  scope: string;
+  segmento: string;
+  group_id: string | null;
+  modalities: BidModality[];
+};
+type BidOutcome = { offers: number; deliveries: number };
+type BidOutcomeMap = Record<string, BidOutcome>;
+
+function normBid(value: string) {
+  const normalized = String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/consorcios?|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
+  if (normalized === "bb" || normalized === "bancodobrasil" || normalized === "bbcons") return "bancodobrasil";
+  return normalized;
+}
+function modesForGroup(group: Pick<Grupo, "id" | "administradora" | "segmento">, rules: BidRule[]): BidModality[] {
+  const own = rules.find(r => r.scope === "grupo" && r.group_id === group.id);
+  const relevant = rules.filter(r => normBid(r.administradora) === normBid(group.administradora));
+  const active = own || relevant.find(r => r.scope === "segmento" && normBid(r.segmento) === normBid(group.segmento))
+    || relevant.find(r => r.scope === "administradora");
+  // Apenas quando não há configuração definida: compatibilidade com grupos legados.
+  return active ? active.modalities : [
+    { key: "fixo_25", label: "Fixo 25%" },
+    { key: "fixo_50", label: normBid(group.administradora).includes("maggi") ? "Fixo 35%" : "Fixo 50%" },
+    { key: "livre", label: "Lance Livre" },
+  ];
+}
+function legacyBidSlot(group: Pick<Grupo, "administradora">, mode: BidModality): "ll" | "fix25" | "fix50" | null {
+  const key = String(mode.key).toLowerCase();
+  const label = String(mode.label).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const percentage = mode.percentage;
+  if (key === "livre" || /lance\s*livre/.test(label)) return "ll";
+  if (key === "fixo_25" || (percentage === 25 && /fixo/.test(label)) || /fixo\s*25\s*%/.test(label)) return "fix25";
+  const maggi = normBid(group.administradora).includes("maggi");
+  if (key === "fixo_50" || (maggi && (key === "fixo_35" || (percentage === 35 && /fixo/.test(label)) || /fixo\s*35\s*%/.test(label)))) return "fix50";
+  return null;
+}
+function sanitizeBidResults(data: unknown): BidOutcomeMap {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const result: BidOutcomeMap = {};
+  Object.entries(data).forEach(([key, row]) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return;
+    const r = row as Record<string, unknown>;
+    const offers = Number(r.offers), deliveries = Number(r.deliveries);
+    if (Number.isFinite(offers) && Number.isFinite(deliveries)) {
+      result[key] = { offers, deliveries };
+    }
+  });
+  return result;
+}
+
 type LoteriaFederal = {
   data_sorteio: string;
   primeiro: string;
@@ -1235,7 +1288,7 @@ export default function GestaoDeGrupos() {
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
   const [fAdmin, setFAdmin] = useState("");
   const [adminScope, setAdminScope] = useState<string>("");
-  const [bidRules, setBidRules] = useState<Array<{ administradora: string; scope: string; segmento: string; group_id: string | null; modalities: Array<{ key: string; label: string }> }>>([]);
+  const [bidRules, setBidRules] = useState<BidRule[]>([]);
   const loadBidRules = useCallback(async () => {
     const { data, error } = await supabase.from("group_bid_modality_rules").select("administradora,scope,segmento,group_id,modalities");
     if (error) { console.warn("Configurações de lance indisponíveis:", error.message); return; }
@@ -1246,24 +1299,8 @@ export default function GestaoDeGrupos() {
     })));
   }, []);
   useEffect(() => { void loadBidRules(); }, [loadBidRules]);
-  const normalizeBidScope = (v: string) => {
-    const cleaned = String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
-      .replace(/consorcios?|holding|s\/?a|s\.?a\.?/g, "").replace(/[^a-z0-9]/g, "");
-    // Os grupos antigos usam "BB CONSÓRCIOS" e o cadastro usa "Banco do Brasil".
-    if (cleaned === "bb" || cleaned === "bancodobrasil" || cleaned === "bbcons") return "bancodobrasil";
-    return cleaned;
-  };
-  const modesForRow = (r: LinhaUI) => {
-    // A regra de grupo está vinculada ao UUID, que é mais confiável que o nome da administradora.
-    const groupRule = bidRules.find(x => x.scope === "grupo" && x.group_id === r.id);
-    const candidates = bidRules.filter(rule => normalizeBidScope(rule.administradora) === normalizeBidScope(r.administradora));
-    const rule = groupRule
-      || candidates.find(x => x.scope === "segmento" && normalizeBidScope(x.segmento) === normalizeBidScope(r.segmento))
-      || candidates.find(x => x.scope === "administradora");
-    return rule ? rule.modalities : [
-      { key: "fixo_25", label: "Fixo 25%" }, { key: "fixo_50", label: normalizeBidScope(r.administradora).includes("maggi") ? "Fixo 35%" : "Fixo 50%" }, { key: "livre", label: "Lance Livre" }
-    ];
-  };
+  const normalizeBidScope = normBid;
+  const modesForRow = (r: Pick<Grupo, "id" | "administradora" | "segmento">) => modesForGroup(r, bidRules);
   const [fSeg, setFSeg] = useState("");
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
@@ -1804,7 +1841,7 @@ export default function GestaoDeGrupos() {
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px] border-collapse text-sm">
+          <table className="w-full min-w-[1180px] border-collapse text-sm">
             <thead className="bg-[#1E293F] text-[10px] uppercase tracking-[0.07em] text-slate-100">
               <tr>
                 <th scope="col" className="px-3 py-4 text-left font-semibold">Administradora</th>
@@ -1816,15 +1853,16 @@ export default function GestaoDeGrupos() {
                 <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Vencimento", "prox_vencimento")}</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Sorteio", "prox_sorteio")}</th>
+                <th scope="col" className="px-3 py-4 text-center font-semibold">{headerSort("Próx. Assemb.", "prox_assembleia")}</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">REF</th>
                 <th scope="col" className="px-3 py-4 text-center font-semibold">Mais detalhes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan={11} className="px-6 py-12 text-center text-slate-500"><Loader2 className="mr-2 inline h-5 w-5 animate-spin" /> Carregando grupos…</td></tr>
+                <tr><td colSpan={12} className="px-6 py-12 text-center text-slate-500"><Loader2 className="mr-2 inline h-5 w-5 animate-spin" /> Carregando grupos…</td></tr>
               ) : sorted.length === 0 ? (
-                <tr><td colSpan={11} className="px-6 py-12 text-center text-slate-500">Sem grupos para os filtros selecionados.</td></tr>
+                <tr><td colSpan={12} className="px-6 py-12 text-center text-slate-500">Sem grupos para os filtros selecionados.</td></tr>
               ) : sorted.map((r) => {
                 const expanded = expandedGroupId === r.id;
                 const stub = isStubId(r.id);
@@ -1843,6 +1881,7 @@ export default function GestaoDeGrupos() {
                       <td className="px-3 py-3.5 text-center font-medium tabular-nums text-slate-700">{r.prazo_encerramento_meses == null ? "—" : r.prazo_encerramento_meses + " meses"}</td>
                       <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_vencimento, true)}</td>
                       <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_sorteio, true)}</td>
+                      <td className="px-2 py-3.5 text-center">{calendarCell(r.prox_assembleia, true)}</td>
                       <td className="px-3 py-3.5 text-center font-bold tabular-nums text-[#1E293F]">{r.referencia ?? "—"}</td>
                       <td className="px-3 py-3.5 text-center">
                         <button type="button" onClick={() => toggleDetails(r.id)} aria-expanded={expanded} aria-controls={"group-details-" + r.id} className={"inline-flex whitespace-nowrap items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-all " + (expanded ? "border-rose-200 bg-rose-100 text-rose-800" : "border-slate-200 bg-white text-slate-700 hover:border-rose-200 hover:text-rose-800")}>
@@ -1853,7 +1892,7 @@ export default function GestaoDeGrupos() {
                     </tr>
                     {expanded && (
                       <tr id={"group-details-" + r.id}>
-                        <td colSpan={11} className="border-t border-rose-100 bg-gradient-to-b from-rose-50/45 to-slate-50/60 p-0">
+                        <td colSpan={12} className="border-t border-rose-100 bg-gradient-to-b from-rose-50/45 to-slate-50/60 p-0">
                           <div className="space-y-5 px-5 py-5 md:px-7">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
@@ -1962,7 +2001,7 @@ export default function GestaoDeGrupos() {
         Total de entregas (linhas filtradas): <span className="font-semibold text-foreground">{totalEntregas}</span>
       </div>
 
-      {asmOpen && <OverlayAssembleias gruposBase={grupos} onClose={() => setAsmOpen(false)} onSaved={async () => await carregar()} />}
+      {asmOpen && <OverlayAssembleias gruposBase={grupos} bidRules={bidRules} onClose={() => setAsmOpen(false)} onSaved={async () => await carregar()} />}
       {lfOpen && (
         <OverlayLoteria
           onClose={() => setLfOpen(false)}

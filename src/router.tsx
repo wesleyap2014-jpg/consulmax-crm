@@ -46,7 +46,7 @@ const PublicTrabalheConosco = React.lazy(() => import("./pages/PublicTrabalheCon
 const PublicAreaCandidato = React.lazy(() => import("./pages/PublicAreaCandidato"));
 const PublicPoliticaPrivacidade = React.lazy(() => import("./pages/PublicPoliticaPrivacidade"));
 const FluxoDeCaixa = React.lazy(() => import("./pages/FluxoDeCaixa"));
-const Planejamento = React.lazy(() => import("./pages/Planejamento"));
+const Planejamento = React.lazy(() => import("./pages/SalaDeGuerraSemanal"));
 const CentralProjetos = React.lazy(() => import("./pages/CentralProjetos"));
 const MarketingCreativePipeline = React.lazy(() => import("./pages/MarketingCreativePipeline"));
 const Marketing = React.lazy(() => import("./pages/Marketing"));

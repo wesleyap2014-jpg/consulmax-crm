@@ -448,7 +448,7 @@ export default function SalaDeGuerraSemanal() {
   const canEdit = myOwnWeek && canEditPlan && !closed && !loadingWeek;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5 p-3 pb-10 sm:p-5 lg:p-6">
+    <div className="w-full min-w-0 space-y-4 pb-8">
       <header className="overflow-hidden rounded-2xl border border-slate-200 bg-[#1E293F] text-white shadow-sm">
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div className="flex items-start gap-3">
@@ -479,15 +479,15 @@ export default function SalaDeGuerraSemanal() {
       )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-[200px] flex-1">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(310px,1fr)_auto] lg:items-end">
+          <div className="min-w-0">
             <Label htmlFor="sg-colaborador" className="mb-2 block text-xs font-bold text-slate-700">
               {people.length > 1 ? "Planejamento de" : "Responsável"}
             </Label>
             {loadingUser ? <p className="py-2 text-sm text-slate-500">Carregando perfil…</p> :
               <select id="sg-colaborador" value={personId} disabled={people.length <= 1 || busy}
                 onChange={e => { setPersonId(e.target.value); setMessage(null); }}
-                className="h-11 w-full max-w-sm rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800">
+                className="h-11 w-full max-w-xl rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800">
                 {people.map(p => <option key={p.id} value={p.id}>{p.nome || p.email || "Usuário"}</option>)}
               </select>}
           </div>
@@ -538,8 +538,9 @@ export default function SalaDeGuerraSemanal() {
         </section>
       )}
 
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-2 gap-2 border-b border-slate-200 p-2 sm:max-w-md">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/40 p-3 sm:px-5">
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-[360px]">
           <button type="button" onClick={() => setView("planejamento")}
             className={"flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-extrabold transition " +
               (view === "planejamento" ? "bg-[#1E293F] text-white shadow-sm" : "text-slate-600 hover:bg-slate-100")}>
@@ -550,6 +551,14 @@ export default function SalaDeGuerraSemanal() {
               (view === "revisao" ? "bg-[#1E293F] text-white shadow-sm" : "text-slate-600 hover:bg-slate-100")}>
             <ClipboardCheck className="h-4 w-4" /> Revisar
           </button>
+          </div>
+          {!loadingWeek && (
+            <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
+              <span className={"h-2 w-2 rounded-full " +
+                (closed ? "bg-emerald-500" : plan ? "bg-[#B5A573]" : "bg-slate-300")} />
+              {closed ? "Semana revisada" : plan ? plannedTotal + " compromisso(s) planejado(s)" : "Aguardando planejamento"}
+            </span>
+          )}
         </div>
 
         <div className="space-y-5 p-4 sm:p-6">
@@ -558,18 +567,48 @@ export default function SalaDeGuerraSemanal() {
               <Loader2 className="h-5 w-5 animate-spin" /> Abrindo planejamento…
             </div>
           ) : !plan ? (
-            <div className="flex flex-col items-center gap-3 py-12 text-center">
-              <span className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-[#1E293F]"><ClipboardList className="h-7 w-7" /></span>
-              <h2 className="text-lg font-extrabold text-[#1E293F]">Semana ainda não planejada</h2>
-              <p className="max-w-md text-sm text-slate-500">
-                {myOwnWeek ? "Comece com 3 a 5 compromissos importantes. Leva poucos minutos."
-                  : "Este colaborador ainda não cadastrou o planejamento desta semana."}
-              </p>
-              {myOwnWeek && canEditPlan && <Button disabled={busy} onClick={() => void createWeek()}
-                className="mt-1 gap-2 rounded-xl bg-[#A11C27] text-white hover:bg-[#831622]">
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Começar minha semana
-              </Button>}
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.7fr)]">
+              <div className="flex min-h-[280px] flex-col items-start justify-center gap-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-6 sm:p-8">
+                <span className="grid h-12 w-12 place-items-center rounded-xl bg-white text-[#1E293F] shadow-sm">
+                  <ClipboardList className="h-6 w-6" />
+                </span>
+                <h2 className="text-xl font-extrabold text-[#1E293F]">Semana ainda não planejada</h2>
+                <p className="max-w-lg text-sm leading-relaxed text-slate-600">
+                  {myOwnWeek ? "Comece com 3 a 5 compromissos importantes para esta semana. Você só precisa registrar o que pretende fazer."
+                    : selectedName + " ainda não cadastrou o planejamento desta semana."}
+                </p>
+                {myOwnWeek && canEditPlan && <Button disabled={busy} onClick={() => void createWeek()}
+                  className="mt-2 gap-2 rounded-xl bg-[#A11C27] text-white hover:bg-[#831622]">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  Começar minha semana
+                </Button>}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                <div className="flex flex-col justify-center rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex items-center gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-[#1E293F]">
+                      <CalendarDays className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Etapa 01 · Segunda-feira</p>
+                      <h3 className="text-sm font-extrabold text-[#1E293F]">Planejar</h3>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-600">Defina os compromissos mais importantes usando um 5W2H simples.</p>
+                </div>
+                <div className="flex flex-col justify-center rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex items-center gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-rose-50 text-[#A11C27]">
+                      <ClipboardCheck className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Etapa 02 · Sexta-feira</p>
+                      <h3 className="text-sm font-extrabold text-[#1E293F]">Revisar</h3>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-600">Marque o que foi realizado, o que ficou parcial e o que não foi feito.</p>
+                </div>
+              </div>
             </div>
           ) : view === "planejamento" ? (
             <>
@@ -588,7 +627,7 @@ export default function SalaDeGuerraSemanal() {
                   Nenhum compromisso ainda. {canEdit ? "Clique em Nova ação para começar." : ""}
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="grid gap-3 xl:grid-cols-2">
                   {actions.map((a, index) => (
                     <article key={a.id} className="rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300">
                       <div className="flex items-start justify-between gap-3">
@@ -653,7 +692,7 @@ export default function SalaDeGuerraSemanal() {
               {!actions.length ? <p className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
                 Ainda não existem ações para revisar nesta semana.
               </p> : (
-                <div className="space-y-3">
+                <div className="grid gap-3 xl:grid-cols-2">
                   {actions.map((a, index) => {
                     const rev = reviews[a.id] || { outcome: "", notes: "" };
                     return (

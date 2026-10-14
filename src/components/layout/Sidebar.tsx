@@ -540,7 +540,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   const widthClass = useMemo(() => {
     if (isSmall) return "w-[92vw] max-w-[360px]";
-    return collapsed ? "md:w-20" : "md:w-64";
+    return collapsed ? "md:w-20" : "md:w-72";
   }, [isSmall, collapsed]);
 
   const textHidden = collapsed ? "md:opacity-0 md:pointer-events-none md:select-none md:w-0 opacity-100" : "opacity-100";

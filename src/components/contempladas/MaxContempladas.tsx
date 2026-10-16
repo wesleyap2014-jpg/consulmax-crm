@@ -1,8 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { BrainCircuit, Calculator, Loader2, Search, Sparkles, TriangleAlert } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Bot, CarFront, CircleAlert, ChevronDown, House, Loader2, Bike, Send, Truck, X } from "lucide-react";
 
 export type MaxCota = {
   id: string;
@@ -17,130 +14,167 @@ export type MaxCota = {
   _calc: { entrada: number };
 };
 
-type Criteria = {
-  min: number;
-  max: number;
-  entradaMax: number | null;
-  parcelaMax: number | null;
-  saldoMax: number | null;
-  maxCotas: number;
-  prioridade: "saldo" | "entrada" | "credito";
-};
-
-type Combination = {
+type Segment = "Automóvel" | "Imóvel" | "Pesados" | "Motocicletas";
+type Criterion = "entrada" | "parcela" | "saldo";
+type Offer = {
   ids: string[];
-  codes: string[];
-  admin: string;
-  parceiro: string;
-  segmento: string;
+  codigos: string[];
+  administradora: string;
   credito: number;
   entrada: number;
-  parcelaInicial: number;
-  saldoNominal: number;
-  parcelamento: string[];
-  count: number;
+  parcela: number;
+  saldo: number;
+  faixas: { inicio: number; fim: number; valor: number }[];
 };
+type Alternative = { type: Criterion; offer: Offer };
+type Message = { id: number; speaker: "bot" | "user"; text: string; alternatives?: Alternative[]; note?: string };
 
-const money = (value: number) => value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const money = (n: number) => Number(n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const normalize = (s: string) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+const SEGMENTS = [
+  { value: "Automóvel" as Segment, label: "Automóvel", Icon: CarFront },
+  { value: "Imóvel" as Segment, label: "Imóvel", Icon: House },
+  { value: "Pesados" as Segment, label: "Pesados", Icon: Truck },
+  { value: "Motocicletas" as Segment, label: "Moto", Icon: Bike },
+];
+const OPTIONS: { type: Criterion; title: string; color: string; bg: string; border: string }[] = [
+  { type: "entrada", title: "Menor Entrada", color: "#A11C27", bg: "#FFF7F7", border: "#F3C5C8" },
+  { type: "parcela", title: "Menor Parcela", color: "#2563EB", bg: "#F5F8FF", border: "#C8D9FF" },
+  { type: "saldo", title: "Menor Saldo Devedor", color: "#15803D", bg: "#F4FBF6", border: "#B8E3C6" },
+];
 
-function parseBR(value: string): number | null {
-  const raw = value.replace(/[^\d,.]/g, "").trim();
-  if (!raw) return null;
-  const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw.replace(/\./g, "");
-  const number = Number(normalized);
-  return Number.isFinite(number) && number >= 0 ? number : null;
+export function readMaxCredit(text: string): number | null {
+  const found = text.toLowerCase().match(/(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)(?:\s*(milh(?:ão|ões|ao|oes)|mil|k|m))?/i);
+  if (!found) return null;
+  const raw = found[1];
+  const number = raw.includes(",")
+    ? Number(raw.replace(/\./g, "").replace(",", "."))
+    : Number(raw.includes(".") && raw.split(".").slice(1).every((p) => p.length === 3) ? raw.replace(/\./g, "") : raw);
+  const unit = normalize(found[2] || "");
+  const multiplier = unit.startsWith("milh") || unit === "m" ? 1_000_000 : unit === "mil" || unit === "k" ? 1000 : 1;
+  const result = number * multiplier;
+  return Number.isFinite(result) && result >= 1000 && result <= 100_000_000 ? result : null;
 }
 
-function ranges(items: MaxCota[]): string[] {
-  const sorted = [...new Set(items.map((c) => Math.max(0, Math.floor(c.prazo_restante))))].filter(Boolean).sort((a, b) => a - b);
+function parcelRanges(items: MaxCota[]) {
+  const endings = [...new Set(items.map((c) => c.prazo_restante))].sort((a, b) => a - b);
   let start = 1;
-  return sorted.map((end) => {
-    const amount = items.filter((c) => c.prazo_restante >= start).reduce((sum, c) => sum + c.valor_parcela, 0);
-    const label = String(start) + " a " + String(end) + ": " + money(amount);
-    start = end + 1;
-    return label;
+  return endings.map((fim) => {
+    const value = items.filter((c) => c.prazo_restante >= start).reduce((s, c) => s + c.valor_parcela, 0);
+    const line = { inicio: start, fim, valor: value };
+    start = fim + 1;
+    return line;
   });
 }
 
-function calculateCombination(items: MaxCota[], criteria: Criteria): Combination | null {
-  const credito = items.reduce((sum, c) => sum + c.credito_disponivel, 0);
-  if (credito < criteria.min - 0.01 || credito > criteria.max + 0.01) return null;
-
-  const entrada = items.reduce((sum, c) => sum + c._calc.entrada, 0);
-  const parcelaInicial = items.reduce((sum, c) => sum + c.valor_parcela, 0);
-  const saldoNominal = items.reduce((sum, c) => sum + c.valor_parcela * c.prazo_restante, 0);
-  if (criteria.entradaMax != null && entrada > criteria.entradaMax) return null;
-  if (criteria.parcelaMax != null && parcelaInicial > criteria.parcelaMax) return null;
-  if (criteria.saldoMax != null && saldoNominal > criteria.saldoMax) return null;
-
+function makeOffer(items: MaxCota[]): Offer {
   return {
     ids: items.map((c) => c.id),
-    codes: items.map((c) => c.codigo),
-    admin: items[0].admin?.nome || "Não informada",
-    parceiro: items[0].partner?.nome || "Não informado",
-    segmento: items[0].segmento,
-    credito, entrada, parcelaInicial, saldoNominal,
-    parcelamento: ranges(items),
-    count: items.length,
+    codigos: items.map((c) => c.codigo),
+    administradora: items[0].admin?.nome || "Administradora não informada",
+    credito: items.reduce((s, c) => s + c.credito_disponivel, 0),
+    entrada: items.reduce((s, c) => s + c._calc.entrada, 0),
+    parcela: items.reduce((s, c) => s + c.valor_parcela, 0),
+    saldo: items.reduce((s, c) => s + c.prazo_restante * c.valor_parcela, 0),
+    faixas: parcelRanges(items),
   };
 }
 
-function compareOffers(a: Combination, b: Combination, c: Criteria): number {
-  const midpoint = (c.min + c.max) / 2;
-  if (c.prioridade === "entrada") {
-    return (a.entrada - b.entrada) || (a.saldoNominal - b.saldoNominal) || (Math.abs(a.credito - midpoint) - Math.abs(b.credito - midpoint));
-  }
-  if (c.prioridade === "credito") {
-    return (Math.abs(a.credito - midpoint) - Math.abs(b.credito - midpoint)) || (a.saldoNominal - b.saldoNominal) || (a.entrada - b.entrada);
-  }
-  return (a.saldoNominal - b.saldoNominal) || (a.entrada - b.entrada) || (Math.abs(a.credito - midpoint) - Math.abs(b.credito - midpoint));
+function better(a: Offer, b: Offer | undefined, kind: Criterion, target: number): boolean {
+  if (!b) return true;
+  const number = (c: Offer) => kind === "entrada" ? c.entrada : kind === "parcela" ? c.parcela : c.saldo;
+  const diff = number(a) - number(b);
+  if (Math.abs(diff) > 0.01) return diff < 0;
+  const proximity = Math.abs(a.credito - target) - Math.abs(b.credito - target);
+  if (Math.abs(proximity) > 0.01) return proximity < 0;
+  return a.ids.length < b.ids.length;
 }
 
-function searchCombinations(cotas: MaxCota[], criteria: Criteria): { matches: Combination[]; truncated: boolean } {
-  const available = cotas.filter((c) =>
-    c.status === "disponivel" &&
+function candidatePool(group: MaxCota[], target: number) {
+  const selected = new Map<string, MaxCota>();
+  const add = (sorted: MaxCota[], limit: number) => sorted.slice(0, limit).forEach((c) => selected.set(c.id, c));
+  for (const n of [1, 2, 3]) {
+    add([...group].sort((a, b) => Math.abs(a.credito_disponivel - target / n) - Math.abs(b.credito_disponivel - target / n)), 20);
+  }
+  add([...group].sort((a, b) => a._calc.entrada - b._calc.entrada), 12);
+  add([...group].sort((a, b) => a.valor_parcela - b.valor_parcela), 12);
+  add([...group].sort((a, b) => a.prazo_restante * a.valor_parcela - b.prazo_restante * b.valor_parcela), 12);
+  return { candidates: [...selected.values()], limited: selected.size < group.length };
+}
+
+export function findMaxAlternatives(cotas: MaxCota[], segment: Segment, target: number) {
+  const eligible = cotas.filter((c) =>
+    normalize(c.segmento) === normalize(segment) && c.status === "disponivel" &&
     Number.isFinite(c.credito_disponivel) && c.credito_disponivel > 0 &&
-    Number.isFinite(c._calc.entrada) && c._calc.entrada >= 0 &&
     Number.isFinite(c.valor_parcela) && c.valor_parcela > 0 &&
-    Number.isInteger(c.prazo_restante) && c.prazo_restante > 0
+    Number.isInteger(c.prazo_restante) && c.prazo_restante > 0 &&
+    Number.isFinite(c._calc?.entrada) && c._calc.entrada >= 0
   );
   const groups = new Map<string, MaxCota[]>();
-  for (const c of available) {
-    // Preserve the existing manual combination rule: same partner, admin and segment.
-    const key = [c.partner?.id || "", c.admin?.id || "", c.segmento].join("|");
-    groups.set(key, [...(groups.get(key) || []), c]);
+  for (const cota of eligible) {
+    // Preserve the manual selection rule: same partner, admin and segment.
+    const key = [cota.partner?.id || "", cota.admin?.id || "", normalize(cota.segmento)].join("|");
+    groups.set(key, [...(groups.get(key) || []), cota]);
   }
-
-  const all: Combination[] = [];
-  const midpoint = (criteria.min + criteria.max) / 2;
-  let truncated = false;
-  for (const group of groups.values()) {
-    // Cap the combinatorial search. The complete catalogue remains available in the table.
-    const ranked = [...group].sort((a, b) => {
-      const fit = (c: MaxCota) => Math.min(
-        ...Array.from({ length: criteria.maxCotas }, (_, i) => Math.abs(c.credito_disponivel * (i + 1) - midpoint))
-      );
-      return fit(a) - fit(b) || a._calc.entrada - b._calc.entrada;
-    });
-    if (ranked.length > 50) truncated = true;
-    const candidates = ranked.slice(0, 50);
-    for (let i = 0; i < candidates.length; i++) {
-      const one = calculateCombination([candidates[i]], criteria);
-      if (one) all.push(one);
-      if (criteria.maxCotas < 2) continue;
-      for (let j = i + 1; j < candidates.length; j++) {
-        const two = calculateCombination([candidates[i], candidates[j]], criteria);
-        if (two) all.push(two);
-        if (criteria.maxCotas < 3) continue;
-        for (let k = j + 1; k < candidates.length; k++) {
-          const three = calculateCombination([candidates[i], candidates[j], candidates[k]], criteria);
-          if (three) all.push(three);
+  for (const tolerance of [0.05, 0.10]) {
+    const min = target * (1 - tolerance), max = target * (1 + tolerance);
+    const best: Partial<Record<Criterion, Offer>> = {};
+    let limited = false;
+    for (const group of groups.values()) {
+      const pool = candidatePool(group.filter((c) => c.credito_disponivel <= max), target);
+      limited ||= pool.limited;
+      const candidates = pool.candidates;
+      const consider = (items: MaxCota[], amount: number) => {
+        if (amount < min || amount > max) return;
+        const offer = makeOffer(items);
+        for (const kind of ["entrada", "parcela", "saldo"] as const) {
+          if (better(offer, best[kind], kind, target)) best[kind] = offer;
+        }
+      };
+      for (let i = 0; i < candidates.length; i++) {
+        const a = candidates[i];
+        consider([a], a.credito_disponivel);
+        for (let j = i + 1; j < candidates.length; j++) {
+          const b = candidates[j], pair = a.credito_disponivel + b.credito_disponivel;
+          if (pair > max) continue;
+          consider([a, b], pair);
+          for (let k = j + 1; k < candidates.length; k++) {
+            const c = candidates[k], triple = pair + c.credito_disponivel;
+            if (triple <= max) consider([a, b, c], triple);
+          }
         }
       }
     }
+    if (best.entrada && best.parcela && best.saldo) {
+      return {
+        alternatives: OPTIONS.map((item) => ({ type: item.type, offer: best[item.type]! })),
+        tolerance, limited, count: eligible.length,
+      };
+    }
   }
-  all.sort((a, b) => compareOffers(a, b, criteria));
-  return { matches: all.slice(0, 8), truncated };
+  return { alternatives: [] as Alternative[], tolerance: 0.1, limited: false, count: eligible.length };
+}
+
+function OfferCard({ alternative, onDetails }: { alternative: Alternative; onDetails: (ids: string[]) => void }) {
+  const style = OPTIONS.find((o) => o.type === alternative.type)!;
+  const o = alternative.offer;
+  return (
+    <article className="rounded-xl border p-3" style={{ borderColor: style.border, background: style.bg }}>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-extrabold text-white" style={{ background: style.color }}>{OPTIONS.findIndex((x) => x.type === alternative.type) + 1}</span>
+        <strong className="text-[13px]" style={{ color: style.color }}>{style.title}</strong>
+      </div>
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
+        <span className="text-slate-500">Crédito</span><strong className="text-right text-slate-800">{money(o.credito)}</strong>
+        <span className="text-slate-500">Entrada</span><strong className="text-right text-slate-800">{money(o.entrada)}</strong>
+        <span className="text-slate-500">Parcela inicial</span><strong className="text-right text-slate-800">{money(o.parcela)}</strong>
+        <span className="text-slate-500">Saldo estimado*</span><strong className="text-right text-slate-800">{money(o.saldo)}</strong>
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-slate-600">{o.faixas.map((f) => f.inicio + " a " + f.fim + "x " + money(f.valor)).join(" · ")}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{o.administradora} · Cota(s): {o.codigos.join(" + ")}</p>
+      <button type="button" onClick={() => onDetails(o.ids)} className="mt-2 w-full rounded-lg border bg-white px-3 py-2 text-xs font-bold hover:bg-slate-50" style={{ borderColor: style.border, color: style.color }}>Ver detalhes e resumo</button>
+    </article>
+  );
 }
 
 export default function MaxContempladas({ cotas, sourceMode, onOpenCombination }: {
@@ -148,150 +182,123 @@ export default function MaxContempladas({ cotas, sourceMode, onOpenCombination }
   sourceMode: "externo" | "crm";
   onOpenCombination: (ids: string[]) => void;
 }) {
-  const [creditoMin, setCreditoMin] = useState("");
-  const [creditoMax, setCreditoMax] = useState("");
-  const [entradaMax, setEntradaMax] = useState("");
-  const [parcelaMax, setParcelaMax] = useState("");
-  const [saldoMax, setSaldoMax] = useState("");
-  const [maxCotas, setMaxCotas] = useState(2);
-  const [prioridade, setPrioridade] = useState<Criteria["prioridade"]>("saldo");
-  const [criteria, setCriteria] = useState<Criteria | null>(null);
-  const [error, setError] = useState("");
-  const [thinkingId, setThinkingId] = useState("");
-  const [analysisId, setAnalysisId] = useState("");
-  const [analysis, setAnalysis] = useState("");
-  const [analysisError, setAnalysisError] = useState("");
+  const [open, setOpen] = useState(false);
+  const [segment, setSegment] = useState<Segment | null>(null);
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<Message[]>([{ id: 1, speaker: "bot", text: "Olá! Sou o MAX. Em qual segmento você quer encontrar cartas contempladas?" }]);
+  const [searching, setSearching] = useState(false);
+  const nextId = useRef(2);
+  const bottom = useRef<HTMLDivElement | null>(null);
+  const entry = useRef<HTMLInputElement | null>(null);
+  const availableCount = useMemo(() => cotas.filter((r) => r.status === "disponivel").length, [cotas]);
 
-  const searchResult = useMemo(
-    () => criteria ? searchCombinations(cotas, criteria) : { matches: [], truncated: false },
-    [cotas, criteria]
-  );
+  useEffect(() => { if (open) bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages, open]);
 
-  function apply() {
-    const minimum = parseBR(creditoMin);
-    const maximum = parseBR(creditoMax);
-    if ((minimum == null || minimum <= 0) && (maximum == null || maximum <= 0)) {
-      setError("Informe ao menos um valor de crédito desejado.");
-      return;
-    }
-    const min = minimum && minimum > 0 ? minimum : Math.max(1, (maximum || 0) * 0.95);
-    const max = maximum && maximum > 0 ? maximum : min * 1.05;
-    if (min > max) {
-      setError("O crédito mínimo não pode superar o máximo.");
-      return;
-    }
-    setError("");
-    setAnalysis(""); setAnalysisError(""); setAnalysisId("");
-    setCriteria({
-      min, max, entradaMax: parseBR(entradaMax),
-      parcelaMax: parseBR(parcelaMax), saldoMax: parseBR(saldoMax),
-      maxCotas, prioridade,
-    });
+  function add(...items: Omit<Message, "id">[]) {
+    setMessages((previous) => [...previous, ...items.map((item) => ({ ...item, id: nextId.current++ }))]);
   }
 
-  async function askMax(offer: Combination) {
-    const key = offer.ids.join("|");
-    setThinkingId(key);
-    setAnalysisId(key); setAnalysis(""); setAnalysisError("");
-    try {
-      const response = await fetch("/api/max-chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "livre",
-          prompt: "Atue como analista comercial de cartas contempladas. Interprete os dados calculados pelo CRM em até 110 palavras, em português. Destaque principal vantagem, um cuidado da operação e como apresentá-la ao cliente. Não refaça nem invente valores. Não prometa rentabilidade ou condições não confirmadas. O saldo informado é apenas a soma nominal das parcelas vincendas, NÃO saldo devedor oficial; podem existir reajustes, seguro e taxas. Não oriente reserva automática.",
-          context: {
-            origem: sourceMode, administradora: offer.admin, segmento: offer.segmento,
-            codigo_cotas: offer.codes, credito: offer.credito, entrada: offer.entrada,
-            soma_nominal_parcelas_vincendas: offer.saldoNominal,
-            parcela_inicial_somada: offer.parcelaInicial,
-            faixas_parcelas: offer.parcelamento,
-          },
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok || typeof data?.answer !== "string") throw new Error(data?.error || "Análise indisponível.");
-      setAnalysis(data.answer);
-    } catch (cause: any) {
-      setAnalysisError(cause?.message || "O MAX não conseguiu analisar esta operação.");
-    } finally {
-      setThinkingId("");
+  function selectSegment(value: Segment) {
+    setSegment(value);
+    const label = SEGMENTS.find((s) => s.value === value)?.label || value;
+    add({ speaker: "user", text: label }, { speaker: "bot", text: "Qual valor de crédito você procura em " + label + "?" });
+    window.setTimeout(() => entry.current?.focus(), 0);
+  }
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const text = input.trim();
+    if (!text || searching) return;
+    setInput("");
+    if (!segment) {
+      add({ speaker: "user", text }, { speaker: "bot", text: "Primeiro escolha um segmento acima." });
+      return;
     }
+    const target = readMaxCredit(text);
+    if (!target) {
+      add({ speaker: "user", text }, { speaker: "bot", text: "Me diga o crédito desejado, por exemplo: 120 mil ou R$ 120.000." });
+      return;
+    }
+    setSearching(true);
+    const result = findMaxAlternatives(cotas, segment, target);
+    add({ speaker: "user", text });
+    if (!result.alternatives.length) {
+      const reason = result.count === 0 ? "Não há cotas disponíveis deste segmento no estoque atual." : "Tente outro valor ou atualize o estoque.";
+      add({ speaker: "bot", text: "Não encontrei alternativas para " + money(target) + " em " + segment + " com até 10% de diferença e até 3 cotas. " + reason });
+    } else {
+      const margin = result.tolerance > 0.05 ? "Ampliei a busca para ±10%. " : "Créditos dentro de ±5% do pedido. ";
+      const limit = result.limited ? "A busca usa uma amostra priorizada por compatibilidade e pode não encontrar todas as junções. " : "";
+      add({
+        speaker: "bot",
+        text: "Encontrei estas 3 alternativas para " + money(target) + " em " + segment + ":",
+        alternatives: result.alternatives,
+        note: margin + limit + "*Saldo estimado pela soma nominal das parcelas a vencer, sujeito a reajustes, seguros e taxas. Confirme valores e disponibilidade antes da reserva.",
+      });
+    }
+    setSearching(false);
   }
 
   return (
-    <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5" style={{ borderColor: "rgba(181,165,115,.50)" }}>
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-bold" style={{ color: "#A11C27" }}>
-            <BrainCircuit className="h-5 w-5" /> MAX · Inteligência de Contempladas
+    <div className="pointer-events-none fixed inset-0 z-[70]" aria-label="Assistente MAX para contempladas">
+      {open ? (
+        <section role="dialog" aria-label="Conversa com MAX" className="pointer-events-auto absolute bottom-[86px] right-3 flex h-[min(690px,calc(100dvh-105px))] max-h-[calc(100dvh-105px)] w-[min(440px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:right-5">
+          <header className="flex shrink-0 items-center justify-between gap-3 p-3 text-white" style={{ background: "linear-gradient(115deg,#1E293F,#A11C27)" }}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full border border-white/40 bg-white text-[#A11C27]"><Bot className="h-5 w-5" /></span>
+              <div><p className="text-sm font-extrabold tracking-wide">MAX</p><p className="text-[11px] text-white/80">Seu especialista em contempladas</p></div>
+            </div>
+            <div className="flex items-center gap-1">
+              <button type="button" aria-label="Minimizar MAX" onClick={() => setOpen(false)} className="rounded-lg p-2 hover:bg-white/15"><ChevronDown className="h-4 w-4" /></button>
+              <button type="button" aria-label="Fechar MAX" onClick={() => setOpen(false)} className="rounded-lg p-2 hover:bg-white/15"><X className="h-4 w-4" /></button>
+            </div>
+          </header>
+          <div className="shrink-0 border-b border-slate-100 bg-slate-50 px-3 py-2">
+            <p className="mb-2 text-[11px] font-semibold text-slate-600">Escolha o segmento:</p>
+            <div className="grid grid-cols-4 gap-1.5">
+              {SEGMENTS.map(({ value, label, Icon }) => (
+                <button key={value} type="button" onClick={() => selectSegment(value)} aria-pressed={segment === value}
+                  className={"flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg border px-1 py-2 text-[10px] font-semibold transition " + (segment === value ? "border-[#A11C27] bg-[#A11C27] text-white" : "border-slate-200 bg-white text-slate-700 hover:border-[#A11C27]")}>
+                  <Icon className="h-4 w-4" /> {label}
+                </button>
+              ))}
+            </div>
           </div>
-          <h3 className="mt-1 text-lg font-bold" style={{ color: "#1E293F" }}>Encontre a melhor composição para seu cliente</h3>
-          <p className="mt-1 text-xs text-slate-500">Pesquisa nas cotas carregadas do estoque {sourceMode === "externo" ? "externo" : "interno"}, respeitando os filtros da tela.</p>
-        </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{cotas.filter((c) => c.status === "disponivel").length} cotas disponíveis</span>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="space-y-1"><Label>Crédito mínimo (R$)</Label><Input inputMode="decimal" placeholder="110.000" value={creditoMin} onChange={(e) => setCreditoMin(e.target.value)} /></div>
-        <div className="space-y-1"><Label>Crédito máximo (R$)</Label><Input inputMode="decimal" placeholder="120.000" value={creditoMax} onChange={(e) => setCreditoMax(e.target.value)} /></div>
-        <div className="space-y-1"><Label>Entrada máxima (R$)</Label><Input inputMode="decimal" placeholder="Opcional" value={entradaMax} onChange={(e) => setEntradaMax(e.target.value)} /></div>
-        <div className="space-y-1"><Label>Parcela inicial máxima (R$)</Label><Input inputMode="decimal" placeholder="Opcional" value={parcelaMax} onChange={(e) => setParcelaMax(e.target.value)} /></div>
-        <div className="space-y-1"><Label>Soma nominal máxima (R$)</Label><Input inputMode="decimal" placeholder="Opcional" value={saldoMax} onChange={(e) => setSaldoMax(e.target.value)} /></div>
-        <div className="space-y-1">
-          <Label>Máximo de cotas na junção</Label>
-          <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={maxCotas} onChange={(e) => setMaxCotas(Number(e.target.value))}>
-            <option value={1}>Somente cota individual</option><option value={2}>Até 2 cotas</option><option value={3}>Até 3 cotas</option>
-          </select>
-        </div>
-        <div className="space-y-1">
-          <Label>Priorizar</Label>
-          <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={prioridade} onChange={(e) => setPrioridade(e.target.value as Criteria["prioridade"])}>
-            <option value="saldo">Menor soma nominal restante</option><option value="entrada">Menor entrada</option><option value="credito">Crédito mais próximo do centro</option>
-          </select>
-        </div>
-        <div className="flex items-end"><Button onClick={apply} className="w-full text-white" style={{ background: "#A11C27" }}><Search className="mr-2 h-4 w-4" /> Encontrar operações</Button></div>
-      </div>
-      {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
-      {criteria ? (
-        <div className="mt-5 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <strong className="text-sm" style={{ color: "#1E293F" }}>Melhores opções · {money(criteria.min)} a {money(criteria.max)}</strong>
-            <span className="text-xs text-slate-500">Até {searchResult.matches.length} sugestões ordenadas pelo critério escolhido</span>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-white px-3 py-4" aria-live="polite">
+            {messages.map((message) => (
+              <div key={message.id} className={"flex " + (message.speaker === "user" ? "justify-end" : "justify-start")}>
+                <div className={message.alternatives ? "w-full" : "max-w-[85%]"}>
+                  <div className={"rounded-2xl px-3 py-2 text-[13px] leading-relaxed " + (message.speaker === "user" ? "rounded-br-md bg-[#A11C27] text-white" : "rounded-bl-md bg-slate-100 text-slate-700")}>{message.text}</div>
+                  {message.alternatives ? (
+                    <div className="mt-2 space-y-2">
+                      {message.alternatives.map((alternative) => (
+                        <OfferCard key={alternative.type} alternative={alternative} onDetails={(ids) => { setOpen(false); onOpenCombination(ids); }} />
+                      ))}
+                      {message.note ? <p className="flex items-start gap-1 text-[10px] leading-relaxed text-slate-500"><CircleAlert className="mt-0.5 h-3 w-3 shrink-0" />{message.note}</p> : null}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            <div ref={bottom} />
           </div>
-          {searchResult.matches.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-slate-600">Nenhuma combinação disponível atende a todos os limites. Amplie o intervalo de crédito ou revise a entrada, a parcela e o limite nominal.</p> : null}
-          <div className="grid gap-3 lg:grid-cols-2">
-            {searchResult.matches.map((offer, index) => {
-              const id = offer.ids.join("|");
-              return (
-                <article key={id} className="rounded-xl border border-slate-200 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#A11C27" }}>Opção {index + 1} · {offer.count} {offer.count === 1 ? "cota" : "cotas"}</span>
-                    <span className="text-xs text-slate-500">{offer.admin}</span>
-                  </div>
-                  <div className="mt-2 text-xl font-bold" style={{ color: "#1E293F" }}>{money(offer.credito)}</div>
-                  <p className="mt-1 text-xs text-slate-500">{offer.segmento} · Código(s): {offer.codes.join(" + ")}</p>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    <div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-slate-500">Entrada</p><strong>{money(offer.entrada)}</strong></div>
-                    <div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-slate-500">Parcelas vincendas (nominal)</p><strong>{money(offer.saldoNominal)}</strong></div>
-                  </div>
-                  <div className="mt-3 space-y-1 text-xs text-slate-600">{offer.parcelamento.map((line) => <div key={line}>{line}</div>)}</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => onOpenCombination(offer.ids)}><Calculator className="mr-2 h-4 w-4" /> Abrir resumo</Button>
-                    <Button size="sm" variant="outline" disabled={!!thinkingId} onClick={() => void askMax(offer)}>
-                      {thinkingId === id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />} Analisar com MAX
-                    </Button>
-                  </div>
-                  {analysisId === id && analysis ? <p className="mt-3 whitespace-pre-wrap rounded-lg bg-amber-50 p-3 text-sm text-slate-700">{analysis}</p> : null}
-                  {analysisId === id && analysisError ? <p role="alert" className="mt-3 text-xs text-red-700">{analysisError}</p> : null}
-                </article>
-              );
-            })}
-          </div>
-          {searchResult.truncated ? <p className="flex items-start gap-2 text-xs text-amber-800"><TriangleAlert className="h-4 w-4 shrink-0" /> Para manter a busca rápida, o MAX analisou até 50 cotas pré-selecionadas em cada conjunto compatível. O resultado não é exaustivo.</p> : null}
-          <p className="text-xs text-slate-500">A soma nominal das parcelas vincendas é estimativa comparativa, não o saldo devedor oficial. Pode mudar com reajustes e encargos. Disponibilidade e valores precisam ser confirmados antes da reserva. Nenhuma reserva é realizada automaticamente.</p>
-        </div>
+          <form onSubmit={submit} className="flex shrink-0 items-center gap-2 border-t border-slate-100 bg-white p-3">
+            <input ref={entry} value={input} onChange={(e) => setInput(e.target.value)} aria-label="Digite o crédito desejado"
+              placeholder={segment ? "Ex.: 120 mil" : "Selecione o segmento acima"} disabled={!segment || searching}
+              className="min-w-0 flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-[#A11C27]" />
+            <button type="submit" disabled={!segment || !input.trim() || searching} aria-label="Enviar ao MAX" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#A11C27] text-white disabled:opacity-40">
+              {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </button>
+          </form>
+        </section>
       ) : null}
-    </section>
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-label={open ? "Recolher MAX" : "Abrir MAX"} aria-expanded={open}
+        className="pointer-events-auto absolute bottom-4 right-4 flex h-14 w-14 items-center justify-center rounded-full border-2 border-white bg-[#A11C27] text-white shadow-xl transition hover:scale-105 sm:bottom-5 sm:right-5" title="Fale com MAX">
+        <Bot className="h-7 w-7" />
+        <span className="absolute -bottom-0.5 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-400" />
+      </button>
+      {!open ? <span className="pointer-events-none absolute bottom-[75px] right-[25px] rounded-md bg-[#1E293F] px-2 py-1 text-[10px] font-bold text-white sm:bottom-[80px] sm:right-[30px]">MAX</span> : null}
+      {availableCount === 0 && open ? <span className="sr-only">Estoque sem cotas disponíveis</span> : null}
+      <span className="sr-only">Origem do estoque: {sourceMode}</span>
+    </div>
   );
 }

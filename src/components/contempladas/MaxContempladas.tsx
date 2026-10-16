@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, CarFront, CircleAlert, ChevronDown, House, Loader2, Motorcycle, Send, Truck, X } from "lucide-react";
+import { Bot, CarFront, CircleAlert, ChevronDown, House, Loader2, Bike, Send, Truck, X } from "lucide-react";
 
 export type MaxCota = {
   id: string;
@@ -35,7 +35,7 @@ const SEGMENTS = [
   { value: "Automóvel" as Segment, label: "Automóvel", Icon: CarFront },
   { value: "Imóvel" as Segment, label: "Imóvel", Icon: House },
   { value: "Pesados" as Segment, label: "Pesados", Icon: Truck },
-  { value: "Motocicletas" as Segment, label: "Moto", Icon: Motorcycle },
+  { value: "Motocicletas" as Segment, label: "Moto", Icon: Bike },
 ];
 const OPTIONS: { type: Criterion; title: string; color: string; bg: string; border: string }[] = [
   { type: "entrada", title: "Menor Entrada", color: "#A11C27", bg: "#FFF7F7", border: "#F3C5C8" },

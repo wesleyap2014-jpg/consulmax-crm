@@ -25,7 +25,7 @@ import {
   CheckCheck,
 } from "lucide-react";
 
-type Segmento = "Automóvel" | "Imóvel" | "Motocicletas" | "Serviços";
+type Segmento = "Automóvel" | "Imóvel" | "Pesados" | "Motocicletas" | "Serviços";
 type Status = "disponivel" | "reservada" | "transferida";
 type SourceMode = "externo" | "crm";
 
@@ -316,7 +316,6 @@ export default function EstoqueContempladas() {
   });
 
   const [openSum, setOpenSum] = useState(false);
-  const [showMax, setShowMax] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [anchorRule, setAnchorRule] = useState<{
@@ -379,6 +378,7 @@ export default function EstoqueContempladas() {
 
     if (c.includes("imovel")) return "Imóvel";
     if (c.includes("moto")) return "Motocicletas";
+    if (["caminhao", "pesado", "trator", "maquina", "onibus", "agricol", "implemento"].some((t) => c.includes(t))) return "Pesados";
 
     return "Automóvel";
   }
@@ -547,19 +547,8 @@ export default function EstoqueContempladas() {
       const json = (await res.json()) as ExternalCota[];
       if (!Array.isArray(json)) throw new Error("A API externa não retornou uma lista válida.");
 
-      const min = parseBRNumber(minValue);
-      const max = parseBRNumber(maxValue);
-
-      const mapped = json
-        .map(mapExternalToCotaRow)
-        .filter((c) => {
-          if (statusFilter !== "all" && c.status !== statusFilter) return false;
-          if (segFilter !== "all" && c.segmento !== segFilter) return false;
-          if (adminFilter !== "all" && c.admin?.id !== adminFilter) return false;
-          if (minValue.trim() !== "" && Number(c.credito_disponivel || 0) < min) return false;
-          if (maxValue.trim() !== "" && Number(c.credito_disponivel || 0) > max) return false;
-          return true;
-        });
+      // Keep the full catalog for MAX; table filtering happens in the rows memo.
+      const mapped = json.map(mapExternalToCotaRow);
 
       setCotas(mapped);
     } catch (err: any) {
@@ -579,8 +568,6 @@ export default function EstoqueContempladas() {
     setLoading(true);
 
     try {
-      const effectiveStatus = !supportsTransferida && statusFilter === "transferida" ? "disponivel" : statusFilter;
-
       let q = supabase
         .from("stock_cotas")
         .select(
@@ -596,16 +583,6 @@ export default function EstoqueContempladas() {
         `
         )
         .order("created_at", { ascending: false });
-
-      if (effectiveStatus !== "all") q = q.eq("status", effectiveStatus);
-      if (segFilter !== "all") q = q.eq("segmento", segFilter);
-      if (adminFilter !== "all") q = q.eq("admin_id", adminFilter);
-
-      const min = parseBRNumber(minValue);
-      const max = parseBRNumber(maxValue);
-
-      if (minValue.trim() !== "") q = q.gte("credito_disponivel", min);
-      if (maxValue.trim() !== "") q = q.lte("credito_disponivel", max);
 
       const { data, error } = await q;
       if (error) throw error;
@@ -650,13 +627,7 @@ export default function EstoqueContempladas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, supportsTransferida, sourceMode]);
 
-  useEffect(() => {
-    if (sourceMode === "externo") loadExternalCotas();
-    else loadCotas();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segFilter, statusFilter, adminFilter]);
-
-  const rows = useMemo<CotaCalc[]>(() => {
+  const maxRows = useMemo<CotaCalc[]>(() => {
     return cotas
       .map((c) => {
         const pct = clampPct(commissionPct);
@@ -683,6 +654,19 @@ export default function EstoqueContempladas() {
           Number(a.credito_disponivel || 0) - Number(b.credito_disponivel || 0)
       );
   }, [cotas, commissionPct]);
+
+  const rows = useMemo<CotaCalc[]>(() => {
+    const min = parseBRNumber(minValue);
+    const max = parseBRNumber(maxValue);
+    return maxRows.filter((c) => {
+      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      if (segFilter !== "all" && c.segmento !== segFilter) return false;
+      if (adminFilter !== "all" && c.admin?.id !== adminFilter) return false;
+      if (minValue.trim() !== "" && c.credito_disponivel < min) return false;
+      if (maxValue.trim() !== "" && c.credito_disponivel > max) return false;
+      return true;
+    });
+  }, [maxRows, segFilter, statusFilter, adminFilter, minValue, maxValue]);
 
   function seguroVidaLabel(c: any) {
     const raw = c?.external_seguro_vida;
@@ -1146,8 +1130,8 @@ export default function EstoqueContempladas() {
 
   const selectedRows = useMemo(() => {
     const set = new Set(selectedIds);
-    return rows.filter((r) => set.has(r.id));
-  }, [rows, selectedIds]);
+    return maxRows.filter((r) => set.has(r.id));
+  }, [maxRows, selectedIds]);
 
   const sumText = useMemo(() => buildResumoText(selectedRows as any[]), [selectedRows]);
 
@@ -1324,9 +1308,24 @@ export default function EstoqueContempladas() {
 
   return (
     <div className="p-4 space-y-4 relative">
+      <MaxContempladas
+        key={sourceMode}
+        cotas={maxRows}
+        sourceMode={sourceMode}
+        onOpenCombination={(ids) => {
+          const selected = maxRows.filter((c) => ids.includes(c.id) && c.status === "disponivel");
+          if (selected.length !== ids.length || !selected.every((c) => matchesRule(c, getRuleFromRow(selected[0])))) {
+            showToast("Essa composição não está mais disponível. Atualize o estoque e tente novamente.");
+            return;
+          }
+          setSelectedIds(ids);
+          setAnchorRule(getRuleFromRow(selected[0]));
+          setOpenSum(true);
+        }}
+      />
       {toast ? <div className="fixed top-4 right-4 z-50 rounded-lg border bg-background/95 px-4 py-2 text-sm shadow-md">{toast}</div> : null}
 
-      <div className="fixed bottom-4 right-4 z-40 sm:bottom-5 sm:right-5">
+      <div className="fixed bottom-24 right-4 z-40 sm:bottom-24 sm:right-5">
         <Button
           onClick={() => setOpenSum(true)}
           disabled={selectedIds.length < 1}
@@ -1345,9 +1344,6 @@ export default function EstoqueContempladas() {
           </div>
 
           <div className="flex w-full sm:w-auto items-center gap-2">
-            <Button variant={showMax ? "default" : "outline"} onClick={() => setShowMax((value) => !value)}>
-              MAX · Inteligência
-            </Button>
             <Button variant="outline" onClick={() => loadActiveSource()} disabled={loading} className="flex-1 sm:flex-none">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
             </Button>
@@ -1367,22 +1363,6 @@ export default function EstoqueContempladas() {
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {showMax ? (
-            <MaxContempladas
-              cotas={rows}
-              sourceMode={sourceMode}
-              onOpenCombination={(ids) => {
-                const selected = rows.filter((c) => ids.includes(c.id) && c.status === "disponivel");
-                if (selected.length !== ids.length || !selected.every((c) => matchesRule(c, getRuleFromRow(selected[0])))) {
-                  showToast("Essa composição não está mais disponível. Atualize o estoque e tente novamente.");
-                  return;
-                }
-                setSelectedIds(ids);
-                setAnchorRule(getRuleFromRow(selected[0]));
-                setOpenSum(true);
-              }}
-            />
-          ) : null}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
             <div className="md:col-span-3">
               <Label>Origem do estoque</Label>
@@ -1391,6 +1371,7 @@ export default function EstoqueContempladas() {
                 onValueChange={(v: any) => {
                   setSelectedIds([]);
                   setAnchorRule(null);
+                  setCotas([]);
                   setSourceMode(v);
                 }}
               >
@@ -1431,6 +1412,7 @@ export default function EstoqueContempladas() {
                   <SelectItem value="all">Todos</SelectItem>
                   <SelectItem value="Automóvel">Automóvel</SelectItem>
                   <SelectItem value="Imóvel">Imóvel</SelectItem>
+                  <SelectItem value="Pesados">Pesados</SelectItem>
                   <SelectItem value="Motocicletas">Motocicletas</SelectItem>
                   <SelectItem value="Serviços">Serviços</SelectItem>
                 </SelectContent>

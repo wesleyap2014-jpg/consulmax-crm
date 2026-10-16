@@ -1,6 +1,7 @@
 // src/pages/EstoqueContempladas.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import MaxContempladas from "@/components/contempladas/MaxContempladas";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -315,6 +316,7 @@ export default function EstoqueContempladas() {
   });
 
   const [openSum, setOpenSum] = useState(false);
+  const [showMax, setShowMax] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [anchorRule, setAnchorRule] = useState<{
@@ -1343,6 +1345,9 @@ export default function EstoqueContempladas() {
           </div>
 
           <div className="flex w-full sm:w-auto items-center gap-2">
+            <Button variant={showMax ? "default" : "outline"} onClick={() => setShowMax((value) => !value)}>
+              MAX · Inteligência
+            </Button>
             <Button variant="outline" onClick={() => loadActiveSource()} disabled={loading} className="flex-1 sm:flex-none">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
             </Button>
@@ -1362,6 +1367,22 @@ export default function EstoqueContempladas() {
         </CardHeader>
 
         <CardContent className="space-y-4">
+          {showMax ? (
+            <MaxContempladas
+              cotas={rows}
+              sourceMode={sourceMode}
+              onOpenCombination={(ids) => {
+                const selected = rows.filter((c) => ids.includes(c.id) && c.status === "disponivel");
+                if (selected.length !== ids.length || !selected.every((c) => matchesRule(c, getRuleFromRow(selected[0])))) {
+                  showToast("Essa composição não está mais disponível. Atualize o estoque e tente novamente.");
+                  return;
+                }
+                setSelectedIds(ids);
+                setAnchorRule(getRuleFromRow(selected[0]));
+                setOpenSum(true);
+              }}
+            />
+          ) : null}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
             <div className="md:col-span-3">
               <Label>Origem do estoque</Label>

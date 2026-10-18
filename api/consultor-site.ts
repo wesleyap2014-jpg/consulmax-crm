@@ -1,3 +1,4 @@
+import { sendTransactionalEmail } from "./_email-smtp.js";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getAuthUser, supabaseAdmin } from "./_supabase";
 const slugs = /^[a-z0-9][a-z0-9-]{2,59}$/;
@@ -19,6 +20,16 @@ export default async function handler(req: VercelRequest,res: VercelResponse){
    const {data:owner}=await supabaseAdmin.from("users").select("id,nome,avatar_url,photo_url,cidade,uf,telefone,phone,is_active").eq("id",site.user_id).eq("is_active",true).maybeSingle();
    if(!owner) return res.status(404).json({error:"Página indisponível"});
    return res.status(200).json({site:publicSite(site,owner)});
+ }
+ if(req.method==="POST" && slug && req.body?.action==="visit"){
+   const token=String(req.body?.visitorToken||"");
+   if(!/^[a-zA-Z0-9_-]{20,100}$/.test(token)) return res.status(400).json({error:"Visita inválida"});
+   const {data:site}=await supabaseAdmin.from("consultor_sites").select("user_id").eq("slug",slug).eq("publicado",true).maybeSingle();
+   if(!site) return res.status(404).json({error:"Página indisponível"});
+   const {data:owner}=await supabaseAdmin.from("users").select("is_active").eq("id",site.user_id).maybeSingle();
+   if(!owner?.is_active) return res.status(404).json({error:"Página indisponível"});
+   await supabaseAdmin.from("consultor_site_visits").upsert({user_id:site.user_id,visitor_token:token,visited_on:new Date().toISOString().slice(0,10)},{onConflict:"user_id,visitor_token,visited_on",ignoreDuplicates:true});
+   return res.status(200).json({ok:true});
  }
  if(req.method==="POST" && slug){
    if(!slugs.test(slug)) return res.status(404).json({error:"Página não encontrada"});
@@ -46,8 +57,26 @@ export default async function handler(req: VercelRequest,res: VercelResponse){
      if(leadError) {console.error("[consultor-site] lead",leadError);return res.status(500).json({error:"Falha ao registrar solicitação"});}
      leadId=lead.id;
    }
-   const {error:submitError}=await supabaseAdmin.from("consultor_site_submissions").insert({user_id:owner.id,lead_id:leadId,nome,telefone,objetivo,valor_desejado:valor||null,origem_pagina:slug});
+   const {data:opp,error:oppError}=await supabaseAdmin.from("opportunities").insert({
+     lead_id:leadId,vendedor_id:owner.auth_user_id,owner_id:owner.auth_user_id,
+     estagio:"Novo",stage:"novo",segmento:objetivo,valor_credito:valor||0,
+     credito_desejado:valor||null,
+     observacao:"Nova solicitação recebida pelo Meu Site Comercial (/c/"+slug+")."
+   }).select("id").single();
+   if(oppError) {console.error("[consultor-site] opportunity",oppError);return res.status(500).json({error:"Falha ao criar oportunidade"});}
+   const {error:submitError}=await supabaseAdmin.from("consultor_site_submissions").insert({user_id:owner.id,lead_id:leadId,opportunity_id:opp.id,nome,telefone,objetivo,valor_desejado:valor||null,origem_pagina:slug});
    if(submitError) {console.error("[consultor-site] submission",submitError);return res.status(500).json({error:"Falha ao registrar solicitação"});}
+   const {data:recipient}=await supabaseAdmin.from("users").select("email,nome,is_active").eq("id",owner.id).maybeSingle();
+   if(recipient?.is_active && recipient.email) {
+     try {
+       await sendTransactionalEmail({
+         to:recipient.email,fromName:"Consulmax | Novo Lead",
+         subject:"Novo lead pelo seu Site Comercial — "+nome,
+         html:'<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:25px;color:#1E293F"><h2 style="color:#A11C27">Você recebeu uma nova oportunidade!</h2><p>Um visitante preencheu seu Site Comercial.</p><p><b>Nome:</b> '+nome.replace(/[&<>"]/g,"")+'</p><p><b>Objetivo:</b> '+objetivo+'</p><p><a href="https://crm.consulmaxconsorcios.com.br/oportunidades">Abrir oportunidades no CRM</a></p></div>',
+         text:"Novo lead no Site Comercial. Cliente: "+nome+"; objetivo: "+objetivo+". https://crm.consulmaxconsorcios.com.br/oportunidades"
+       });
+     } catch(mailError) {console.warn("[consultor-site] notification email failed",mailError);}
+   }
    return res.status(200).json({ok:true});
  }
  const me=await ownUser(req);
@@ -55,8 +84,19 @@ export default async function handler(req: VercelRequest,res: VercelResponse){
  if(req.method==="GET"){
    const {data:site,error}=await supabaseAdmin.from("consultor_sites").select("*").eq("user_id",me.id).maybeSingle();
    if(error) return res.status(500).json({error:"Erro ao carregar site"});
-   const {count}=await supabaseAdmin.from("consultor_site_submissions").select("id",{count:"exact",head:true}).eq("user_id",me.id);
-   return res.status(200).json({site,consultas:count||0,owner:{nome:me.nome,foto:me.avatar_url||me.photo_url}});
+   const [{count},{count:visits},{data:submissions}] = await Promise.all([
+     supabaseAdmin.from("consultor_site_submissions").select("id",{count:"exact",head:true}).eq("user_id",me.id),
+     supabaseAdmin.from("consultor_site_visits").select("id",{count:"exact",head:true}).eq("user_id",me.id),
+     supabaseAdmin.from("consultor_site_submissions").select("id,nome,objetivo,created_at,opportunity_id").eq("user_id",me.id).order("created_at",{ascending:false}).limit(1000)
+   ]);
+   const opportunityIds=(submissions||[]).map(x=>x.opportunity_id).filter(Boolean);
+   const opps:any[]=[];
+   for(let i=0;i<opportunityIds.length;i+=200){
+     const {data}=await supabaseAdmin.from("opportunities").select("id,stage,estagio,won_at").in("id",opportunityIds.slice(i,i+200));
+     opps.push(...(data||[]));
+   }
+   const wins=opps.filter(o=>o.won_at || ["ganho","fechado (ganho)"].includes(String(o.estagio||"").toLowerCase())).length;
+   return res.status(200).json({site,consultas:count||0,visitas:visits||0,vendas:wins,ultimosLeads:(submissions||[]).slice(0,10),owner:{nome:me.nome,foto:me.avatar_url||me.photo_url}});
  }
  if(req.method==="PUT"){
    const value=req.body||{};

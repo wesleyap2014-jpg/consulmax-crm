@@ -39,6 +39,8 @@ const AlterarSenha = React.lazy(() => import("./pages/AlterarSenha"));
 const MeuPerfil = React.lazy(() => import("./pages/MeuPerfilCascata"));
 const LinksUteis = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores = React.lazy(() => import("./pages/RankingVendedores"));
+const PublicConsultorSite = React.lazy(() => import("./pages/PublicConsultorSite"));
+const MeuSiteComercial = React.lazy(() => import("./pages/MeuSiteComercial"));
 const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));
 const PublicPonto = React.lazy(() => import("./pages/PublicPonto"));
 const PublicAgendaAttendance = React.lazy(() => import("./pages/PublicAgendaAttendance"));
@@ -76,6 +78,7 @@ function EB({ title, children }: { title?: string; children: React.ReactNode }) 
 
 export const router = createBrowserRouter([
   // ==== Rotas públicas ====
+  { path: "/c/:slug", element: withSuspense(<PublicConsultorSite />) },
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
@@ -113,6 +116,7 @@ export const router = createBrowserRouter([
           { index: true, element: withSuspense(<Inicio />) },
           { path: "inicio", element: withSuspense(<Inicio />) },
           { path: "perfil", element: withSuspense(<MeuPerfil />) },
+          { path: "meu-site-comercial", element: withSuspense(<MeuSiteComercial />) },
 
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
           { path: "oportunidades", element: withSuspense(<Oportunidades />) },

@@ -722,6 +722,11 @@ export default function MeuPerfil() {
         </Card>
       </div>
 
+      <div className="my-4 flex flex-col items-start justify-between gap-3 rounded-2xl border border-[#B5A573]/50 bg-[#1E293F] px-5 py-4 text-white md:flex-row md:items-center">
+        <div><strong>Meu Site Comercial</strong><p className="mt-1 text-sm text-white/75">Crie sua página pessoal com Sobre Mim e link exclusivo para captar leads.</p></div>
+        <a href="/meu-site-comercial" className="rounded-xl bg-[#A11C27] px-4 py-3 text-sm font-semibold text-white">Configurar meu site</a>
+      </div>
+
       <WeeklyPerformanceFeedback authUserId={profile.auth_user_id} />
 
       <Card className="overflow-hidden border-[#A11C27]/20 bg-white/95">

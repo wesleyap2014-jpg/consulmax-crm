@@ -18,8 +18,15 @@ async function notifyConsultorWhatsApp(recipient: {nome:string;telefone?:string|
  const rawNumber = digits(recipient.telefone || recipient.phone);
  const to = rawNumber.length === 11 ? "55" + rawNumber : rawNumber;
  if(!recipient.is_active || !/^\d{12,15}$/.test(to)) return {status:"skipped",detail:"Número do vendedor ausente ou inválido"};
- if(!token || !phoneId || !wabaId) return {status:"skipped",detail:"Configuração da Meta incompleta"};
- const query = new URL(META_GRAPH + "/" + wabaId + "/message_templates");
+ if(!token || !phoneId) return {status:"skipped",detail:"Configuração da Meta incompleta"};
+ let resolvedWabaId=wabaId;
+ if(!resolvedWabaId){
+   const info=await fetch(META_GRAPH+"/"+phoneId+"?fields=whatsapp_business_account",{headers:{Authorization:"Bearer "+token}});
+   const body=await info.json();
+   resolvedWabaId=String(body?.whatsapp_business_account?.id||"");
+ }
+ if(!resolvedWabaId) return {status:"skipped",detail:"Conta WhatsApp Business não localizada"};
+ const query = new URL(META_GRAPH + "/" + resolvedWabaId + "/message_templates");
  query.searchParams.set("fields","name,language,status,components");
  query.searchParams.set("limit","250");
  const definitionResponse = await fetch(query.toString(),{headers:{Authorization:"Bearer "+token}});

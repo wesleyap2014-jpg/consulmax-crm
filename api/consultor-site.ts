@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getAuthUser, supabaseAdmin } from "./_supabase";
 const slugs = /^[a-z0-9][a-z0-9-]{2,59}$/;
-const choices = ["Imóveis","Veículos","Agro","Máquinas e equipamentos","Serviços","Planejamento patrimonial","Investimentos"];
+const choices = ["Aquisição de Imóvel","Aquisição de Automóvel","Aposentadoria com Consórcio","Garantir o Futuro dos Filhos","Alavancagem Financeira","Alavancagem Patrimonial","Capital de Giro"];
 const digits = (v: unknown) => String(v || "").replace(/\D/g,"");
 const publicSite = (site: any, owner: any) => ({ slug:site.slug, nome:owner.nome, foto:owner.avatar_url || owner.photo_url || null, cidade:owner.cidade || null, uf:owner.uf || null, headline:site.headline, sobre_mim:site.sobre_mim, especialidades:site.especialidades, whatsapp:site.whatsapp || owner.telefone || owner.phone || null, instagram:site.instagram, linkedin:site.linkedin });
 async function ownUser(req: VercelRequest) {

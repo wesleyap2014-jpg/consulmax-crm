@@ -5,6 +5,46 @@ const slugs = /^[a-z0-9][a-z0-9-]{2,59}$/;
 const choices = ["Aquisição de Imóvel","Aquisição de Automóvel","Aposentadoria com Consórcio","Garantir o Futuro dos Filhos","Alavancagem Financeira","Alavancagem Patrimonial","Capital de Giro"];
 const objetivos = ["Imóveis","Veículos","Agro","Máquinas e equipamentos","Serviços","Planejamento patrimonial","Investimentos"];
 const digits = (v: unknown) => String(v || "").replace(/\D/g,"");
+
+const META_GRAPH = "https://graph.facebook.com/v21.0";
+const TEMPLATE_NAME = "novo_lead_site_comercial";
+function formatCurrency(value: number) {
+ return value > 0 ? new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(value) : "Não informado";
+}
+async function notifyConsultorWhatsApp(recipient: {nome:string;telefone?:string|null;phone?:string|null;is_active:boolean}, lead: {nome:string;objetivo:string;valor:number}) {
+ const token = process.env.META_WHATSAPP_TOKEN;
+ const phoneId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+ const wabaId = process.env.META_WHATSAPP_WABA_ID || process.env.META_WABA_ID || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+ const rawNumber = digits(recipient.telefone || recipient.phone);
+ const to = rawNumber.length === 11 ? "55" + rawNumber : rawNumber;
+ if(!recipient.is_active || !/^\d{12,15}$/.test(to)) return {status:"skipped",detail:"Número do vendedor ausente ou inválido"};
+ if(!token || !phoneId || !wabaId) return {status:"skipped",detail:"Configuração da Meta incompleta"};
+ const query = new URL(META_GRAPH + "/" + wabaId + "/message_templates");
+ query.searchParams.set("fields","name,language,status,components");
+ query.searchParams.set("limit","250");
+ const definitionResponse = await fetch(query.toString(),{headers:{Authorization:"Bearer "+token}});
+ const definition = await definitionResponse.json();
+ if(!definitionResponse.ok) throw new Error("Falha ao consultar modelos aprovados na Meta");
+ const template = (definition.data || []).find((m:any)=>m.name===TEMPLATE_NAME && m.language==="pt_BR" && m.status==="APPROVED");
+ if(!template) return {status:"skipped",detail:"Modelo não encontrado como aprovado em pt_BR"};
+ const body = (template.components || []).find((c:any)=>String(c.type).toUpperCase()==="BODY");
+ const variables = [...String(body?.text || "").matchAll(/{{\s*([^}]+)\s*}}/g)];
+ if(variables.length!==4) return {status:"skipped",detail:"O modelo aprovado não possui exatamente quatro variáveis no corpo"};
+ const texts = [String(recipient.nome || "Consultor").trim().split(/\s+/)[0], lead.nome, lead.objetivo, formatCurrency(lead.valor)];
+ const parameters = variables.map((match:any,i:number)=>{
+   const p:any={type:"text",text:texts[i]};
+   if(isNaN(Number(match[1]))) p.parameter_name=String(match[1]).trim();
+   return p;
+ });
+ const response = await fetch(META_GRAPH+"/"+phoneId+"/messages",{
+   method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},
+   body:JSON.stringify({messaging_product:"whatsapp",to,type:"template",template:{name:TEMPLATE_NAME,language:{code:"pt_BR"},components:[{type:"body",parameters}]}})
+ });
+ const result = await response.json();
+ if(!response.ok) throw new Error("Meta WhatsApp: "+JSON.stringify(result?.error || result).slice(0,300));
+ return {status:"sent",messageId:String(result.messages?.[0]?.id || "")};
+}
+
 const publicSite = (site: any, owner: any) => ({ slug:site.slug, nome:owner.nome, foto:owner.avatar_url || owner.photo_url || null, cidade:owner.cidade || null, uf:owner.uf || null, headline:site.headline, sobre_mim:site.sobre_mim, especialidades:(site.especialidades || []).filter((item: string) => choices.includes(item)), whatsapp:site.whatsapp || owner.telefone || owner.phone || null, instagram:site.instagram, linkedin:site.linkedin });
 async function ownUser(req: VercelRequest) {
  const {user}=await getAuthUser(req); if(!user) return null;
@@ -66,7 +106,7 @@ export default async function handler(req: VercelRequest,res: VercelResponse){
    if(oppError) {console.error("[consultor-site] opportunity",oppError);return res.status(500).json({error:"Falha ao criar oportunidade"});}
    const {error:submitError}=await supabaseAdmin.from("consultor_site_submissions").insert({user_id:owner.id,lead_id:leadId,opportunity_id:opp.id,nome,telefone,objetivo,valor_desejado:valor||null,origem_pagina:slug});
    if(submitError) {console.error("[consultor-site] submission",submitError);return res.status(500).json({error:"Falha ao registrar solicitação"});}
-   const {data:recipient}=await supabaseAdmin.from("users").select("email,nome,is_active").eq("id",owner.id).maybeSingle();
+   const {data:recipient}=await supabaseAdmin.from("users").select("email,nome,telefone,phone,is_active").eq("id",owner.id).maybeSingle();
    if(recipient?.is_active && recipient.email) {
      try {
        await sendTransactionalEmail({
@@ -76,6 +116,12 @@ export default async function handler(req: VercelRequest,res: VercelResponse){
          text:"Novo lead no Site Comercial. Cliente: "+nome+"; objetivo: "+objetivo+". https://crm.consulmaxconsorcios.com.br/oportunidades"
        });
      } catch(mailError) {console.warn("[consultor-site] notification email failed",mailError);}
+   }
+   if(recipient?.is_active){
+     try {
+       const waStatus = await notifyConsultorWhatsApp(recipient,{nome,objetivo,valor});
+       console.info("[consultor-site] WhatsApp template notification",waStatus);
+     } catch(waError) {console.warn("[consultor-site] WhatsApp notification failed",waError);}
    }
    return res.status(200).json({ok:true});
  }

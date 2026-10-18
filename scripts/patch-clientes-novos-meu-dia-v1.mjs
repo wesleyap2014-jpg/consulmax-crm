@@ -29,5 +29,39 @@ if (!home.includes('id: "client-registration:" + item.lead_id')) {
   home = home.replace(dayAnchor, dayBlock + dayAnchor);
 }
 
+
+/**
+ * A leitura de public.clientes pelo navegador obedece à RLS. O vendedor
+ * pode ver a venda, mas não necessariamente o cadastro criado por outro usuário.
+ * A API abaixo devolve apenas IDs confirmados no escopo autorizado.
+ * Em falha de verificação, não cria pendências potencialmente falsas.
+ */
+const legacyConfirmation = '    const clientRegistrationConfirmed = new Set(clientRegistrationClients.map((c) => String(c.lead_id || "")).filter(Boolean));';
+const correctedConfirmation = `    let clientRegistrationConfirmed = new Set<string>();
+    if (clientRegistrationLeadIds.length) {
+      try {
+        const { data: authSession } = await supabase.auth.getSession();
+        const token = authSession.session?.access_token;
+        if (!token) throw new Error("Sessão expirada");
+        const response = await fetch("/api/clientes/registration-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({ leadIds: clientRegistrationLeadIds }),
+        });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const registrationStatus = await response.json();
+        if (!Array.isArray(registrationStatus.confirmedLeadIds)) throw new Error("Resposta inválida");
+        clientRegistrationConfirmed = new Set(registrationStatus.confirmedLeadIds.map(String));
+      } catch (error) {
+        console.warn("[Inicio] Não foi possível verificar cadastros com segurança:", error);
+        // Falha fechada: nunca anunciar cadastro pendente sem confirmação confiável.
+        clientRegistrationConfirmed = new Set(clientRegistrationLeadIds);
+      }
+    }`;
+if (home.includes(legacyConfirmation)) home = home.replace(legacyConfirmation, correctedConfirmation);
+if (!home.includes('const clientRegistrationConfirmed =') && !home.includes('let clientRegistrationConfirmed =')) {
+  throw new Error("[clientes-novos-meu-dia] verificação de cadastros não encontrada");
+}
+
 fs.writeFileSync(homeFile, home);
 console.log("[clientes-novos-meu-dia] clientes com Preencher Cadastro adicionados ao Meu Dia");

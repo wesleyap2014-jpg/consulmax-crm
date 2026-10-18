@@ -7,6 +7,14 @@ export default function PublicConsultorSite(){
  const[form,setForm]=useState({nome:"",telefone:"",objetivo:"Imóveis",valor_desejado:"",consentimento:false,website:""});
  const[sending,setSending]=useState(false);const[done,setDone]=useState(false);const[sendError,setSendError]=useState("");
  useEffect(()=>{setLoading(true);fetch("/api/consultor-site?slug="+encodeURIComponent(slug||"")).then(async r=>{if(!r.ok)throw Error("Página indisponível");return r.json();}).then(data=>setSite(data.site)).catch(e=>setError(e.message)).finally(()=>setLoading(false));},[slug]);
+ useEffect(()=>{
+   if(!site?.slug)return;
+   const key="cmx-visit-token";
+   let token=window.sessionStorage.getItem(key);
+   if(!token){token=Array.from(crypto.getRandomValues(new Uint8Array(24))).map(n=>n.toString(16).padStart(2,"0")).join("");window.sessionStorage.setItem(key,token);}
+   fetch("/api/consultor-site?slug="+encodeURIComponent(site.slug),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"visit",visitorToken:token})}).catch(()=>{});
+ },[site?.slug]);
+
  async function submit(e:React.FormEvent){e.preventDefault();setSending(true);setSendError("");try{const r=await fetch("/api/consultor-site?slug="+encodeURIComponent(slug||""),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,valor_desejado:Number(form.valor_desejado||0)})});const data=await r.json();if(!r.ok)throw Error(data.error||"Não foi possível enviar");setDone(true);}catch(e:any){setSendError(e.message)}finally{setSending(false)}}
  const phone=(site?.whatsapp||"").replace(/\D/g,"");const wa=phone?(phone.startsWith("55")?phone:"55"+phone):"";
  if(loading)return <div className="min-h-screen flex items-center justify-center text-slate-600">Carregando apresentação...</div>;

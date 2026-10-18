@@ -824,7 +824,6 @@ export default function MeuPerfilCascata() {
         onSelect={setSelectedId}
         loading={loadingCascade}
       />
-      {isOwnProfile && <div className="mx-4 my-3 flex items-center justify-between gap-3 rounded-2xl border border-[#B5A573]/50 bg-[#1E293F] px-5 py-4 text-white"><div><strong className="text-base">Meu Site Comercial</strong><p className="mt-1 text-sm text-white/75">Configure sua apresentação pessoal, Sobre Mim e link de captação de leads.</p></div><button type="button" onClick={() => navigate("/meu-site-comercial")} className="shrink-0 rounded-xl bg-[#A11C27] px-4 py-3 text-sm font-semibold text-white">Configurar meu site</button></div>}
       {isOwnProfile ? <MeuPerfil /> : <PerfilPreposto key={effectiveSelectedId} profileId={effectiveSelectedId} />}
     </div>
   );

@@ -1,5 +1,6 @@
 // src/App.tsx
 import React from "react";
+import ConsultorLeadAlert from "@/components/ConsultorLeadAlert";
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/layout/Sidebar";
 import { Outlet, useLocation } from "react-router-dom";
@@ -21,6 +22,7 @@ export default function App() {
       <WhatsAppNotificationsProvider>
         <div className="min-h-screen w-full bg-white text-foreground">
           <Header />
+          <ConsultorLeadAlert />
 
           <div className="flex">
             {/* Sidebar fixa/colável (onNavigate fecha drawer no mobile, se houver) */}

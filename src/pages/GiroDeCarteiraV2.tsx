@@ -169,6 +169,35 @@ function Pill({ children, tone = "default" }: { children: React.ReactNode; tone?
   return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${cls}`}>{children}</span>;
 }
 
+
+// Dados estruturados de perfil não são observações comerciais.
+// Extrai apenas campos úteis e nunca renderiza CMX_JSON bruto.
+function cleanObservation(value?: string | null) {
+  const raw = String(value || "").trim();
+  if (!raw) return "Sem observações cadastradas.";
+  const marker = raw.indexOf("CMX_JSON:");
+  if (marker < 0 && !raw.startsWith("{")) return raw;
+  const prefix = marker > 0 ? raw.slice(0, marker).trim() : "";
+  const jsonText = marker >= 0 ? raw.slice(marker + "CMX_JSON:".length).trim() : raw;
+  try {
+    const profile = JSON.parse(jsonText);
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) return prefix || "Sem observações cadastradas.";
+    const parts: string[] = [];
+    const add = (label: string, value: unknown) => {
+      if (typeof value === "string" && value.trim()) parts.push(label + ": " + value.trim());
+    };
+    add("Perfil", profile.perfil);
+    const segmentos = Array.isArray(profile.segmentos) ? profile.segmentos.filter((v: unknown) => typeof v === "string" && v.trim()) : [];
+    if (segmentos.length) parts.push("Segmento: " + segmentos.join(", "));
+    else add("Segmento", profile.segmento_pf || profile.segmento_pj);
+    add("Cidade", profile.cidade);
+    add("Observação", profile.observacoes || profile.observacao);
+    return [prefix, ...parts].filter(Boolean).join(" • ") || "Sem observações cadastradas.";
+  } catch {
+    return prefix || "Dados de perfil cadastrados.";
+  }
+}
+
 function mapRows(rows: any[] | null | undefined) {
   const m = new Map<string, PersonRow>();
   (rows || []).forEach((r: any) => {
@@ -353,7 +382,7 @@ export default function GiroDeCarteiraV2() {
       const nome = first(cliente?.nome, item.cliente_nome, item.lead_nome, lead?.nome, item.nome) || "Cliente sem cadastro";
       const telefone = first(cliente?.telefone, item.telefone, lead?.telefone);
       const email = first(cliente?.email, item.email, lead?.email);
-      const observacoes = first(cliente?.observacoes, item.observacoes);
+      const observacoes = cleanObservation(first(cliente?.observacoes, item.observacoes));
       const carteira = Number(item.valor_carteira_ativa ?? item.carteira_ativa_total ?? item.carteira_total ?? 0) || 0;
       const faixa = first(item.faixa, item.segmento, item.categoria) || "Sem faixa";
       const due = toYMD(item.due_date || item.data_prevista || item.proximo_giro_em);
@@ -479,7 +508,7 @@ export default function GiroDeCarteiraV2() {
           <Kpi title="Carteira envolvida" value={fmtBRL(totalCarteira)} desc={`${hoje} giro(s) para hoje`} icon={<Wallet className="h-5 w-5" style={{ color: C.gold }} />} />
         </section>
 
-        <section className="rounded-[2rem] border border-white/70 bg-white/75 p-4 shadow-sm backdrop-blur-xl">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div className="space-y-3">
               <div>
@@ -521,62 +550,50 @@ export default function GiroDeCarteiraV2() {
             <p className="mt-1 text-sm text-slate-500">Não há tarefas para os filtros atuais.</p>
           </div>
         ) : (
-          <section className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
+          <section className="grid grid-cols-1 gap-3 min-[1900px]:grid-cols-2">
             {filtered.map((item) => {
               const st = statusInfo(item);
               const wa = waLink(item._telefone, buildWhatsAppMessage(item));
               return (
-                <article key={item._id} className="group relative overflow-hidden rounded-[2rem] border border-white/70 bg-white/90 shadow-sm backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_18px_60px_rgba(15,23,42,0.10)]">
-                  <div className={`absolute left-0 top-0 h-full w-1.5 ${st.stripe}`} />
-                  <div className="p-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="flex min-w-0 gap-3">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm" style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}>
+                <article key={item._id} className="group relative min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_3px_16px_rgba(30,41,63,0.04)] transition hover:border-slate-300 hover:shadow-[0_12px_28px_rgba(30,41,63,0.09)]">
+                  <div className={`absolute inset-y-0 left-0 w-1 ${st.stripe}`} />
+                  <div className="p-4 pl-5 sm:p-5 sm:pl-6">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#1E293F] text-sm font-bold text-white">
                           {initials(item._nome)}
                         </div>
                         <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="truncate text-lg font-semibold text-slate-950">{item._nome}</h3>
+                          <h3 className="break-words text-base font-semibold leading-snug text-[#1E293F]">{item._nome}</h3>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
                             <Pill tone={st.tone}>{st.label}</Pill>
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Pill tone="navy">{item._faixa}</Pill>
-                            <Pill>{fmtBRL(item._carteira)}</Pill>
-                            {item.periodicidade_meses ? <Pill>{item.periodicidade_meses} mês(es)</Pill> : null}
+                            <span className="text-xs text-slate-500">Previsto para {fmtDateBR(item._dueYMD)}</span>
                           </div>
                         </div>
                       </div>
-
-                      <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-right">
-                          <div className="flex items-center justify-end gap-1 text-[11px] uppercase tracking-wide text-slate-400"><CalendarClock className="h-3.5 w-3.5" />Data</div>
-                          <div className={`text-sm font-semibold ${st.text}`}>{fmtDateBR(item._dueYMD)}</div>
-                        </div>
-                        <button type="button" disabled={savingId === item._id} onClick={() => openRegistro(item)} className="inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-60" style={{ background: C.ruby }}>
-                          {savingId === item._id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                          Registrar
-                        </button>
+                      <button type="button" disabled={savingId === item._id} onClick={() => openRegistro(item)} className="inline-flex shrink-0 items-center justify-center gap-2 self-start rounded-xl bg-[#A11C27] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#851520] disabled:opacity-60 lg:self-auto">
+                        {savingId === item._id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                        Registrar giro
+                      </button>
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-slate-100 py-3 text-sm">
+                      <span className="text-slate-500">Faixa <strong className="ml-1 font-semibold text-slate-800">{item._faixa}</strong></span>
+                      <span className="text-slate-500">Carteira <strong className="ml-1 font-semibold text-slate-800">{fmtBRL(item._carteira)}</strong></span>
+                      {item.periodicidade_meses ? <span className="text-slate-500">Ciclo <strong className="ml-1 font-semibold text-slate-800">{item.periodicidade_meses} meses</strong></span> : null}
+                    </div>
+                    <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0 space-y-2 text-sm text-slate-600">
+                        <div className="flex items-center gap-2"><Phone className="h-4 w-4 shrink-0 text-slate-400" /><span>{item._telefone || "Sem telefone"}</span></div>
+                        <div className="flex min-w-0 items-center gap-2"><Mail className="h-4 w-4 shrink-0 text-slate-400" /><span className="min-w-0 break-all">{item._email || "Sem e-mail"}</span></div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        {wa ? <a href={wa} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 px-3 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50"><MessageCircle className="h-4 w-4" />WhatsApp</a> : null}
+                        {item._telefone ? <a href={`tel:${onlyDigits(item._telefone)}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"><Phone className="h-4 w-4" />Ligar</a> : null}
                       </div>
                     </div>
-
-                    <div className="mt-4 grid gap-3 xl:grid-cols-[1fr_1fr_auto]">
-                      <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
-                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Contato</div>
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2 text-sm text-slate-700"><Phone className="h-4 w-4 text-slate-400" /><span>{item._telefone || "Sem telefone"}</span></div>
-                          <div className="flex items-center gap-2 text-sm text-slate-700"><Mail className="h-4 w-4 text-slate-400" /><span className="truncate">{item._email || "Sem e-mail"}</span></div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
-                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Observações</div>
-                        <div className="line-clamp-3 text-sm text-slate-600">{item._observacoes || "Sem observações cadastradas."}</div>
-                      </div>
-
-                      <div className="flex flex-row gap-2 xl:w-40 xl:flex-col xl:justify-end">
-                        {wa ? <a href={wa} target="_blank" rel="noreferrer" className="inline-flex flex-1 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp</a> : null}
-                        {item._telefone ? <a href={`tel:${onlyDigits(item._telefone)}`} className="inline-flex flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"><Phone className="mr-2 h-4 w-4" />Ligar</a> : null}
-                      </div>
+                    <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Resumo do cliente</span>
+                      <p className="mt-1 line-clamp-2 break-words text-sm leading-relaxed text-slate-600" title={item._observacoes || ""}>{item._observacoes || "Sem observações cadastradas."}</p>
                     </div>
                   </div>
                 </article>
@@ -664,7 +681,7 @@ export default function GiroDeCarteiraV2() {
 
 function Kpi({ title, value, desc, icon }: { title: string; value: string; desc: string; icon: React.ReactNode }) {
   return (
-    <div className="rounded-3xl border border-white/70 bg-white/80 p-5 shadow-sm backdrop-blur-xl">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <div className="text-sm text-slate-500">{title}</div>
         {icon}

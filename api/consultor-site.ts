@@ -1,9 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getAuthUser, supabaseAdmin } from "./_supabase";
 const slugs = /^[a-z0-9][a-z0-9-]{2,59}$/;
-const choices = ["Imóveis","Veículos","Agro","Máquinas e equipamentos","Serviços","Planejamento patrimonial","Investimentos"];
+const choices = ["Aquisição de Imóvel","Aquisição de Automóvel","Aposentadoria com Consórcio","Garantir o Futuro dos Filhos","Alavancagem Financeira","Alavancagem Patrimonial","Capital de Giro"];
+const objetivos = ["Imóveis","Veículos","Agro","Máquinas e equipamentos","Serviços","Planejamento patrimonial","Investimentos"];
 const digits = (v: unknown) => String(v || "").replace(/\D/g,"");
-const publicSite = (site: any, owner: any) => ({ slug:site.slug, nome:owner.nome, foto:owner.avatar_url || owner.photo_url || null, cidade:owner.cidade || null, uf:owner.uf || null, headline:site.headline, sobre_mim:site.sobre_mim, especialidades:site.especialidades, whatsapp:site.whatsapp || owner.telefone || owner.phone || null, instagram:site.instagram, linkedin:site.linkedin });
+const publicSite = (site: any, owner: any) => ({ slug:site.slug, nome:owner.nome, foto:owner.avatar_url || owner.photo_url || null, cidade:owner.cidade || null, uf:owner.uf || null, headline:site.headline, sobre_mim:site.sobre_mim, especialidades:(site.especialidades || []).filter((item: string) => choices.includes(item)), whatsapp:site.whatsapp || owner.telefone || owner.phone || null, instagram:site.instagram, linkedin:site.linkedin });
 async function ownUser(req: VercelRequest) {
  const {user}=await getAuthUser(req); if(!user) return null;
  const {data}=await supabaseAdmin.from("users").select("id,auth_user_id,nome,email,is_active,avatar_url,photo_url,telefone,phone,role").eq("auth_user_id",user.id).maybeSingle();
@@ -26,7 +27,7 @@ export default async function handler(req: VercelRequest,res: VercelResponse){
    const telefone=digits(req.body?.telefone).slice(0,15);
    const objetivo=String(req.body?.objetivo||"").trim().slice(0,80);
    const valor=Number(req.body?.valor_desejado||0);
-   if(nome.length<3 || telefone.length<10 || telefone.length>15 || !choices.includes(objetivo) || !Number.isFinite(valor) || valor<0 || valor>1000000000 || req.body?.consentimento !== true)
+   if(nome.length<3 || telefone.length<10 || telefone.length>15 || !objetivos.includes(objetivo) || !Number.isFinite(valor) || valor<0 || valor>1000000000 || req.body?.consentimento !== true)
      return res.status(400).json({error:"Confira os dados e o consentimento."});
    const {data:site}=await supabaseAdmin.from("consultor_sites").select("user_id").eq("slug",slug).eq("publicado",true).maybeSingle();
    if(!site) return res.status(404).json({error:"Página indisponível"});

@@ -14,6 +14,8 @@ assert.match(parserSource, /imovei\|imovel\|residencial/);
 assert.match(parserSource, /readAssemblyAuditEvidence/);
 assert.match(parserSource, /rawPortalRows: rows/);
 assert.match(parserSource, /portalAudit/);
+assert.match(parserSource, /sem_lance_livre/);
+assert.match(parserSource, /fullDateKey/);
 
 const group = {
   grupo: "0634",
@@ -51,6 +53,18 @@ assert.equal(stats.maiorPct, 62.62);
 assert.equal(stats.quantidadeLancesLivres, 4);
 assert.equal(stats.quantidadeFixosDescartados, 6);
 assert.equal(stats.quantidadeContemplados, 10);
+
+const fixedOnlyRows = [
+  { cota: "831", tipo: "Sorteio", lancePct: "0,0000", data: "21/10/2026" },
+  { cota: "827", tipo: "Lance", lancePct: "35,0000", data: "21/10/2026" },
+  { cota: "832", tipo: "Lance", lancePct: "25,0000", data: "21/10/2026" },
+];
+const fixedOnlyStats = calculateAssemblyStats(fixedOnlyRows, [25, 35]);
+assert.equal(fixedOnlyStats.quantidadeLancesLivres, 0);
+assert.equal(fixedOnlyStats.quantidadeFixosDescartados, 2);
+assert.equal(fixedOnlyStats.menorPct, null);
+assert.equal(fixedOnlyStats.medianaPct, null);
+assert.equal(fixedOnlyStats.maiorPct, null);
 
 const malformedNestedTableRows = [
   { cota: "Grupo: 0634", tipo: "Grupo: 0634", lancePct: "634", data: "Grupo: 0634" },

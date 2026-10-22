@@ -81,13 +81,22 @@ source = replaceFunction(source, "configureSearch", `async function configureSea
     label: String(node.textContent || "").replace(/\\s+/g, " ").trim(),
   })));
   const dated = dateOptions
-    .map((option) => ({ ...option, parsed: parseReference(option.label) }))
-    .filter((option) => option.parsed && /^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(option.value))
-    .sort((a, b) => b.parsed.key - a.parsed.key);
+    .map((option) => {
+      const rawDate = String(option.value || option.label || "").trim();
+      const match = rawDate.match(/^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/);
+      const fullDateKey = match ? Number(match[3]) * 10000 + Number(match[2]) * 100 + Number(match[1]) : 0;
+      return { ...option, parsed: parseReference(option.label), fullDateKey };
+    })
+    .filter((option) => option.fullDateKey > 0)
+    .sort((a, b) => b.fullDateKey - a.fullDateKey);
   const latest = dated[0];
   if (!latest) throw new Error(\`Nenhuma data de assembleia foi encontrada para o grupo \${expectedGroup}.\`);
   await frame.locator("select#data").selectOption({ value: latest.value });
-  return { reference: latest.label, referenceKey: latest.parsed.key, assemblyDateValue: latest.value };
+  return {
+    reference: latest.label,
+    referenceKey: latest.fullDateKey,
+    assemblyDateValue: latest.value,
+  };
 }`);
 
 source = replaceFunction(source, "clickSearch", `async function clickSearch(frame) {

@@ -76,9 +76,9 @@ jobs:
           {
             echo "## Embracon Convert+ POC"
             echo ""
-            echo "- **Estado:** `$state`"
-            echo "- **Resultado técnico:** `$ok`"
-            echo "- **Destino seguro:** `$final_url`"
+            printf -- '- **Estado:** `%s`\n' "$state"
+            printf -- '- **Resultado técnico:** `%s`\n' "$ok"
+            printf -- '- **Destino seguro:** `%s`\n' "$final_url"
             echo ""
             case "$state" in
               returned_to_convert)

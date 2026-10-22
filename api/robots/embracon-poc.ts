@@ -30,6 +30,7 @@ const ACTIVE_STATES = new Set([
   "starting_browser",
   "browser_ready",
   "waiting_microsoft_login",
+  "submitting_login",
   "waiting_mfa",
   "monitor_warning",
 ]);

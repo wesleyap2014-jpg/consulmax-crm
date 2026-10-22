@@ -7,6 +7,8 @@ const LOGIN_URL = String(
   process.env.CONVERT_MICROSOFT_LOGIN_URL
   || "https://login.microsoftonline.com/d3b1fece-6695-49c0-8903-60fd690d0941/oauth2/v2.0/authorize?client_id=cfafb6bf-75bd-483b-8df2-dfdc568bbd1f&scope=openid%20profile%20offline_access&redirect_uri=https%3A%2F%2Fwww.convertmais.com.br%2FAdminConvertMais%2FConvertMaisWeb%2Flogin&client-request-id=029595db-37a9-4330-9de1-67344fff32c9&response_mode=fragment&response_type=code&x-client-SKU=msal.js.browser&x-client-VER=2.31.0&client_info=1&code_challenge=ihu1qzL8bmXN0vsSxFblF_2SMjzlv7YzzTjCUVqkB_4&code_challenge_method=S256&prompt=select_account&nonce=0b9189db-c66e-4c49-b486-1e4d63e9456b&state=eyJpZCI6IjFkMmEyMGExLTVhMTUtNGU2MC05MDQ4LWUzMDVlNWNiYTY1NiIsIm1ldGEiOnsiaW50ZXJhY3Rpb25UeXBlIjoicmVkaXJlY3QifX0%3D"
 ).trim();
+const USERNAME = String(process.env.CONVERT_ROBOT_USERNAME || "").trim();
+const PASSWORD = String(process.env.CONVERT_ROBOT_PASSWORD || "");
 const DATA_DIR = path.resolve(process.env.AREA_RESTRITA_DATA_DIR || "/data");
 const PROFILE_DIR = path.join(DATA_DIR, "embracon-chrome-profile");
 const STATUS_FILE = path.join(DATA_DIR, "embracon-poc-status.json");
@@ -28,7 +30,7 @@ function safeUrl(value) {
 
 async function setStatus(state, details = {}) {
   const payload = {
-    ok: !["error", "credentials_rejected", "convert_access_denied"].includes(state),
+    ok: !["error", "credentials_rejected", "password_expired", "convert_access_denied"].includes(state),
     service: "consulmax-embracon-poc",
     state,
     updatedAt: new Date().toISOString(),
@@ -54,36 +56,163 @@ async function waitForChrome() {
 }
 
 function classifyMicrosoftText(text) {
+  if (/password.*expired|senha.*expirad|update your password|alterar sua senha|change your password/i.test(text)) {
+    return "password_expired";
+  }
   if (/approve sign in request|aprovar solicita[cç][aã]o|authenticator|enter a code|insira um c[oó]digo|verifique sua identidade|verify your identity|help us protect your account|more information required/i.test(text)) {
     return "waiting_mfa";
   }
-  if (/your account or password is incorrect|senha.*incorret|password.*incorrect|we couldn't sign you in|n[aã]o foi poss[ií]vel entrar/i.test(text)) {
+  if (/your account or password is incorrect|senha.*incorret|password.*incorrect|we couldn't sign you in|n[aã]o foi poss[ií]vel entrar|incorrect username or password/i.test(text)) {
     return "credentials_rejected";
   }
-  return "waiting_microsoft_login";
+  if (/stay signed in|continuar conectado/i.test(text)) {
+    return "stay_signed_in";
+  }
+  return "microsoft_login";
+}
+
+async function clickFirstVisible(page, selectors) {
+  for (const selector of selectors) {
+    const locator = page.locator(selector).first();
+    if (await locator.isVisible().catch(() => false)) {
+      await locator.click({ timeout: 5000 });
+      return true;
+    }
+  }
+  return false;
+}
+
+async function driveAutomaticLogin(page, state) {
+  if (!USERNAME || !PASSWORD) {
+    return {
+      acted: false,
+      state: "error",
+      message: "Os secrets CONVERT_ROBOT_USERNAME/CONVERT_ROBOT_PASSWORD não chegaram ao navegador.",
+    };
+  }
+
+  const text = clean(await page.locator("body").innerText({ timeout: 3000 }).catch(() => ""));
+  const classification = classifyMicrosoftText(text);
+
+  if (classification === "waiting_mfa") {
+    return {
+      acted: false,
+      state: "waiting_mfa",
+      message: "Credenciais aceitas. Conclua a validação MFA da Microsoft no navegador remoto.",
+    };
+  }
+
+  if (classification === "password_expired") {
+    return {
+      acted: false,
+      state: "password_expired",
+      message: "A Microsoft informou que a senha da conta Embracon expirou e precisa ser alterada.",
+    };
+  }
+
+  if (classification === "credentials_rejected") {
+    return {
+      acted: false,
+      state: "credentials_rejected",
+      message: "A Microsoft rejeitou as credenciais armazenadas no GitHub.",
+    };
+  }
+
+  if (classification === "stay_signed_in") {
+    const clicked = await clickFirstVisible(page, ["#idBtn_Back", 'button:has-text("Não")', 'button:has-text("No")']);
+    if (clicked) {
+      state.stage = "stay_signed_in_handled";
+      state.lastActionAt = Date.now();
+      return {
+        acted: true,
+        state: "submitting_login",
+        message: "Login aceito. Concluindo o retorno ao Convert+.",
+      };
+    }
+  }
+
+  const useAnother = page.getByText(/use another account|usar outra conta/i).first();
+  if (!state.accountChoiceHandled && await useAnother.isVisible().catch(() => false)) {
+    await useAnother.click({ timeout: 5000 });
+    state.accountChoiceHandled = true;
+    state.stage = "account_choice";
+    state.lastActionAt = Date.now();
+    return {
+      acted: true,
+      state: "submitting_login",
+      message: "Selecionando a conta configurada para o robô Embracon.",
+    };
+  }
+
+  const email = page.locator('input[type="email"], input[name="loginfmt"], #i0116').first();
+  if (!state.emailSubmitted && await email.isVisible().catch(() => false)) {
+    await email.fill(USERNAME);
+    await clickFirstVisible(page, ["#idSIButton9", 'input[type="submit"]', 'button[type="submit"]']);
+    state.emailSubmitted = true;
+    state.stage = "email_submitted";
+    state.lastActionAt = Date.now();
+    return {
+      acted: true,
+      state: "submitting_login",
+      message: "Usuário Embracon enviado à Microsoft automaticamente.",
+    };
+  }
+
+  const password = page.locator('input[type="password"], input[name="passwd"], #i0118').first();
+  if (!state.passwordSubmitted && await password.isVisible().catch(() => false)) {
+    await password.fill(PASSWORD);
+    await clickFirstVisible(page, ["#idSIButton9", 'input[type="submit"]', 'button[type="submit"]']);
+    state.passwordSubmitted = true;
+    state.stage = "password_submitted";
+    state.lastActionAt = Date.now();
+    return {
+      acted: true,
+      state: "submitting_login",
+      message: "Senha Embracon enviada à Microsoft automaticamente.",
+    };
+  }
+
+  if (state.emailSubmitted || state.passwordSubmitted || (Date.now() - state.lastActionAt) < 7000) {
+    return {
+      acted: false,
+      state: "submitting_login",
+      message: "Aguardando a Microsoft concluir a autenticação automática.",
+    };
+  }
+
+  return {
+    acted: false,
+    state: "waiting_microsoft_login",
+    message: "Aguardando a tela de login Microsoft ficar disponível.",
+  };
 }
 
 async function monitor(chrome, browser) {
   let previousState = "";
   let previousUrl = "";
+  const auto = {
+    accountChoiceHandled: false,
+    emailSubmitted: false,
+    passwordSubmitted: false,
+    stage: "starting",
+    lastActionAt: 0,
+  };
 
   while (chrome.exitCode === null && chrome.signalCode === null) {
     try {
       const context = browser.contexts()[0];
-      const page = context?.pages()?.[0] || null;
+      const pages = context?.pages() || [];
+      const page = pages.find((candidate) => /microsoftonline\.com|convertmais\.com\.br/i.test(candidate.url())) || pages[0] || null;
       const currentUrl = page?.url() || "";
       const text = page ? clean(await page.locator("body").innerText({ timeout: 3000 }).catch(() => "")) : "";
 
       let state = "browser_ready";
       let message = "Navegador do POC Embracon iniciado.";
 
-      if (/login\.microsoftonline\.com/i.test(currentUrl)) {
-        state = classifyMicrosoftText(text);
-        message = state === "waiting_mfa"
-          ? "Credenciais aceitas. Conclua a validação MFA da Microsoft no navegador remoto."
-          : state === "credentials_rejected"
-            ? "A Microsoft rejeitou as credenciais informadas no navegador."
-            : "Faça o login Microsoft da Embracon no navegador remoto.";
+      if (/login\.microsoftonline\.com/i.test(currentUrl) && page) {
+        const automatic = await driveAutomaticLogin(page, auto);
+        state = automatic.state;
+        message = automatic.message;
       } else if (/convertmais\.com\.br/i.test(currentUrl)) {
         const denied = /access denied|acesso negado|forbidden|request rejected|not authorized/i.test(text);
         state = denied ? "convert_access_denied" : "returned_to_convert";
@@ -99,6 +228,8 @@ async function monitor(chrome, browser) {
           message,
           currentUrl: safeUrl(currentUrl),
           profileDirectory: PROFILE_DIR,
+          autoLogin: true,
+          autoStage: auto.stage,
         });
       }
     } catch (error) {
@@ -111,18 +242,23 @@ async function monitor(chrome, browser) {
       }
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 }
 
 async function main() {
+  if (!USERNAME || !PASSWORD) {
+    throw new Error("Credenciais Embracon não foram injetadas no navegador.");
+  }
+
   await fs.mkdir(PROFILE_DIR, { recursive: true });
   await fs.rm(path.join(PROFILE_DIR, "SingletonLock"), { force: true }).catch(() => null);
   await fs.rm(path.join(PROFILE_DIR, "SingletonSocket"), { force: true }).catch(() => null);
   await fs.rm(path.join(PROFILE_DIR, "SingletonCookie"), { force: true }).catch(() => null);
 
   await setStatus("starting_browser", {
-    message: "Iniciando navegador remoto do POC Embracon.",
+    message: "Iniciando navegador remoto e login automático do POC Embracon.",
+    autoLogin: true,
   });
 
   const chrome = spawn(CHROME_BIN, [

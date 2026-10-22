@@ -36,10 +36,10 @@ function stateMeta(state?: string) {
   if (state === "waiting_mfa") {
     return { label: "Aguardando MFA", className: "border-amber-200 bg-amber-50 text-amber-700", Icon: ShieldCheck };
   }
-  if (state === "waiting_microsoft_login") {
-    return { label: "Aguardando login", className: "border-blue-200 bg-blue-50 text-blue-700", Icon: LogIn };
+  if (state === "waiting_microsoft_login" || state === "submitting_login") {
+    return { label: state === "submitting_login" ? "Autenticando" : "Aguardando login", className: "border-blue-200 bg-blue-50 text-blue-700", Icon: LogIn };
   }
-  if (state === "credentials_rejected" || state === "convert_access_denied" || state === "error") {
+  if (state === "credentials_rejected" || state === "password_expired" || state === "convert_access_denied" || state === "error") {
     return { label: "Falha no POC", className: "border-red-200 bg-red-50 text-red-700", Icon: XCircle };
   }
   if (["queued", "starting", "starting_browser", "browser_ready", "monitor_warning"].includes(String(state || ""))) {

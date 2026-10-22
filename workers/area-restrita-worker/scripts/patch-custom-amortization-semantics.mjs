@@ -46,13 +46,33 @@ export function normalizeCustomAmortizationRule(result) {
 
   const mentionsOwnResources = /\\brecurso(?:s)? proprio(?:s)?\\b|\\blance proprio\\b|\\brecursos? do consorciado\\b/.test(contractualEvidence);
   const embeddedBidMention = /\\blance embutido\\b|\\brecurso(?:s)? embutido(?:s)?\\b|\\bparte embutida\\b|\\bvalor embutido\\b/;
-  const amortizationDestination = /amort|abat|redu|prazo|parcela|prestac|ordem inversa|antecip/;
-  const explicitAllocation = /\\b\\d{1,3}(?:[.,]\\d+)?\\s*%|\\bintegral(?:mente)?\\b|\\btotalidade\\b|\\b100\\s*%|\\btodo(?: o)? lance embutido\\b/;
-  const explicitlyRegulatesEmbeddedBid = evidenceFragments.some((fragment) =>
-    embeddedBidMention.test(fragment)
-    && amortizationDestination.test(fragment)
-    && explicitAllocation.test(fragment)
+  const explicitlySaysEmbeddedBidHasNoDistribution = evidenceFragments.some((fragment) =>
+    /(?:nao|sem)\\s+(?:define|definir|disciplina|disciplinar|menciona|mencionar|informa|informar|detalha|detalhar|especifica|especificar)[^.;]{0,160}(?:lance embutido|recurso embutido|parte embutida|valor embutido)/.test(fragment)
+    || /(?:lance embutido|recurso embutido|parte embutida|valor embutido)[^.;]{0,160}(?:nao|sem)\\s+(?:regra|distribuicao|percentual|tratamento|amortizacao)/.test(fragment)
   );
+
+  function hasExplicitEmbeddedBidDistribution(fragment) {
+    if (!embeddedBidMention.test(fragment)) return false;
+
+    const withoutUsageLimit = fragment
+      .replace(/(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido)[^.;]{0,120}(?:ate|limitad[oa] a)\\s+\\d{1,3}(?:[.,]\\d+)?\\s*%[^.;]{0,100}(?:credito|valor do credito)[^.;]*/g, " ")
+      .replace(/(?:utiliza(?:cao|do)?|usar|uso)[^.;]{0,80}(?:ate|limitad[oa] a)\\s+\\d{1,3}(?:[.,]\\d+)?\\s*%[^.;]{0,100}(?:credito|valor do credito)[^.;]*/g, " ");
+
+    if (!embeddedBidMention.test(withoutUsageLimit)) return false;
+
+    const allocationValue = /\\d{1,3}(?:[.,]\\d+)?\\s*%|integral(?:mente)?|totalidade|todo(?: o)? lance embutido/;
+    const destination = /prazo|parcela|prestac|ordem inversa|antecip|redu(?:z|cao)|abat|amort/;
+
+    return (
+      new RegExp(\`(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido).{0,120}(?:\${allocationValue.source}).{0,120}(?:\${destination.source})\`).test(withoutUsageLimit)
+      || new RegExp(\`(?:\${allocationValue.source}).{0,100}(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido).{0,120}(?:\${destination.source})\`).test(withoutUsageLimit)
+      || new RegExp(\`(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido).{0,120}(?:\${destination.source}).{0,120}(?:\${allocationValue.source})\`).test(withoutUsageLimit)
+    );
+  }
+
+  const explicitlyRegulatesEmbeddedBid =
+    !explicitlySaysEmbeddedBidHasNoDistribution
+    && evidenceFragments.some(hasExplicitEmbeddedBidDistribution);
 
   const originalLeIsValid = validDistribution(lePrazoPct, leParcelaPct);
   const llIsValid = validDistribution(llPrazoPct, llParcelaPct);

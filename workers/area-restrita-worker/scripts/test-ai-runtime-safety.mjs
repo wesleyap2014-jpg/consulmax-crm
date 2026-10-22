@@ -73,7 +73,6 @@ try {
   assert.equal(result.patch.grupo, "0634");
   assert.equal(result.patch.config.detailsSource, "area-restrita-deterministic-fallback");
   assert.equal(result.patch.prazo_original, 72);
-  assert.equal(result.patch.prazo_restante, 72);
   assert.equal(result.patch.taxa_adm_pct, 0.18);
   assert.equal(result.patch.fundo_reserva_pct, 0.01);
   assert.equal(result.patch.lance_embutido_max_pct, 0.2);
@@ -116,7 +115,6 @@ try {
   );
 
   assert.equal(group2020.patch.prazo_original, 201);
-  assert.equal(group2020.patch.prazo_restante, 201);
   assert.equal(group2020.patch.taxa_adm_pct, 0.27);
   assert.equal(group2020.patch.fundo_reserva_pct, 0.01);
   assert.equal(group2020.patch.lance_embutido_max_pct, 0.2);

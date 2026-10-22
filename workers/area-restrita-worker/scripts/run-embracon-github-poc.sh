@@ -161,7 +161,7 @@ while true; do
         echo "::notice title=POC Embracon::Autenticação retornou ao Convert+."
         exit 0
         ;;
-      credentials_rejected|convert_access_denied|error)
+      credentials_rejected|password_expired|convert_access_denied|error)
         FINALIZED="true"
         publish_runtime           "$state"           ""           "${message:-O POC Embracon terminou com erro.}"           "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
         echo "::error title=POC Embracon::${message:-Falha de autenticação.}"

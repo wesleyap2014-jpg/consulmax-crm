@@ -234,7 +234,7 @@ export default function AreaRestritaMaggi() {
     setNotice(null);
     try {
       const headers = await authHeaders();
-      const response = await fetch("/api/robots/area-restrita-maggi", {
+      const response = await fetch("/api/robots/area-restrita-maggi-queue", {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({ action: "sync" }),

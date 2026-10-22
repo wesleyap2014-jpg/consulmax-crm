@@ -28,6 +28,7 @@ type WorkerEnvelope = {
   syncRunning?: boolean;
   syncPid?: number | null;
   remoteUrl?: string;
+  githubRunUrl?: string;
   startedAt?: string;
   weeklySchedule?: {
     enabled?: boolean;
@@ -111,11 +112,14 @@ function dateTime(value: unknown) {
 }
 
 function stateInfo(state?: string, running?: boolean) {
-  if (running || state === "price_tables_syncing") {
-    return { label: "Sincronizando", tone: "amber", icon: Loader2 };
-  }
   if (state === "waiting_cloudflare") {
     return { label: "Aguardando Cloudflare", tone: "amber", icon: ShieldCheck };
+  }
+  if (state === "queued" || state === "starting") {
+    return { label: "Preparando runner", tone: "blue", icon: Loader2 };
+  }
+  if (running || state === "price_tables_syncing" || state === "assembly_results_syncing") {
+    return { label: "Sincronizando", tone: "amber", icon: Loader2 };
   }
   if (state === "cloudflare_rejected" || state === "login_not_confirmed") {
     return { label: "Ação necessária", tone: "red", icon: AlertTriangle };
@@ -284,10 +288,17 @@ export default function AreaRestritaMaggi() {
       });
     });
     if (status?.priceTableSyncError) result.unshift({ group: "Execução", message: status.priceTableSyncError });
+    if (
+      ["error", "price_tables_error", "cloudflare_rejected", "login_not_confirmed"].includes(String(status?.state || "")) &&
+      status?.message
+    ) {
+      result.unshift({ group: "Execução", message: status.message });
+    }
     return result.slice(0, 12);
   }, [status?.priceTableSyncError, worker?.manifest?.groups]);
 
-  const remoteUrl = worker?.remoteUrl || "https://consulmax-crm-production.up.railway.app";
+  const remoteUrl = worker?.remoteUrl || "";
+  const remoteReady = Boolean(remoteUrl);
 
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 pb-8">
@@ -331,11 +342,12 @@ export default function AreaRestritaMaggi() {
               </Button>
               <Button
                 variant="outline"
-                className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-                onClick={() => window.open(remoteUrl, "_blank", "noopener,noreferrer")}
+                className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white disabled:text-white/60"
+                onClick={() => remoteReady && window.open(remoteUrl, "_blank", "noopener,noreferrer")}
+                disabled={!remoteReady}
               >
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Navegador remoto
+                {remoteReady ? "Navegador remoto" : "Aguardando navegador"}
               </Button>
             </div>
           </div>
@@ -368,8 +380,12 @@ export default function AreaRestritaMaggi() {
               <p className="mt-1 text-sm text-amber-800">Abra o navegador remoto e marque “Verify you are human”. O robô continuará sozinho depois disso.</p>
             </div>
           </div>
-          <Button onClick={() => window.open(remoteUrl, "_blank", "noopener,noreferrer")} className="bg-amber-700 hover:bg-amber-800">
-            Abrir navegador
+          <Button
+            onClick={() => remoteReady && window.open(remoteUrl, "_blank", "noopener,noreferrer")}
+            disabled={!remoteReady}
+            className="bg-amber-700 hover:bg-amber-800"
+          >
+            Validar Cloudflare
           </Button>
         </div>
       )}
@@ -377,13 +393,13 @@ export default function AreaRestritaMaggi() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="border-white/60 bg-white/85 shadow-lg backdrop-blur-xl">
           <CardContent className="flex items-center gap-4 p-5">
-            <div className={`rounded-2xl border p-3 ${worker?.workerOnline ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+            <div className={`rounded-2xl border p-3 ${worker?.workerOnline ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
               <Server className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Worker Railway</p>
-              <p className="mt-1 text-xl font-bold text-slate-900">{worker?.workerOnline ? "Online" : loading ? "Consultando" : "Offline"}</p>
-              <p className="mt-1 text-xs text-slate-500">Serviço dedicado da Área Restrita</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">GitHub Runner</p>
+              <p className="mt-1 text-xl font-bold text-slate-900">{worker?.workerOnline ? "Em execução" : loading ? "Consultando" : "Em espera"}</p>
+              <p className="mt-1 text-xs text-slate-500">Runner efêmero da Área Restrita</p>
             </div>
           </CardContent>
         </Card>
@@ -422,7 +438,7 @@ export default function AreaRestritaMaggi() {
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Última atualização</p>
               <p className="mt-1 text-base font-bold text-slate-900">{dateTime(latestDetailsSync)}</p>
-              <p className="mt-1 text-xs text-slate-500">Próxima: {worker?.weeklySchedule?.next?.label || "sexta-feira"}</p>
+              <p className="mt-1 text-xs text-slate-500">Execução iniciada pelo CRM</p>
             </div>
           </CardContent>
         </Card>
@@ -463,9 +479,9 @@ export default function AreaRestritaMaggi() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Agendamento</p>
-                <p className="mt-2 font-semibold text-slate-900">{worker?.weeklySchedule?.next?.label || "Sexta-feira"}</p>
-                <p className="mt-1 text-sm text-slate-500">Fuso horário: {worker?.weeklySchedule?.timeZone || "America/Porto_Velho"}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Execução</p>
+                <p className="mt-2 font-semibold text-slate-900">GitHub Actions sob demanda</p>
+                <p className="mt-1 text-sm text-slate-500">Acionamento direto pelo CRM Consulmax</p>
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documentos ignorados</p>

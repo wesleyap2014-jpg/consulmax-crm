@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-IMAGE_NAME="consulmax-area-restrita-worker:github-poc"
-CONTAINER_NAME="consulmax-area-restrita-github-poc"
+IMAGE_NAME="consulmax-area-restrita-worker:github-runner"
+CONTAINER_NAME="consulmax-area-restrita-github-runner"
 ARTIFACT_DIR="${GITHUB_WORKSPACE:-$(pwd)}/workers/area-restrita-worker/artifacts/github-actions-poc"
 TUNNEL_LOG="${RUNNER_TEMP:-/tmp}/area-restrita-cloudflared.log"
 TUNNEL_PID=""
+TUNNEL_URL=""
 LAST_STATE=""
+FINALIZED="false"
 ROBOT_SECRET="${AREA_RESTRITA_ROBOT_SECRET:-$(openssl rand -hex 32)}"
 MAX_SECONDS="${AREA_RESTRITA_GITHUB_TIMEOUT_SECONDS:-9000}"
+RUNTIME_KEY="maggi"
+RUNTIME_STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+GITHUB_RUN_URL=""
+if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+  GITHUB_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+fi
 
 required_envs=(
   AREA_RESTRITA_PORTAL_URL
@@ -28,27 +36,92 @@ done
 
 mkdir -p "$ARTIFACT_DIR"
 
+publish_runtime() {
+  local state="$1"
+  local remote_url="${2:-}"
+  local message="${3:-}"
+  local finished_at="${4:-}"
+  local now expires_at run_id_json payload
+
+  now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  expires_at="$(date -u -d '+3 hours' +"%Y-%m-%dT%H:%M:%SZ")"
+  run_id_json="null"
+  if [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]]; then
+    run_id_json="${GITHUB_RUN_ID}"
+  fi
+
+  payload="$(jq -nc \
+    --arg key "$RUNTIME_KEY" \
+    --arg state "$state" \
+    --arg message "$message" \
+    --arg remote "$remote_url" \
+    --arg run_url "$GITHUB_RUN_URL" \
+    --arg started "$RUNTIME_STARTED_AT" \
+    --arg finished "$finished_at" \
+    --arg expires "$expires_at" \
+    --arg updated "$now" \
+    --argjson run_id "$run_id_json" \
+    '{
+      key: $key,
+      administradora: "maggi",
+      state: $state,
+      message: (if $message == "" then null else $message end),
+      remote_url: (if $remote == "" then null else $remote end),
+      github_run_id: $run_id,
+      github_run_url: (if $run_url == "" then null else $run_url end),
+      started_at: $started,
+      finished_at: (if $finished == "" then null else $finished end),
+      expires_at: $expires,
+      updated_at: $updated
+    }'
+  )"
+
+  curl --fail --silent --show-error \
+    --request POST \
+    --header "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+    --header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+    --header "Content-Type: application/json" \
+    --header "Prefer: resolution=merge-duplicates,return=minimal" \
+    --data "$payload" \
+    "${SUPABASE_URL%/}/rest/v1/area_restrita_runtime_sessions?on_conflict=key" \
+    >/dev/null
+}
+
 collect_artifacts() {
   set +e
   if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
     docker logs "$CONTAINER_NAME" >"$ARTIFACT_DIR/worker-container.log" 2>&1 || true
-    for file in       area-restrita-status.json       area-restrita-price-tables.json       area-restrita-assemblies.json       price-table-runner.log; do
+    for file in \
+      area-restrita-status.json \
+      area-restrita-price-tables.json \
+      area-restrita-assemblies.json \
+      price-table-runner.log; do
       docker cp "$CONTAINER_NAME:/data/$file" "$ARTIFACT_DIR/$file" >/dev/null 2>&1 || true
     done
   fi
 }
 
 cleanup() {
+  local exit_code=$?
   set +e
+
+  if [[ "$FINALIZED" != "true" ]]; then
+    publish_runtime       "error"       ""       "A execução do GitHub Runner foi interrompida antes da conclusão."       "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"       >/dev/null 2>&1 || true
+  fi
+
   collect_artifacts
   if [[ -n "$TUNNEL_PID" ]]; then
     kill "$TUNNEL_PID" >/dev/null 2>&1 || true
   fi
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+  return "$exit_code"
 }
 trap cleanup EXIT INT TERM
 
-echo "[area-restrita-github] Construindo a mesma imagem Docker usada pelo worker."
+publish_runtime "starting" "" "Preparando o GitHub Runner da Área Restrita Maggi."
+
+echo "[area-restrita-github] Construindo a imagem Docker do worker."
 docker build -t "$IMAGE_NAME" .
 
 docker_args=(
@@ -94,12 +167,13 @@ if [[ "$healthy" != "true" ]]; then
   exit 3
 fi
 
-echo "[area-restrita-github] Criando acesso remoto temporário protegido por Basic Auth."
+echo "[area-restrita-github] Criando acesso remoto temporário protegido."
 : >"$TUNNEL_LOG"
-docker run --rm --network host cloudflare/cloudflared:2026.10.3   tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3000   >"$TUNNEL_LOG" 2>&1 &
+docker run --rm --network host cloudflare/cloudflared:2026.10.3 \
+  tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3000 \
+  >"$TUNNEL_LOG" 2>&1 &
 TUNNEL_PID=$!
 
-TUNNEL_URL=""
 for _ in $(seq 1 90); do
   TUNNEL_URL="$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" | head -n 1 || true)"
   if [[ -n "$TUNNEL_URL" ]]; then
@@ -112,37 +186,36 @@ for _ in $(seq 1 90); do
 done
 
 if [[ -z "$TUNNEL_URL" ]]; then
-  echo "::error title=Falha no acesso remoto::Não foi possível obter a URL temporária do túnel."
-  sed -n '1,120p' "$TUNNEL_LOG" || true
+  echo "::error title=Falha no acesso remoto::Não foi possível criar o navegador remoto temporário."
   exit 4
 fi
 
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  echo "remote_url=$TUNNEL_URL" >>"$GITHUB_OUTPUT"
-fi
+publish_runtime   "starting"   "$TUNNEL_URL"   "Navegador remoto pronto. Abra a Área Restrita Maggi no CRM para continuar."
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
-    echo "## Área Restrita Maggi — acesso temporário"
-    echo ""
-    echo "- **URL:** $TUNNEL_URL"
-    echo "- **Usuário:** `consulmax`"
-    echo "- **Senha:** use o valor configurado no secret `AREA_RESTRITA_VNC_PASSWORD`."
-    echo "- O endereço existe somente durante esta execução."
-    echo "- Se o Cloudflare da Maggi aparecer, faça a validação nessa janela. O login será preenchido pelo worker após a validação."
+    printf '%s\n' "## Área Restrita Maggi"
+    printf '%s\n' ""
+    printf '%s\n' "- O navegador remoto foi publicado somente na área administrativa do CRM."
+    printf '%s\n' "- A URL temporária não é exibida nos logs deste workflow."
+    printf '%s\n' "- Se houver Cloudflare, use o botão **Validar Cloudflare** dentro do CRM."
   } >>"$GITHUB_STEP_SUMMARY"
 fi
 
-echo "::notice title=Validação Cloudflare Maggi::Abra $TUNNEL_URL e autentique com o usuário consulmax. A senha é o secret AREA_RESTRITA_VNC_PASSWORD."
+echo "::notice title=Área Restrita Maggi::Navegador remoto pronto. A validação do Cloudflare deve ser feita dentro do CRM."
 
-echo "[area-restrita-github] Disparando sincronização. O runner aguardará a autenticação se o Cloudflare solicitar validação."
+echo "[area-restrita-github] Disparando sincronização."
 http_code="$(
-  curl --silent --show-error     --output "${RUNNER_TEMP:-/tmp}/area-restrita-sync-response.json"     --write-out '%{http_code}'     --request POST     --header "Authorization: Bearer $ROBOT_SECRET"     http://127.0.0.1:3000/api/worker/sync
+  curl --silent --show-error \
+    --output "${RUNNER_TEMP:-/tmp}/area-restrita-sync-response.json" \
+    --write-out '%{http_code}' \
+    --request POST \
+    --header "Authorization: Bearer $ROBOT_SECRET" \
+    http://127.0.0.1:3000/api/worker/sync
 )"
 
 if [[ "$http_code" != "202" && "$http_code" != "409" ]]; then
   echo "::error title=Falha ao iniciar sincronização::Worker retornou HTTP $http_code."
-  cat "${RUNNER_TEMP:-/tmp}/area-restrita-sync-response.json" || true
   exit 5
 fi
 
@@ -151,12 +224,15 @@ while true; do
   now_epoch="$(date +%s)"
   elapsed="$((now_epoch - started_epoch))"
   if (( elapsed >= MAX_SECONDS )); then
-    echo "::error title=Tempo limite::A execução não terminou dentro do limite de $MAX_SECONDS segundos."
+    echo "::error title=Tempo limite::A execução não terminou dentro do limite configurado."
     exit 6
   fi
 
   payload="$(
-    curl --fail --silent --show-error       --header "Authorization: Bearer $ROBOT_SECRET"       http://127.0.0.1:3000/api/worker/status       || true
+    curl --fail --silent --show-error \
+      --header "Authorization: Bearer $ROBOT_SECRET" \
+      http://127.0.0.1:3000/api/worker/status \
+      || true
   )"
 
   if [[ -n "$payload" ]] && command -v jq >/dev/null 2>&1; then
@@ -166,15 +242,20 @@ while true; do
 
     if [[ "$state" != "$LAST_STATE" ]]; then
       echo "[area-restrita-github] estado=${state:-desconhecido} running=$running mensagem=${message:-—}"
+      publish_runtime "${state:-starting}" "$TUNNEL_URL" "${message:-Execução em andamento.}"
       LAST_STATE="$state"
     fi
 
     case "$state" in
       price_tables_synced)
+        FINALIZED="true"
+        publish_runtime           "price_tables_synced"           ""           "${message:-Sincronização concluída com sucesso.}"           "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
         echo "::notice title=Área Restrita Maggi::Sincronização concluída com sucesso."
         exit 0
         ;;
       price_tables_error|error|cloudflare_rejected|login_not_confirmed)
+        FINALIZED="true"
+        publish_runtime           "$state"           ""           "${message:-A execução terminou com erro.}"           "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
         echo "::error title=Área Restrita Maggi::${message:-A execução terminou com erro.}"
         exit 7
         ;;

@@ -361,14 +361,24 @@ export async function buildAiGroupPatch(groupRow, documents) {
       aiError = String(error?.message || error);
     }
   } else if (!apiKey) {
-    aiError = "OPENAI_API_KEY não configurada no Railway.";
+    aiError = "OPENAI_API_KEY não configurada no GitHub Runner.";
   } else {
     aiError = "Não foi possível formar o par Tabela de Preços + Termo de Aditamento.";
   }
 
   const result = ai?.result || null;
   const credits = result?.faixasCredito?.length >= 2 ? result.faixasCredito : deterministic.credits;
-  const prazoRules = result?.faixasPrazo?.length ? result.faixasPrazo : [];
+  const deterministicPrazoRules =
+    deterministic.planTerms.length > 0
+    && deterministic.adminRates.length > 0
+    && deterministic.reserveRates.length > 0
+      ? [{
+          prazo: Math.max(...deterministic.planTerms),
+          taxaAdmPct: deterministic.adminRates.at(-1),
+          fundoReservaPct: deterministic.reserveRates.at(-1),
+        }]
+      : [];
+  const prazoRules = result?.faixasPrazo?.length ? result.faixasPrazo : deterministicPrazoRules;
   const currentConfig = groupRow.config && typeof groupRow.config === "object" ? groupRow.config : {};
   const nextConfig = {
     ...currentConfig,
@@ -409,7 +419,13 @@ export async function buildAiGroupPatch(groupRow, documents) {
 
   const lanceOptions = result ? lanceOptionsFromAi(result.lancesPermitidos) : [];
   if (lanceOptions.length) nextConfig.lanceOptions = lanceOptions;
-  const maxEmbedded = result ? pctToFraction(result.maxLanceEmbutidoPct) : null;
+  const deterministicEmbedded = deterministic.embeddedRates.length
+    ? pctToFraction(Math.max(...deterministic.embeddedRates))
+    : null;
+  const maxEmbedded =
+    result?.maxLanceEmbutidoPct !== null && result?.maxLanceEmbutidoPct !== undefined
+      ? pctToFraction(result.maxLanceEmbutidoPct)
+      : deterministicEmbedded;
   if (maxEmbedded !== null) nextConfig.maxLanceEmbutidoPct = maxEmbedded;
   if (result?.lanceEmbutidoBase && result.lanceEmbutidoBase !== "nao_informado") {
     nextConfig.lanceEmbutidoBase = result.lanceEmbutidoBase;
@@ -442,16 +458,17 @@ export async function buildAiGroupPatch(groupRow, documents) {
   if (prazoRules.length) {
     const maxRule = [...prazoRules].sort((a, b) => a.prazo - b.prazo).at(-1);
     patch.prazo_original = maxRule.prazo;
+    patch.prazo_restante = maxRule.prazo;
     patch.taxa_adm_pct = pctToFraction(maxRule.taxaAdmPct);
     patch.fundo_reserva_pct = pctToFraction(maxRule.fundoReservaPct);
+  }
+  if (maxEmbedded !== null) {
+    patch.permite_lance_embutido = maxEmbedded > 0;
+    patch.lance_embutido_max_pct = maxEmbedded;
   }
   if (result) {
     const seguro = pctToFraction(result.seguroMensalPct);
     if (seguro !== null) patch.seguro_pct = seguro;
-    if (maxEmbedded !== null) {
-      patch.permite_lance_embutido = maxEmbedded > 0;
-      patch.lance_embutido_max_pct = maxEmbedded;
-    }
     patch.permite_lance_livre = result.lancesPermitidos.some((lance) => lance.tipo === "livre");
     patch.permite_lance_fixo = result.lancesPermitidos.some((lance) => lance.tipo === "fixo");
     const firstFixed = result.lancesPermitidos.find((lance) => lance.tipo === "fixo" && finite(lance.percentual) !== null);

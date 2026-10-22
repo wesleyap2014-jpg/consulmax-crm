@@ -458,7 +458,6 @@ export async function buildAiGroupPatch(groupRow, documents) {
   if (prazoRules.length) {
     const maxRule = [...prazoRules].sort((a, b) => a.prazo - b.prazo).at(-1);
     patch.prazo_original = maxRule.prazo;
-    patch.prazo_restante = maxRule.prazo;
     patch.taxa_adm_pct = pctToFraction(maxRule.taxaAdmPct);
     patch.fundo_reserva_pct = pctToFraction(maxRule.fundoReservaPct);
   }

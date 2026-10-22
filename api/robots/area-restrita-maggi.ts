@@ -145,9 +145,10 @@ async function markDispatchError(message: string) {
 
 async function dispatchGithubWorkflow() {
   if (!GITHUB_ACTIONS_TOKEN) {
-    throw new Error(
-      "GITHUB_ACTIONS_TOKEN não está configurado na Vercel.",
-    );
+    return {
+      dispatched: false,
+      reason: "Token do GitHub indisponível; execução seguirá pela fila automática.",
+    };
   }
 
   const response = await fetch(githubDispatchUrl(), {
@@ -163,7 +164,9 @@ async function dispatchGithubWorkflow() {
     signal: AbortSignal.timeout(20_000),
   });
 
-  if (response.status === 204) return;
+  if (response.status === 204) {
+    return { dispatched: true, reason: null };
+  }
 
   const raw = await response.text();
   let payload: any = {};
@@ -178,9 +181,10 @@ async function dispatchGithubWorkflow() {
     .trim()
     .slice(0, 600);
 
-  throw new Error(
-    `GitHub Actions recusou o disparo (HTTP ${response.status}): ${detail}`,
-  );
+  return {
+    dispatched: false,
+    reason: `Disparo direto indisponível (HTTP ${response.status}: ${detail}). A fila automática assumirá a execução.`,
+  };
 }
 
 function serializeSession(session: Record<string, any> | null) {
@@ -269,14 +273,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      await resetRuntimeSession("Aguardando o GitHub disponibilizar o runner.");
-      await dispatchGithubWorkflow();
+      await resetRuntimeSession("Solicitação registrada. Aguardando o GitHub Runner.");
+      const dispatch = await dispatchGithubWorkflow();
+
+      if (!dispatch.dispatched && admin) {
+        await admin
+          .from("area_restrita_runtime_sessions")
+          .update({
+            message:
+              "Solicitação na fila automática. O GitHub Runner verificará a fila em até 5 minutos.",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("key", SESSION_KEY);
+      }
 
       const session = await loadRuntimeSession();
       return res.status(202).json({
         ...serializeSession(session),
-        message:
-          "Robô da Área Restrita Maggi enviado ao GitHub Actions. A tela atualizará automaticamente.",
+        message: dispatch.dispatched
+          ? "Robô da Área Restrita Maggi enviado ao GitHub Actions. A tela atualizará automaticamente."
+          : "Solicitação registrada. O GitHub Runner iniciará automaticamente em até 5 minutos.",
+        dispatchMode: dispatch.dispatched ? "direct" : "queue",
       });
     } catch (error) {
       const message = String((error as Error)?.message || error);

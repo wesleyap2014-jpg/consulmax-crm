@@ -1,0 +1,61 @@
+name: Embracon Convert+ - Navegador Remoto POC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embracon-convert-remote-poc
+  cancel-in-progress: false
+
+jobs:
+  executar:
+    name: Executar POC Embracon com navegador remoto
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Verificar configuração
+        env:
+          AREA_RESTRITA_VNC_PASSWORD: ${{ secrets.AREA_RESTRITA_VNC_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=0
+          for name in AREA_RESTRITA_VNC_PASSWORD SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Secret ausente::Configure o secret $name no repositório."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Validar scripts do POC
+        working-directory: workers/area-restrita-worker
+        run: |
+          node --check src/embracon-remote-browser.mjs
+          bash -n scripts/start-embracon-remote.sh scripts/run-embracon-github-poc.sh
+
+      - name: Executar POC Embracon
+        working-directory: workers/area-restrita-worker
+        env:
+          AREA_RESTRITA_VNC_PASSWORD: ${{ secrets.AREA_RESTRITA_VNC_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: bash scripts/run-embracon-github-poc.sh
+
+      - name: Publicar diagnóstico técnico
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: embracon-convert-remote-poc
+          path: workers/area-restrita-worker/artifacts/embracon-remote-poc
+          if-no-files-found: warn
+          retention-days: 3

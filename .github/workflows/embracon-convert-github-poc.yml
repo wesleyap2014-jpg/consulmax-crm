@@ -1,0 +1,103 @@
+name: Embracon Convert+ - GitHub POC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embracon-convert-github-poc
+  cancel-in-progress: false
+
+jobs:
+  login-poc:
+    name: Testar autenticação Convert+
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Verificar configuração
+        env:
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
+        run: |
+          missing=0
+          for name in CONVERT_ROBOT_USERNAME CONVERT_ROBOT_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Secret ausente::Configure o secret $name no repositório."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Validar sintaxe do POC
+        working-directory: workers/area-restrita-worker
+        run: node --check scripts/run-embracon-convert-github-poc.mjs
+
+      - name: Construir imagem do navegador
+        working-directory: workers/area-restrita-worker
+        run: docker build -t consulmax-embracon-convert-poc .
+
+      - name: Testar login Microsoft e retorno ao Convert+
+        id: poc
+        working-directory: workers/area-restrita-worker
+        env:
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
+        run: |
+          mkdir -p artifacts/embracon-convert-poc
+          docker run --rm             --shm-size=2g             -e CONVERT_ROBOT_USERNAME             -e CONVERT_ROBOT_PASSWORD             -e CONVERT_POC_OUTPUT_PATH=/artifacts/embracon-convert-poc.json             -v "$PWD/artifacts/embracon-convert-poc:/artifacts"             consulmax-embracon-convert-poc             node /app/scripts/run-embracon-convert-github-poc.mjs
+
+      - name: Resumir resultado
+        if: always()
+        working-directory: workers/area-restrita-worker
+        run: |
+          result="artifacts/embracon-convert-poc/embracon-convert-poc.json"
+          if [ ! -f "$result" ]; then
+            echo "## Embracon Convert+ POC" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "O POC não gerou resultado estruturado." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          state="$(jq -r '.state // "desconhecido"' "$result")"
+          ok="$(jq -r '.ok // false' "$result")"
+          final_url="$(jq -r '.finalUrl // "—"' "$result")"
+
+          {
+            echo "## Embracon Convert+ POC"
+            echo ""
+            printf -- '- **Estado:** `%s`\n' "$state"
+            printf -- '- **Resultado técnico:** `%s`\n' "$ok"
+            printf -- '- **Destino seguro:** `%s`\n' "$final_url"
+            echo ""
+            case "$state" in
+              returned_to_convert)
+                echo "✅ Login Microsoft concluído e sessão retornou ao Convert+."
+                ;;
+              mfa_required)
+                echo "🟡 Credenciais aceitas. A Microsoft exige MFA; próximo passo é acoplar navegador remoto para aprovação manual."
+                ;;
+              credentials_rejected)
+                echo "❌ A Microsoft rejeitou as credenciais configuradas."
+                ;;
+              *)
+                echo "ℹ️ Consulte o artefato técnico para o estado seguro do POC."
+                ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar diagnóstico técnico
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: embracon-convert-github-poc
+          path: workers/area-restrita-worker/artifacts/embracon-convert-poc
+          if-no-files-found: warn
+          retention-days: 3

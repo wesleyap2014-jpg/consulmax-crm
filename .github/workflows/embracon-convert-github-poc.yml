@@ -2,6 +2,9 @@ name: Embracon Convert+ - GitHub POC
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - poc/embracon-convert-github
 
 permissions:
   contents: read

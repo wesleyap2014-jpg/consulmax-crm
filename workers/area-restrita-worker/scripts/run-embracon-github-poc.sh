@@ -22,6 +22,8 @@ required_envs=(
   AREA_RESTRITA_VNC_PASSWORD
   SUPABASE_URL
   SUPABASE_SERVICE_ROLE_KEY
+  CONVERT_ROBOT_USERNAME
+  CONVERT_ROBOT_PASSWORD
 )
 
 for name in "${required_envs[@]}"; do
@@ -95,7 +97,7 @@ publish_runtime "starting" "" "Preparando o GitHub Runner do POC Embracon."
 echo "[embracon-github] Construindo imagem Docker."
 docker build -t "$IMAGE_NAME" .
 
-docker run   --detach   --name "$CONTAINER_NAME"   --shm-size=2g   --publish 127.0.0.1:3000:3000   -e AREA_RESTRITA_VNC_PASSWORD   -e AREA_RESTRITA_WEEKLY_SYNC_ENABLED=false   -e AREA_RESTRITA_CHAIN_MAGGI_GROUPS=false   -e AREA_RESTRITA_RUN_ON_START=false   "$IMAGE_NAME"   bash /app/scripts/start-embracon-remote.sh   >/dev/null
+docker run   --detach   --name "$CONTAINER_NAME"   --shm-size=2g   --publish 127.0.0.1:3000:3000   -e AREA_RESTRITA_VNC_PASSWORD   -e CONVERT_ROBOT_USERNAME   -e CONVERT_ROBOT_PASSWORD   -e AREA_RESTRITA_WEEKLY_SYNC_ENABLED=false   -e AREA_RESTRITA_CHAIN_MAGGI_GROUPS=false   -e AREA_RESTRITA_RUN_ON_START=false   "$IMAGE_NAME"   bash /app/scripts/start-embracon-remote.sh   >/dev/null
 
 echo "[embracon-github] Aguardando navegador remoto."
 healthy=false
@@ -128,7 +130,7 @@ if [[ -z "$TUNNEL_URL" ]]; then
   exit 4
 fi
 
-publish_runtime   "starting"   "$TUNNEL_URL"   "Navegador remoto pronto. Abra o POC Embracon no CRM e faça o login Microsoft."
+publish_runtime   "starting"   "$TUNNEL_URL"   "Navegador remoto pronto. O robô está preenchendo o login Microsoft automaticamente."
 
 echo "::notice title=POC Embracon::Navegador remoto pronto na área administrativa do CRM."
 

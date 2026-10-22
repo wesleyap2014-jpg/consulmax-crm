@@ -27,9 +27,11 @@ jobs:
           AREA_RESTRITA_VNC_PASSWORD: ${{ secrets.AREA_RESTRITA_VNC_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
         run: |
           missing=0
-          for name in AREA_RESTRITA_VNC_PASSWORD SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+          for name in AREA_RESTRITA_VNC_PASSWORD SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY CONVERT_ROBOT_USERNAME CONVERT_ROBOT_PASSWORD; do
             if [ -z "${!name}" ]; then
               echo "::error title=Secret ausente::Configure o secret $name no repositório."
               missing=1
@@ -49,6 +51,8 @@ jobs:
           AREA_RESTRITA_VNC_PASSWORD: ${{ secrets.AREA_RESTRITA_VNC_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CONVERT_ROBOT_USERNAME: ${{ secrets.CONVERT_ROBOT_USERNAME }}
+          CONVERT_ROBOT_PASSWORD: ${{ secrets.CONVERT_ROBOT_PASSWORD }}
         run: bash scripts/run-embracon-github-poc.sh
 
       - name: Publicar diagnóstico técnico

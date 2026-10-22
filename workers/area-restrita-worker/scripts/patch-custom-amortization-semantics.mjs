@@ -47,7 +47,7 @@ export function normalizeCustomAmortizationRule(result) {
   const mentionsOwnResources = /\\brecurso(?:s)? proprio(?:s)?\\b|\\blance proprio\\b|\\brecursos? do consorciado\\b/.test(contractualEvidence);
   const embeddedBidMention = /\\blance embutido\\b|\\brecurso(?:s)? embutido(?:s)?\\b|\\bparte embutida\\b|\\bvalor embutido\\b/;
   const amortizationDestination = /amort|abat|redu|prazo|parcela|prestac|ordem inversa|antecip/;
-  const explicitAllocation = /\\b\\d{1,3}(?:[.,]\\d+)?\\s*%\\b|\\bintegral(?:mente)?\\b|\\btotalidade\\b|\\b100\\s*%\\b|\\btodo(?: o)? lance embutido\\b/;
+  const explicitAllocation = /\\b\\d{1,3}(?:[.,]\\d+)?\\s*%|\\bintegral(?:mente)?\\b|\\btotalidade\\b|\\b100\\s*%|\\btodo(?: o)? lance embutido\\b/;
   const explicitlyRegulatesEmbeddedBid = evidenceFragments.some((fragment) =>
     embeddedBidMention.test(fragment)
     && amortizationDestination.test(fragment)

@@ -96,7 +96,7 @@ fi
 
 echo "[area-restrita-github] Criando acesso remoto temporário protegido por Basic Auth."
 : >"$TUNNEL_LOG"
-docker run --rm --network host cloudflare/cloudflared:latest   tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3000   >"$TUNNEL_LOG" 2>&1 &
+docker run --rm --network host cloudflare/cloudflared:2026.10.3   tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3000   >"$TUNNEL_LOG" 2>&1 &
 TUNNEL_PID=$!
 
 TUNNEL_URL=""

@@ -1,0 +1,62 @@
+name: POC Área Restrita Maggi - GitHub Runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: area-restrita-maggi-github-poc
+  cancel-in-progress: false
+
+jobs:
+  executar:
+    name: Executar worker com validação manual do Cloudflare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Verificar configuração
+        env:
+          AREA_RESTRITA_PORTAL_URL: ${{ secrets.AREA_RESTRITA_PORTAL_URL }}
+          AREA_RESTRITA_USERNAME: ${{ secrets.AREA_RESTRITA_USERNAME }}
+          AREA_RESTRITA_PASSWORD: ${{ secrets.AREA_RESTRITA_PASSWORD }}
+          AREA_RESTRITA_VNC_PASSWORD: ${{ secrets.AREA_RESTRITA_VNC_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=0
+          for name in AREA_RESTRITA_PORTAL_URL AREA_RESTRITA_USERNAME AREA_RESTRITA_PASSWORD AREA_RESTRITA_VNC_PASSWORD SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Secret ausente::Configure o secret $name no repositório."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Executar Área Restrita Maggi
+        id: worker
+        working-directory: workers/area-restrita-worker
+        env:
+          AREA_RESTRITA_PORTAL_URL: ${{ secrets.AREA_RESTRITA_PORTAL_URL }}
+          AREA_RESTRITA_USERNAME: ${{ secrets.AREA_RESTRITA_USERNAME }}
+          AREA_RESTRITA_PASSWORD: ${{ secrets.AREA_RESTRITA_PASSWORD }}
+          AREA_RESTRITA_VNC_PASSWORD: ${{ secrets.AREA_RESTRITA_VNC_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AREA_RESTRITA_AI_MODEL: ${{ vars.AREA_RESTRITA_AI_MODEL }}
+        run: bash scripts/run-github-actions-poc.sh
+
+      - name: Publicar diagnóstico técnico
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: area-restrita-maggi-github-poc
+          path: workers/area-restrita-worker/artifacts/github-actions-poc
+          if-no-files-found: warn
+          retention-days: 3

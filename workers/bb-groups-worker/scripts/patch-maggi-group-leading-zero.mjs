@@ -61,29 +61,23 @@ source = source.replace(
 );
 
 source = source.replace(
-  `    const key = segmento + ":" + String(row.grupo || "");
-    if (row.is_active !== false && !activeKeys.has(key)) {`,
-  `    const key = segmento + ":" + normalizeGroupCode(row.grupo);
-    const existingConfig = row?.config && typeof row.config === "object" ? row.config : {};
-    const managedByAvailabilityRobot = existingConfig?.createdByAvailableGroupsRobot === true;
-    if (managedByAvailabilityRobot && row.is_active !== false && !activeKeys.has(key)) {`,
-);
-
-source = source.replace(
-  `      const existingConfig = row?.config && typeof row.config === "object" ? row.config : {};
-      const { error } = await deps.supabase`,
-  `      const { error } = await deps.supabase`,
+  `    const key = segmento + ":" + String(row.grupo || "");`,
+  `    const key = segmento + ":" + normalizeGroupCode(row.grupo);`,
 );
 
 const requiredMarkers = [
   'return normalized.length === 3 ? normalized.padStart(4, "0") : normalized;',
   "const group = normalizeGroupCode(rawGroup);",
   "createdByAvailableGroupsRobot: true",
-  "const managedByAvailabilityRobot = existingConfig?.createdByAvailableGroupsRobot === true;",
+  "const key = segmento + \":\" + normalizeGroupCode(row.grupo);",
+  "if (row.is_active !== false && !activeKeys.has(key)) {",
 ];
 for (const marker of requiredMarkers) {
   if (!source.includes(marker)) throw new Error(`Correção Maggi incompleta: ${marker}`);
 }
+if (source.includes("managedByAvailabilityRobot")) {
+  throw new Error("Registros legados não podem permanecer ativos quando somem da lista disponível.");
+}
 
 fs.writeFileSync(filePath, source);
-console.log("Grupos Maggi preservam zero à esquerda e registros legados não são desativados pelo robô de disponibilidade.");
+console.log("Grupos Maggi preservam zero à esquerda e ausentes são desativados após sincronização bem-sucedida do segmento.");

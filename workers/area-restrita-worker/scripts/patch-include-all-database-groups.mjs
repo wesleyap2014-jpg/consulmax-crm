@@ -6,7 +6,7 @@ let source = fs.readFileSync(file, "utf8");
 
 source = source.replace(
   'const endpoint = `${config.url}/rest/v1/sim_maggi_groups?select=id,grupo,segmento,config&is_active=eq.true&order=grupo.asc`;',
-  'const endpoint = `${config.url}/rest/v1/sim_maggi_groups?select=*&order=grupo.asc`;',
+  'const endpoint = `${config.url}/rest/v1/sim_maggi_groups?select=*&is_active=eq.true&order=grupo.asc`;',
 );
 
 if (!source.includes("function selectDatabaseGroups(rows)")) {
@@ -32,7 +32,6 @@ if (!source.includes("function selectDatabaseGroups(rows)")) {
     + creditRanges * 300
     + prazoRules * 200
     + meaningfulTopLevel * 50
-    + (row?.is_active !== false ? 20 : 0)
     + (config?.createdByAvailableGroupsRobot === true ? 0 : 5);
 }
 
@@ -41,6 +40,7 @@ function selectDatabaseGroups(rows) {
   const duplicates = [];
 
   for (const row of Array.isArray(rows) ? rows : []) {
+    if (row?.is_active === false) continue;
     const group = canonicalGroupNumber(row?.grupo);
     if (!group) continue;
     const candidate = { ...row, grupo: group };
@@ -68,7 +68,7 @@ const newMap = `  const databaseSelection = selectDatabaseGroups(active.rows);
   const activeMap = new Map(databaseSelection.rows.map((row) => [canonicalGroupNumber(row.grupo), row]));`;
 if (source.includes(oldMap)) source = source.replace(oldMap, newMap);
 if (!source.includes("const databaseSelection = selectDatabaseGroups(active.rows);")) {
-  throw new Error("Não foi possível ampliar a seleção para todos os grupos do banco.");
+  throw new Error("Não foi possível deduplicar os grupos ativos da Maggi.");
 }
 
 source = source.replace(
@@ -78,18 +78,19 @@ source = source.replace(
     selectedDatabaseGroups: databaseSelection.rows.map((row) => ({
       id: row.id,
       grupo: row.grupo,
-      active: row.is_active !== false,
+      active: true,
       source: row?.config?.source || null,
-      selectionReason:
-        row?.config?.createdByAvailableGroupsRobot === true
-          ? "created_by_available_groups_robot"
-          : "existing_database_group",
+      selectionReason: "active_database_group",
     })),
     duplicateDatabaseGroups: databaseSelection.duplicates,`,
 );
 
-source = source.replaceAll("tabela(s) de grupos ativos", "documento(s) de grupos cadastrados no banco");
-source = source.replaceAll("active_group_without_matching_pdf", "database_group_without_matching_pdf");
+if (!source.includes("is_active=eq.true")) {
+  throw new Error("A Área Restrita deve consultar somente grupos Maggi ativos.");
+}
+if (source.includes("select=*&order=grupo.asc")) {
+  throw new Error("Filtro de grupos ativos foi removido indevidamente.");
+}
 
 fs.writeFileSync(file, source);
-console.log("Área Restrita ampliada para todos os grupos Maggi existentes no banco, com deduplicação canônica.");
+console.log("Área Restrita limitada aos grupos Maggi ativos do banco, com deduplicação canônica.");

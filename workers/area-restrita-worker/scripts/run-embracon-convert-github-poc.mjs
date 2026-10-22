@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
+import { checkMicrosoftLogin } from "../src/convert-microsoft-login-check.mjs";
 
 const ENTRY_URL = String(
   process.env.CONVERT_PORTAL_URL
@@ -131,12 +132,31 @@ async function main() {
     if (!microsoftReached) {
       const text = await bodyText(page);
       const denied = /access denied|acesso negado|forbidden|request rejected|not authorized/i.test(text);
+      if (denied) {
+        await browser?.close().catch(() => null);
+        browser = null;
+
+        const fallback = await checkMicrosoftLogin();
+        const result = {
+          ...fallback,
+          checkedAt: fallback.checkedAt || new Date().toISOString(),
+          strategy: "direct_microsoft_oauth_fallback",
+          initialConvertState: "convert_access_denied",
+          finalUrl: safeUrl(fallback.finalUrl),
+        };
+        await writeResult(result);
+        console.log(`[embracon-poc] ${result.state} strategy=${result.strategy}`);
+        process.exitCode = result.state === "credentials_rejected" ? 4 : result.ok ? 0 : 3;
+        return;
+      }
+
       const result = {
         ok: false,
-        state: denied ? "convert_access_denied" : "microsoft_login_not_reached",
+        state: "microsoft_login_not_reached",
         checkedAt: new Date().toISOString(),
         httpStatus: first?.status() || null,
         finalUrl: safeUrl(page.url()),
+        strategy: "convert_entrypoint",
       };
       await writeResult(result);
       console.log(`[embracon-poc] ${result.state}`);

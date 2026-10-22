@@ -37,15 +37,42 @@ export function normalizeCustomAmortizationRule(result) {
   let llPrazoPct = customFraction(original.llPrazoPct);
   let llParcelaPct = customFraction(original.llParcelaPct);
 
-  const contractualEvidence = [
+  const evidenceFragments = [
     result.regraPosContemplacaoDescricao,
     ...evidenceFor(result, "regraPosContemplacao").map((item) => item.trecho),
     ...evidenceFor(result, "customRule").map((item) => item.trecho),
-  ].map(normalizeContractText).filter(Boolean).join(" ");
+  ].map(normalizeContractText).filter(Boolean);
+  const contractualEvidence = evidenceFragments.join(" ");
 
   const mentionsOwnResources = /\\brecurso(?:s)? proprio(?:s)?\\b|\\blance proprio\\b|\\brecursos? do consorciado\\b/.test(contractualEvidence);
-  const explicitlyRegulatesEmbeddedBid = /\\blance embutido\\b|\\brecurso(?:s)? embutido(?:s)?\\b|\\bparte embutida\\b|\\bvalor embutido\\b/.test(contractualEvidence)
-    && /amort|abat|redu|prazo|parcela|prestac/.test(contractualEvidence);
+  const embeddedBidMention = /\\blance embutido\\b|\\brecurso(?:s)? embutido(?:s)?\\b|\\bparte embutida\\b|\\bvalor embutido\\b/;
+  const explicitlySaysEmbeddedBidHasNoDistribution = evidenceFragments.some((fragment) =>
+    /(?:nao|sem)\\s+(?:define|definir|disciplina|disciplinar|menciona|mencionar|informa|informar|detalha|detalhar|especifica|especificar)[^.;]{0,160}(?:lance embutido|recurso embutido|parte embutida|valor embutido)/.test(fragment)
+    || /(?:lance embutido|recurso embutido|parte embutida|valor embutido)[^.;]{0,160}(?:nao|sem)\\s+(?:regra|distribuicao|percentual|tratamento|amortizacao)/.test(fragment)
+  );
+
+  function hasExplicitEmbeddedBidDistribution(fragment) {
+    if (!embeddedBidMention.test(fragment)) return false;
+
+    const withoutUsageLimit = fragment
+      .replace(/(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido)[^.;]{0,120}(?:ate|limitad[oa] a)\\s+\\d{1,3}(?:[.,]\\d+)?\\s*%[^.;]{0,100}(?:credito|valor do credito)[^.;]*/g, " ")
+      .replace(/(?:utiliza(?:cao|do)?|usar|uso)[^.;]{0,80}(?:ate|limitad[oa] a)\\s+\\d{1,3}(?:[.,]\\d+)?\\s*%[^.;]{0,100}(?:credito|valor do credito)[^.;]*/g, " ");
+
+    if (!embeddedBidMention.test(withoutUsageLimit)) return false;
+
+    const allocationValue = /\\d{1,3}(?:[.,]\\d+)?\\s*%|integral(?:mente)?|totalidade|todo(?: o)? lance embutido/;
+    const destination = /prazo|parcela|prestac|ordem inversa|antecip|redu(?:z|cao)|abat|amort/;
+
+    return (
+      new RegExp(\`(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido).{0,120}(?:\${allocationValue.source}).{0,120}(?:\${destination.source})\`).test(withoutUsageLimit)
+      || new RegExp(\`(?:\${allocationValue.source}).{0,100}(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido).{0,120}(?:\${destination.source})\`).test(withoutUsageLimit)
+      || new RegExp(\`(?:lance embutido|recurso(?:s)? embutido(?:s)?|parte embutida|valor embutido).{0,120}(?:\${destination.source}).{0,120}(?:\${allocationValue.source})\`).test(withoutUsageLimit)
+    );
+  }
+
+  const explicitlyRegulatesEmbeddedBid =
+    !explicitlySaysEmbeddedBidHasNoDistribution
+    && evidenceFragments.some(hasExplicitEmbeddedBidDistribution);
 
   const originalLeIsValid = validDistribution(lePrazoPct, leParcelaPct);
   const llIsValid = validDistribution(llPrazoPct, llParcelaPct);
@@ -84,7 +111,7 @@ if (!source.includes(helperMarker)) {
 }
 
 const promptAnchor = `- Lance embutido é distinto de lance fixo. Liste lance livre, lances fixos, limitado e fidelidade separadamente.`;
-const promptReplacement = `- Em customRule, LE significa Lance Embutido e LL significa Lance Livre/Próprio.\n- Expressões como "recurso próprio", "recursos próprios" ou "lance próprio" pertencem exclusivamente aos campos llPrazoPct e llParcelaPct, salvo quando o texto mencionar expressamente também o Lance Embutido.\n- Nunca transfira para o Lance Embutido uma regra que o documento limite ao recurso próprio do consorciado.\n${promptAnchor}`;
+const promptReplacement = `- Em customRule, LE significa Lance Embutido e LL significa Lance Livre/Próprio.\n- Expressões como "recurso próprio", "recursos próprios" ou "lance próprio" pertencem exclusivamente aos campos llPrazoPct e llParcelaPct, salvo quando o texto mencionar expressamente também o Lance Embutido.\n- Nunca transfira para o Lance Embutido uma regra que o documento limite ao recurso próprio do consorciado.\n- Regra operacional Consulmax: quando o documento não definir expressamente a distribuição do Lance Embutido entre prazo e parcela, considere lePrazoPct = 1 e leParcelaPct = 0 (100% do LE abate prazo). Só use outra distribuição quando houver disposição expressa para o Lance Embutido.\n${promptAnchor}`;
 if (!source.includes("Expressões como \"recurso próprio\"")) {
   if (!source.includes(promptAnchor)) throw new Error("Âncora do prompt de customRule não encontrada.");
   source = source.replace(promptAnchor, promptReplacement);
@@ -97,6 +124,47 @@ if (!source.includes("Classifique cada grupo individualmente")) {
     throw new Error("Âncora das opções de regra pós-contemplação não encontrada.");
   }
   source = source.replace(postContemplationPromptAnchor, postContemplationPromptReplacement);
+}
+
+const currentConfigAnchor = `  const currentConfig = groupRow.config && typeof groupRow.config === "object" ? groupRow.config : {};
+  const nextConfig = {`;
+const currentConfigReplacement = `  const currentConfig = groupRow.config && typeof groupRow.config === "object" ? groupRow.config : {};
+  const effectiveCustomRule = {
+    regraPosContemplacao: result?.regraPosContemplacao || groupRow.regra_pos_contemplacao || null,
+    regraPosContemplacaoDescricao: result?.regraPosContemplacaoDescricao || currentConfig.customRuleNotes || "",
+    customRule: result?.customRule || currentConfig.customRule || null,
+    evidencias: Array.isArray(result?.evidencias) ? result.evidencias : [],
+    alertas: [],
+  };
+  normalizeCustomAmortizationRule(effectiveCustomRule);
+  const nextConfig = {`;
+
+if (source.includes(currentConfigAnchor)) {
+  source = source.replace(currentConfigAnchor, currentConfigReplacement);
+}
+
+const rawCustomBlock = `  if (result?.regraPosContemplacao === "custom") {
+    nextConfig.customRule = {
+      lePrazoPct: finite(result.customRule?.lePrazoPct) ?? 0,
+      leParcelaPct: finite(result.customRule?.leParcelaPct) ?? 0,
+      llPrazoPct: finite(result.customRule?.llPrazoPct) ?? 0,
+      llParcelaPct: finite(result.customRule?.llParcelaPct) ?? 0
+    };
+  }`;
+const normalizedCustomBlock = `  if (effectiveCustomRule.regraPosContemplacao === "custom" && effectiveCustomRule.customRule) {
+    nextConfig.customRule = {
+      lePrazoPct: finite(effectiveCustomRule.customRule?.lePrazoPct) ?? 1,
+      leParcelaPct: finite(effectiveCustomRule.customRule?.leParcelaPct) ?? 0,
+      llPrazoPct: finite(effectiveCustomRule.customRule?.llPrazoPct) ?? 0,
+      llParcelaPct: finite(effectiveCustomRule.customRule?.llParcelaPct) ?? 0
+    };
+  }`;
+if (source.includes(rawCustomBlock)) {
+  source = source.replace(rawCustomBlock, normalizedCustomBlock);
+}
+
+if (!source.includes("const effectiveCustomRule = {") || !source.includes("finite(effectiveCustomRule.customRule?.lePrazoPct) ?? 1")) {
+  throw new Error("Não foi possível normalizar o customRule persistido.");
 }
 
 const validationReturnAnchor = `\n\n  return result;\n}\n\nfunction lanceOptionsFromAi`;

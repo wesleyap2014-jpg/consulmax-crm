@@ -317,9 +317,20 @@ function buildWhatsappLink(user?: LoggedUserProfile | null) {
 }
 
 function sanitizeCustomRule(raw?: Partial<CustomRule> | null): CustomRule {
+  const lePrazo = Number(raw?.lePrazoPct ?? DEFAULT_CUSTOM_RULE.lePrazoPct);
+  const leParcela = Number(raw?.leParcelaPct ?? DEFAULT_CUSTOM_RULE.leParcelaPct);
+  const leDistributionValid =
+    Number.isFinite(lePrazo) &&
+    Number.isFinite(leParcela) &&
+    lePrazo >= 0 &&
+    lePrazo <= 1 &&
+    leParcela >= 0 &&
+    leParcela <= 1 &&
+    Math.abs(lePrazo + leParcela - 1) <= 0.0001;
+
   return {
-    lePrazoPct: Number(raw?.lePrazoPct ?? DEFAULT_CUSTOM_RULE.lePrazoPct),
-    leParcelaPct: Number(raw?.leParcelaPct ?? DEFAULT_CUSTOM_RULE.leParcelaPct),
+    lePrazoPct: leDistributionValid ? lePrazo : 1,
+    leParcelaPct: leDistributionValid ? leParcela : 0,
     llPrazoPct: Number(raw?.llPrazoPct ?? DEFAULT_CUSTOM_RULE.llPrazoPct),
     llParcelaPct: Number(raw?.llParcelaPct ?? DEFAULT_CUSTOM_RULE.llParcelaPct),
   };

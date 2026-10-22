@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { normalizeCustomAmortizationRule } from "../src/group-document-ai.mjs";
 
 const wrongOwnResourceMapping = {
@@ -81,6 +82,30 @@ assert.deepEqual(noContraryProvision.customRule, {
   llPrazoPct: 0,
   llParcelaPct: 1,
 });
+
+const embeddedLimitWithoutAllocation = {
+  regraPosContemplacao: "custom",
+  regraPosContemplacaoDescricao: "O lance embutido poderá ser utilizado em até 20% do crédito. Na contemplação, 50% do recurso próprio será abatido nas prestações e 50% será amortizado na ordem inversa da cota. O termo não define a distribuição do lance embutido entre prazo e parcela.",
+  customRule: {
+    lePrazoPct: 0,
+    leParcelaPct: 0,
+    llPrazoPct: 0.5,
+    llParcelaPct: 0.5,
+  },
+  evidencias: [],
+  alertas: [],
+};
+normalizeCustomAmortizationRule(embeddedLimitWithoutAllocation);
+assert.deepEqual(embeddedLimitWithoutAllocation.customRule, {
+  lePrazoPct: 1,
+  leParcelaPct: 0,
+  llPrazoPct: 0.5,
+  llParcelaPct: 0.5,
+});
+
+const generatedSource = fs.readFileSync(new URL("../src/group-document-ai.mjs", import.meta.url), "utf8");
+assert.match(generatedSource, /const effectiveCustomRule = \{/);
+assert.match(generatedSource, /finite\(effectiveCustomRule\.customRule\?\.lePrazoPct\) \?\? 1/);
 
 const percentualIdealInterpreted = {
   regraPosContemplacao: "mantem_parcela_reduz_prazo",

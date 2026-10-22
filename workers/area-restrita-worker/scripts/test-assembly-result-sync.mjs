@@ -11,6 +11,9 @@ assert.match(parserSource, /form#FrmAssembleia #Pesquisar/);
 assert.match(parserSource, /labels\.length === 4/);
 assert.match(parserSource, /labels\[1\] === "tipo de contemplacao"/);
 assert.match(parserSource, /imovei\|imovel\|residencial/);
+assert.match(parserSource, /readAssemblyAuditEvidence/);
+assert.match(parserSource, /rawPortalRows: rows/);
+assert.match(parserSource, /portalAudit/);
 
 const group = {
   grupo: "0634",

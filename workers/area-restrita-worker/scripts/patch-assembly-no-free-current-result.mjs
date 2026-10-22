@@ -50,7 +50,7 @@ if (!source.includes('status: stats.quantidadeLancesLivres > 0 ? "ok" : "sem_lan
 if (
   source.includes("Nenhum lance livre permaneceu após descartar os fixos")
   || !source.includes('status: stats.quantidadeLancesLivres > 0 ? "ok" : "sem_lance_livre"')
-  || !source.includes("rows.map((row) => String(row?.data || "").trim())")
+  || !source.includes('rows.map((row) => String(row?.data || "").trim())')
 ) {
   throw new Error("Correção de assembleia sem lance livre não foi aplicada integralmente.");
 }

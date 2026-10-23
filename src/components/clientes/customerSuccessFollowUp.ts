@@ -130,6 +130,56 @@ function isoAtPortoVelho(ymd: string, hour: number, minute = 0) {
   return new Date(`${ymd}T${pad2(hour)}:${pad2(minute)}:00${PORTO_VELHO_OFFSET}`).toISOString();
 }
 
+/** Status finais: o diagnóstico de Sucesso do Cliente foi realizado,
+ * mesmo que tenha identificado pontos que mereçam outras providências.
+ * O follow-up automático é apenas para novas tentativas de fazer o contato.
+ */
+export function isCustomerSuccessFinishedStatus(status?: string | null) {
+  return ["validado", "atencao", "divergencia", "critico"].includes(String(status || ""));
+}
+
+/** Encerra apenas os follow-ups automáticos ainda abertos desta venda,
+ * mantendo histórico e sem afetar outros compromissos da Agenda.
+ */
+export async function completeCustomerSuccessFollowUps(
+  item: WorkItem,
+  status: string,
+) {
+  if (!isCustomerSuccessFinishedStatus(status)) return 0;
+  const vendaId = String(item.venda?.id || "");
+  if (!vendaId) throw new Error("Venda não identificada para concluir follow-ups.");
+
+  const { data: pending, error: pendingError } = await supabase
+    .from("agenda_eventos")
+    .select("id")
+    .eq("relacao_id", vendaId)
+    .eq("tipo", "contato")
+    .eq("origem", "auto")
+    .is("completed_at", null)
+    .ilike("titulo", `${FOLLOW_UP_PREFIX}%`);
+  if (pendingError) throw pendingError;
+
+  const ids = (pending || []).map((row: any) => String(row.id || "")).filter(Boolean);
+  if (!ids.length) return 0;
+
+  const now = new Date().toISOString();
+  const { data: updated, error: updateError } = await supabase
+    .from("agenda_eventos")
+    .update({
+      completed_at: now,
+      completion_notes: `Sucesso do Cliente concluído (status: ${status}). Retorno automático dispensado.`,
+      updated_at: now,
+    })
+    .in("id", ids)
+    .is("completed_at", null)
+    .select("id");
+  if (updateError) throw updateError;
+  if ((updated || []).length !== ids.length) {
+    throw new Error("Nem todos os follow-ups automáticos foram encerrados; verifique as permissões da Agenda.");
+  }
+  return ids.length;
+}
+
 export function formatFollowUpDateBR(ymd: string) {
   const [year, month, day] = ymd.split("-");
   return `${day}/${month}/${year}`;

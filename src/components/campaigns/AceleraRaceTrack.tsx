@@ -8,7 +8,8 @@ const MARKS = [
   { limit: 100_000_001, value: 1_000_000.01, label: "0,30%", credit: "Acima de R$ 1 milhão" },
 ] as const;
 const money = (valueInCents: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valueInCents / 100);
-const coordinates = [5, 27.5, 50, 72.5, 95];
+// Preserva o carro inteiro dentro da pista também na largura mínima mobile.
+const coordinates = [9, 29.5, 50, 70.5, 91];
 
 /** Quatro trechos de pista com tamanhos visuais iguais.
  * O primeiro trecho é contínuo: uma venda de R$ 10 mil já move o carro.
@@ -98,7 +99,7 @@ export default function AceleraRaceTrack({ validNetCents, hasEligibility }: Prop
               style={{ left: coordinates[0] + "%", width: Math.max(0, progress - coordinates[0]) + "%" }} />
             <div className="absolute top-[70px] h-5 rounded-l-xl bg-red-500/20 blur-md transition-[width] duration-1000"
               style={{ left: coordinates[0] + "%", width: Math.max(0, progress - coordinates[0]) + "%" }} />
-            <div className="absolute top-[54px] -translate-x-1/2 text-[11px] font-semibold text-white/70" style={{ left: "5%" }}>Largada</div>
+            <div className="absolute top-[54px] -translate-x-1/2 text-[11px] font-semibold text-white/70" style={{ left: coordinates[0] + "%" }}>Largada</div>
             {MARKS.map((mark, index) => {
               const x = coordinates[index + 1];
               const completed = validNetCents >= mark.limit;

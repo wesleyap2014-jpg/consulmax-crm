@@ -178,6 +178,16 @@ function metaFieldForMonth(month: number) { return `m${String(month).padStart(2,
 function daysDiffYMD(a: string, b: string) { if (!a || !b) return 0; const [ay, am, ad] = a.slice(0, 10).split("-").map(Number); const [by, bm, bd] = b.slice(0, 10).split("-").map(Number); return Math.round((Date.UTC(ay, am - 1, ad, 12) - Date.UTC(by, bm - 1, bd, 12)) / 86400000); }
 function weekdayYMD(ymd: string) { const [y, m, d] = ymd.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); }
 function isBillingRuleDay(ymd: string) { const w = weekdayYMD(ymd); return w === 2 || w === 4; }
+/** Última rodada da régua (terça/quinta, calendário de Rondônia).
+ * Nos outros dias, mantém aberta a rodada mais recente até o modelo ser enviado.
+ */
+function latestBillingRuleYMD(todayYMD: string) {
+  for (let daysBack = 0; daysBack < 7; daysBack++) {
+    const candidate = addDaysYMD(todayYMD, -daysBack);
+    if (isBillingRuleDay(candidate)) return candidate;
+  }
+  return todayYMD;
+}
 function normalizeText(v?: string | null) { return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase(); }
 /** Compara telefones brasileiros com DDI e com/sem o nono dígito, sem confundir números internacionais. */
 function whatsappRegularizacaoPhoneAliases(raw?: string | null): string[] {
@@ -579,6 +589,7 @@ export default function Inicio() {
       .map((e) => ({ id: e.cliente?.id || e.lead?.id || e.id, nome: e.cliente?.nome || e.lead?.nome || e.titulo || "Cliente", data_nascimento: e.inicio_at, telefone: e.cliente?.telefone || e.lead?.telefone || null }))
       .slice(0, 50) as ClienteRow[];
     const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
+    const currentBillingRoundYMD = latestBillingRuleYMD(today);
     let carteiraHealthNext: CarteiraHealth = { ...EMPTY_CARTEIRA_HEALTH };
     const carteiraHealthListsNext: CarteiraHealthLists = {
       friendly: [],
@@ -620,19 +631,20 @@ export default function Inicio() {
       // Não altera os indicadores financeiros de inadimplência nem a venda.
       type WhatsAppRegularizacao = { sentYMD: string; leadIds: string[]; phoneAliases: Set<string> };
       let whatsappRegularizacoes: WhatsAppRegularizacao[] = [];
-      const inadDates = healthRows
-        .filter((v) => v.inad && !toYMD(v.inad_revertida_em) && !isVendaCancelada(v))
-        .map((v) => toYMD(v.inad_em))
-        .filter((d): d is string => Boolean(d))
-        .sort();
-      if (inadDates.length) {
+      // Na terça e na quinta nasce uma nova cobrança. Disparos das rodadas
+      // anteriores não concluem a tarefa da rodada mais recente.
+      const hasDueBillingSale = healthRows.some((v) => {
+        const overdueSince = toYMD(v.inad_em);
+        return Boolean(v.inad && !toYMD(v.inad_revertida_em) && !isVendaCancelada(v) && overdueSince && overdueSince <= currentBillingRoundYMD);
+      });
+      if (hasDueBillingSale) {
         try {
           const { data: sentMessages, error: sentError } = await supabase
             .from("whatsapp_messages")
             .select("conversation_id,created_at,meta_message_id,raw_payload")
             .eq("direction", "outbound")
             .contains("raw_payload", { template_name: "regularizacao_parcela_consorcio" })
-            .gte("created_at", new Date(inadDates[0] + "T00:00:00-04:00").toISOString())
+            .gte("created_at", rangeISOForDayInOffset(currentBillingRoundYMD, PV_OFFSET_MIN).startISO)
             .order("created_at", { ascending: false })
             .limit(5000);
           if (sentError) throw sentError;
@@ -705,11 +717,14 @@ export default function Inicio() {
         const leadId = v.lead_id || v.cliente_lead_id || "";
         const nome = namesMap.get(leadId)?.nome || `Grupo/Cota ${v.grupo || "—"}/${v.cota || "—"}`;
 
+        // Clientes que entraram em atraso depois da última terça/quinta
+        // só entram na rodada seguinte, sem antecipar alertas.
+        const eligibleForBillingRound = Boolean(inadStart && inadStart <= currentBillingRoundYMD);
         if (v.inad && !reverted && !cancelled && inadStart) {
           const dias = Math.max(1, daysDiffYMD(today, inadStart));
           const value = Number(v.valor_venda || 0) || 0;
           const regularizacaoConcluida = whatsappRegularizacoes.some((message) => {
-            if (message.sentYMD < inadStart) return false;
+            if (message.sentYMD < currentBillingRoundYMD || message.sentYMD < inadStart) return false;
             if (leadId && message.leadIds.includes(leadId)) return true;
             const phoneAliases = [
               ...whatsappRegularizacaoPhoneAliases(namesMap.get(leadId)?.telefone),
@@ -718,7 +733,7 @@ export default function Inicio() {
             return phoneAliases.some((alias) => message.phoneAliases.has(alias));
           });
           // A Carteira continua inadimplente; só a tarefa de cobrança sai do Meu Dia.
-          if (!regularizacaoConcluida) {
+          if (eligibleForBillingRound && !regularizacaoConcluida) {
             const bucket = dias <= 30 ? "1-30" : dias <= 60 ? "31-60" : "61+";
             const cur = inadimplentesByBucket.get(bucket) || { count: 0, names: [] };
             cur.count += 1;
@@ -857,7 +872,7 @@ export default function Inicio() {
         priority: 65 + idx,
         icon: "alert",
         title: `${b.title}: ${data.count} cliente(s)`,
-        desc: `${b.desc}${nomes}`,
+        desc: `Rodada de cobrança de ${fmtDateBRFromYMD(currentBillingRoundYMD)}. Permanece pendente até o envio do modelo regularizacao_parcela_consorcio. ${b.desc}${nomes}`,
         action: { label: "Abrir Carteira", to: "/carteira" },
       });
     });

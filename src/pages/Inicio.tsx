@@ -179,6 +179,25 @@ function daysDiffYMD(a: string, b: string) { if (!a || !b) return 0; const [ay, 
 function weekdayYMD(ymd: string) { const [y, m, d] = ymd.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); }
 function isBillingRuleDay(ymd: string) { const w = weekdayYMD(ymd); return w === 2 || w === 4; }
 function normalizeText(v?: string | null) { return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase(); }
+/** Compara telefones brasileiros com DDI e com/sem o nono dígito, sem confundir números internacionais. */
+function whatsappRegularizacaoPhoneAliases(raw?: string | null): string[] {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (!digits) return [];
+  const local = digits.startsWith("55") && (digits.length === 12 || digits.length === 13) ? digits.slice(2) : digits;
+  if (local.length !== 10 && local.length !== 11) return [digits];
+  const aliases = new Set([local, "55" + local]);
+  if (local.length === 11 && local[2] === "9") {
+    const withoutNine = local.slice(0, 2) + local.slice(3);
+    aliases.add(withoutNine);
+    aliases.add("55" + withoutNine);
+  }
+  if (local.length === 10) {
+    const withNine = local.slice(0, 2) + "9" + local.slice(2);
+    aliases.add(withNine);
+    aliases.add("55" + withNine);
+  }
+  return Array.from(aliases);
+}
 function isOpenOpportunityStage(v?: string | null) { const s = normalizeText(v); return ["novo", "novo lead", "qualificando", "qualificacao", "qualificando/diagnostico", "reuniao agendada", "proposta", "negociacao", "proposta apresentada/negociacao", "fechamento programado/aguardando documentos"].includes(s); }
 function stripAccents(s: string) { return s.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
 function normalizeAdmin(raw?: string | null): string { const s = stripAccents(String(raw ?? "")).toLowerCase(); const cleaned = s.replace(/consorcios?|consorcio|holding|sa|s\/a|s\.a\.?/g, "").replace(/[^\w]/g, "").trim(); if (cleaned.includes("embracon")) return "Embracon"; if (cleaned.includes("hs")) return "HS"; if (cleaned.includes("maggi")) return "Maggi"; return (raw ?? "").toString().trim(); }
@@ -596,6 +615,70 @@ export default function Inicio() {
       const recentClickStart = addDaysYMD(today, -7);
       const healthById = new Map(healthRows.map((v) => [v.id, v] as const));
 
+      // Conclusão da cobrança no Meu Dia: o disparo do modelo específico no WhatsApp
+      // conclui a tarefa do cliente apenas no ciclo de inadimplência vigente.
+      // Não altera os indicadores financeiros de inadimplência nem a venda.
+      type WhatsAppRegularizacao = { sentYMD: string; leadIds: string[]; phoneAliases: Set<string> };
+      let whatsappRegularizacoes: WhatsAppRegularizacao[] = [];
+      const inadDates = healthRows
+        .filter((v) => v.inad && !toYMD(v.inad_revertida_em) && !isVendaCancelada(v))
+        .map((v) => toYMD(v.inad_em))
+        .filter((d): d is string => Boolean(d))
+        .sort();
+      if (inadDates.length) {
+        try {
+          const { data: sentMessages, error: sentError } = await supabase
+            .from("whatsapp_messages")
+            .select("conversation_id,created_at,meta_message_id,raw_payload")
+            .eq("direction", "outbound")
+            .contains("raw_payload", { template_name: "regularizacao_parcela_consorcio" })
+            .gte("created_at", new Date(inadDates[0] + "T00:00:00-04:00").toISOString())
+            .order("created_at", { ascending: false })
+            .limit(5000);
+          if (sentError) throw sentError;
+
+          const conversationIds = Array.from(new Set((sentMessages || []).map((m: any) => String(m.conversation_id || "")).filter(Boolean)));
+          const conversationsById = new Map<string, any>();
+          if (conversationIds.length) {
+            const { data: convs, error: convError } = await supabase
+              .from("whatsapp_conversations")
+              .select("id,lead_id,contact_id")
+              .in("id", conversationIds);
+            if (convError) throw convError;
+            (convs || []).forEach((c: any) => conversationsById.set(String(c.id), c));
+          }
+
+          const contactIds = Array.from(new Set(Array.from(conversationsById.values()).map((c) => String(c.contact_id || "")).filter(Boolean)));
+          const contactsById = new Map<string, any>();
+          if (contactIds.length) {
+            const { data: contacts, error: contactError } = await supabase
+              .from("whatsapp_contacts")
+              .select("id,lead_id,telefone,wa_id")
+              .in("id", contactIds);
+            if (contactError) throw contactError;
+            (contacts || []).forEach((c: any) => contactsById.set(String(c.id), c));
+          }
+
+          whatsappRegularizacoes = (sentMessages || []).flatMap((m: any): WhatsAppRegularizacao[] => {
+            // Somente disparos aceitos pela Meta, sem falha posterior.
+            if (!m.meta_message_id || String(m.raw_payload?.meta_status || "sent").toLowerCase() === "failed") return [];
+            const conv = conversationsById.get(String(m.conversation_id || ""));
+            if (!conv) return [];
+            const contact = contactsById.get(String(conv.contact_id || ""));
+            const leadIds = Array.from(new Set([conv.lead_id, contact?.lead_id].filter(Boolean).map(String)));
+            const phoneAliases = new Set<string>([
+              ...whatsappRegularizacaoPhoneAliases(contact?.telefone),
+              ...whatsappRegularizacaoPhoneAliases(contact?.wa_id),
+            ]);
+            if (!leadIds.length && !phoneAliases.size) return [];
+            return [{ sentYMD: ymdFromDateInOffset(new Date(m.created_at), PV_OFFSET_MIN), leadIds, phoneAliases }];
+          });
+        } catch (e) {
+          // Se o WhatsApp estiver indisponível, nunca escondemos cobranças por engano.
+          console.warn("[Inicio] Não foi possível verificar os envios de regularização no WhatsApp:", e);
+        }
+      }
+
       const itemFor = (v: VendaMini, extras: Partial<CarteiraHealthItem> = {}): CarteiraHealthItem => {
         const leadId = v.lead_id || v.cliente_lead_id || null;
         const lead = leadId ? namesMap.get(leadId) : undefined;
@@ -625,11 +708,23 @@ export default function Inicio() {
         if (v.inad && !reverted && !cancelled && inadStart) {
           const dias = Math.max(1, daysDiffYMD(today, inadStart));
           const value = Number(v.valor_venda || 0) || 0;
-          const bucket = dias <= 30 ? "1-30" : dias <= 60 ? "31-60" : "61+";
-          const cur = inadimplentesByBucket.get(bucket) || { count: 0, names: [] };
-          cur.count += 1;
-          if (cur.names.length < 5) cur.names.push(nome);
-          inadimplentesByBucket.set(bucket, cur);
+          const regularizacaoConcluida = whatsappRegularizacoes.some((message) => {
+            if (message.sentYMD < inadStart) return false;
+            if (leadId && message.leadIds.includes(leadId)) return true;
+            const phoneAliases = [
+              ...whatsappRegularizacaoPhoneAliases(namesMap.get(leadId)?.telefone),
+              ...whatsappRegularizacaoPhoneAliases(v.telefone),
+            ];
+            return phoneAliases.some((alias) => message.phoneAliases.has(alias));
+          });
+          // A Carteira continua inadimplente; só a tarefa de cobrança sai do Meu Dia.
+          if (!regularizacaoConcluida) {
+            const bucket = dias <= 30 ? "1-30" : dias <= 60 ? "31-60" : "61+";
+            const cur = inadimplentesByBucket.get(bucket) || { count: 0, names: [] };
+            cur.count += 1;
+            if (cur.names.length < 5) cur.names.push(nome);
+            inadimplentesByBucket.set(bucket, cur);
+          }
 
           if (dias <= 30) {
             carteiraHealthNext.friendlyCount += 1;

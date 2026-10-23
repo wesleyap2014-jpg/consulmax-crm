@@ -2,7 +2,7 @@
 // Nenhum bonus exibido representa promessa de pagamento: depende da apuracao final.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { CheckCircle2, Flag, Gauge, RefreshCcw, Trophy, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckCircle2, Flag, Gauge, RefreshCcw, AlertTriangle } from "lucide-react";
 
 type CRMUser = { id: string; auth_user_id: string; nome: string; is_active?: boolean | null };
 type Sale = {
@@ -11,7 +11,6 @@ type Sale = {
   status: string | null; codigo: string | null; cancelada_em: string | null; reativada_em: string | null;
   encarteirada_em: string | null; grupo: string | null; cota: string | null; inad: boolean | null;
 };
-type Validation = { venda_id: string; primeira_parcela_paga: boolean; data_confirmacao: string | null };
 type Computed = ReturnType<typeof calculate>;
 const CAMPAIGN_START = "2026-10-26";
 const CAMPAIGN_END = "2026-12-31";
@@ -37,7 +36,8 @@ function cancelled(v: Sale) {
   return false;
 }
 function allocated(v: Sale) {
-  return normalize(v.status) === "encarteirada" && Boolean(v.encarteirada_em && v.grupo?.trim() && v.cota?.trim());
+  // No CRM, encarteiramento ja comprova pagamento da primeira parcela e alocacao.
+  return normalize(v.status) === "encarteirada";
 }
 function rateBps(net: number) {
   if (net > 100000000) return 30;  // > R$ 1 milhao
@@ -53,18 +53,20 @@ function nextTarget(net: number) {
   if (net <= 100000000) return 100000001;
   return null;
 }
-function calculate(rows: Sale[], valid: Map<string, boolean>, date: string) {
+function calculate(rows: Sale[], date: string) {
   const selected = rows.filter(eligible);
-  let gross = 0, cancels = 0, net = 0, november = 0, december = 0, awaiting = 0, atRisk = 0, confirmed = 0;
+  let gross = 0, cancels = 0, net = 0;
+  let november = 0, december = 0, novemberSold = 0, decemberSold = 0;
+  let awaiting = 0, atRisk = 0, confirmed = 0;
   for (const v of selected) {
     const value = cents(v.valor_venda);
     gross += value;
-    const isCancel = cancelled(v);
-    const isAllocated = allocated(v);
-    const isPaid = valid.get(v.id) === true;
-    if (isCancel) { cancels += value; continue; }
+    if (cancelled(v)) { cancels += value; continue; }
+    // Data de venda define o periodo mensal, mesmo se encarteirada posteriormente.
+    if (v.data_venda <= NOV_END) novemberSold += value;
+    else decemberSold += value;
     if (v.inad) { atRisk += value; continue; }
-    if (!isAllocated || !isPaid) { awaiting += value; continue; }
+    if (!allocated(v)) { awaiting += value; continue; }
     confirmed += 1;
     net += value;
     if (v.data_venda <= NOV_END) november += value;
@@ -72,10 +74,17 @@ function calculate(rows: Sale[], valid: Map<string, boolean>, date: string) {
   }
   const novOK = november >= 5000000;
   const decOK = december >= 5000000;
-  const excluded = (date > NOV_END && !novOK) || (date > CAMPAIGN_END && !decOK);
+  // Meta comercial e' observada pelo registro; o direito definitivo exige
+  // alocacao e adimplencia. Antes da apuracao, nao excluir uma venda
+  // registrada no prazo que ainda esteja aguardando encarteiramento.
+  const excluded = (date > NOV_END && novemberSold < 5000000)
+    || (date > CAMPAIGN_END && decemberSold < 5000000)
+    || (date >= HIDE_AFTER && (!novOK || !decOK));
   const bps = rateBps(net);
   const potential = excluded ? 0 : Math.round(net * bps / 10000);
-  return { gross, cancels, net, november, december, awaiting, atRisk, confirmed, novOK, decOK, excluded, bps, potential, next: nextTarget(net), registered: selected.length };
+  return { gross, cancels, net, november, december, novemberSold, decemberSold,
+    awaiting, atRisk, confirmed, novOK, decOK, excluded, bps, potential,
+    next: nextTarget(net), registered: selected.length };
 }
 export default function AceleraConsulmax({
   me, users, isAdmin,
@@ -84,15 +93,11 @@ export default function AceleraConsulmax({
 }) {
   const todayTime = localTime();
   const today = todayTime.slice(0, 10);
-  const visible = isAdmin || (today <= HIDE_AFTER && todayTime >= "2026-10-26T09:30");
+  const visible = isAdmin || today <= HIDE_AFTER;
   const [sales, setSales] = useState<Sale[]>([]);
-  const [validations, setValidations] = useState<Map<string, boolean>>(new Map());
   const [loading, setLoading] = useState(false);
-  const [busySale, setBusySale] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string>("self");
-  const [expanded, setExpanded] = useState(false);
-  const [shown, setShown] = useState(20);
   const [version, setVersion] = useState(0);
   const load = useCallback(async () => {
     if (!me || !visible) return;
@@ -113,16 +118,7 @@ export default function AceleraConsulmax({
         all.push(...chunk);
         if (chunk.length < 500) break;
       }
-      const valid = new Map<string, boolean>();
-      const ids = all.map((v) => v.id);
-      for (let i = 0; i < ids.length; i += 300) {
-        const { data, error: validationError } = await supabase.from("acelera_consulmax_validacoes")
-          .select("venda_id,primeira_parcela_paga,data_confirmacao").in("venda_id", ids.slice(i, i + 300));
-        if (validationError) throw validationError;
-        for (const row of (data || []) as Validation[]) valid.set(row.venda_id, row.primeira_parcela_paga);
-      }
       setSales(all);
-      setValidations(valid);
     } catch (e: any) {
       setError(String(e?.message || "Não foi possível carregar o painel."));
     } finally { setLoading(false); }
@@ -133,16 +129,18 @@ export default function AceleraConsulmax({
   const relevant = useMemo(() => targetSeller === "all"
     ? sales : sales.filter((v) => v.vendedor_id === targetSeller), [sales, targetSeller]);
   const totals = useMemo(() => {
-    if (targetSeller !== "all") return calculate(relevant, validations, today);
+    if (targetSeller !== "all") return calculate(relevant, today);
     // Nao misturar vendedores para alcancar uma faixa que nenhum deles atingiu.
     const authIds = Array.from(new Set(sales.map((v) => v.vendedor_id)));
-    const positions = authIds.map((id) => calculate(sales.filter((v) => v.vendedor_id === id), validations, today));
+    const positions = authIds.map((id) => calculate(sales.filter((v) => v.vendedor_id === id), today));
     return {
       gross: positions.reduce((a,p)=>a+p.gross,0),
       cancels: positions.reduce((a,p)=>a+p.cancels,0),
       net: positions.reduce((a,p)=>a+p.net,0),
       november: positions.reduce((a,p)=>a+p.november,0),
       december: positions.reduce((a,p)=>a+p.december,0),
+      novemberSold: positions.reduce((a,p)=>a+p.novemberSold,0),
+      decemberSold: positions.reduce((a,p)=>a+p.decemberSold,0),
       awaiting: positions.reduce((a,p)=>a+p.awaiting,0),
       atRisk: positions.reduce((a,p)=>a+p.atRisk,0),
       confirmed: positions.reduce((a,p)=>a+p.confirmed,0),
@@ -150,23 +148,9 @@ export default function AceleraConsulmax({
       potential: positions.reduce((a,p)=>a+p.potential,0),
       next: null, registered: positions.reduce((a,p)=>a+p.registered,0),
     } as Computed;
-  }, [relevant, targetSeller, validations, today, sales]);
+  }, [relevant, targetSeller, today, sales]);
   const label = targetSeller === "all" ? "Visão da equipe" : byAuthId.get(targetSeller) || me?.nome || "Minha campanha";
   const progress = totals.next ? Math.min(100, Math.round(totals.net * 100 / totals.next)) : 100;
-  const adminRows = useMemo(() => relevant.filter(eligible).slice().sort((a,b)=>b.data_venda.localeCompare(a.data_venda)), [relevant]);
-  const savePayment = async (v: Sale, paid: boolean) => {
-    if (!isAdmin || !me) return;
-    setBusySale(v.id);
-    setError(null);
-    const { error: saveError } = await supabase.from("acelera_consulmax_validacoes").upsert({
-      venda_id: v.id, primeira_parcela_paga: paid,
-      data_confirmacao: paid ? today : null,
-      validado_por: me.auth_user_id, atualizado_em: new Date().toISOString(),
-    }, { onConflict: "venda_id" });
-    if (saveError) setError("Falha na validação: " + saveError.message);
-    else { setValidations((previous) => { const copy = new Map(previous); copy.set(v.id, paid); return copy; }); }
-    setBusySale(null);
-  };
   if (!me || !visible) return null;
   const card = "rounded-xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur-sm";
   return (
@@ -194,7 +178,7 @@ export default function AceleraConsulmax({
             </button>
           </div>
         </div>
-        {isAdmin && todayTime < "2026-10-26T09:30" ? <div className="rounded-lg border border-[#E0CE8C]/40 bg-[#E0CE8C]/10 px-3 py-2 text-xs text-[#E0CE8C]">Prévia administrativa: o painel dos vendedores será liberado em 26/10, às 9h30 (Rondônia).</div> : null}
+        {today < CAMPAIGN_START ? <div className="rounded-lg border border-[#E0CE8C]/40 bg-[#E0CE8C]/10 px-3 py-2 text-xs text-[#E0CE8C]">A largada será em 26/10. Apenas as vendas realizadas durante a campanha serão contabilizadas.</div> : null}
         {error ? <div role="alert" className="rounded-xl border border-red-300/50 bg-red-800/40 px-3 py-2 text-sm">{error}</div> : null}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <div className={card}><div className="text-xs text-white/65">Vendas registradas</div><div className="mt-1 text-lg font-bold md:text-xl">{fmt(totals.gross)}</div><div className="text-xs text-white/50">{totals.registered} cota(s) no período</div></div>
@@ -211,35 +195,28 @@ export default function AceleraConsulmax({
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-white/15"><div className="h-full rounded-full bg-gradient-to-r from-[#A11C27] to-[#E0CE8C] transition-all" style={{width:String(progress)+"%"}} /></div>
               <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                <div className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2"><span>Outubro (26–31) + novembro</span><span className={totals.novOK ? "font-semibold text-emerald-300" : "text-amber-200"}>{fmt(totals.november)} / R$ 50.000 {totals.novOK ? "✓" : ""}</span></div>
-                <div className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2"><span>Dezembro</span><span className={totals.decOK ? "font-semibold text-emerald-300" : "text-amber-200"}>{fmt(totals.december)} / R$ 50.000 {totals.decOK ? "✓" : ""}</span></div>
+                <div className="rounded-lg bg-white/5 px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>Outubro (26–31) + novembro</span>
+                    <span className={totals.novOK ? "font-semibold text-emerald-300" : "text-amber-200"}>{fmt(totals.novemberSold)} / R$ 50.000</span>
+                  </div>
+                  <div className="mt-1 text-xs text-white/65">Encarteiradas e adimplentes: {fmt(totals.november)} {totals.novOK ? "✓" : ""}</div>
+                </div>
+                <div className="rounded-lg bg-white/5 px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>Dezembro</span>
+                    <span className={totals.decOK ? "font-semibold text-emerald-300" : "text-amber-200"}>{fmt(totals.decemberSold)} / R$ 50.000</span>
+                  </div>
+                  <div className="mt-1 text-xs text-white/65">Encarteiradas e adimplentes: {fmt(totals.december)} {totals.decOK ? "✓" : ""}</div>
+                </div>
               </div>
-              {totals.excluded ? <p className="mt-3 flex items-center gap-2 text-sm text-red-200"><AlertTriangle className="h-4 w-4" /> Não atingiu a habilitação mínima em um dos períodos. Bonificação zerada enquanto não houver regularização válida da apuração.</p> : !totals.novOK || !totals.decOK ? <p className="mt-3 text-xs text-[#E0CE8C]">Para participar, é obrigatório alcançar R$ 50 mil em cada período de habilitação. Sem ambos os períodos, não há prêmio.</p> : <p className="mt-3 flex items-center gap-2 text-xs text-emerald-200"><CheckCircle2 className="h-4 w-4" /> Habilitação mensal atingida, sujeita à manutenção das vendas.</p>}
+              {totals.excluded ? <p className="mt-3 flex items-center gap-2 text-sm text-red-200"><AlertTriangle className="h-4 w-4" /> Não cumpriu os requisitos de habilitação de um dos períodos. Bonificação zerada, sujeita aos recálculos permitidos pelo regulamento.</p> : !totals.novOK || !totals.decOK ? <p className="mt-3 text-xs text-[#E0CE8C]">Para se habilitar, registre R$ 50 mil em cada período e mantenha as vendas encarteiradas e adimplentes até a apuração. Sem ambos os períodos, não há prêmio.</p> : <p className="mt-3 flex items-center gap-2 text-xs text-emerald-200"><CheckCircle2 className="h-4 w-4" /> Habilitação mensal atingida, sujeita à manutenção das vendas.</p>}
             </div>
           </>
         ) : <p className="text-xs text-white/65">A visão de equipe soma os bônus calculados vendedor por vendedor. As faixas nunca são compartilhadas entre participantes.</p>}
-        <div className="flex flex-col gap-2 text-xs text-white/60 sm:flex-row sm:items-center sm:justify-between">
-          <span>Somente BB, Embracon e Maggi · sem contempladas · 1ª parcela confirmada + alocação + adimplência · cotas de bolsão somente após alocação.</span>
-          {isAdmin ? <button type="button" onClick={()=>setExpanded((v)=>!v)} className="flex shrink-0 items-center gap-2 self-start rounded-lg border border-white/25 px-3 py-2 text-white hover:bg-white/10">Validar parcelas {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button> : null}
+        <div className="text-xs text-white/60">
+          Somente BB, Embracon e Maggi · sem vendas contempladas · cota encarteirada confirma 1ª parcela paga e alocação · inadimplência acompanhada na Carteira · cotas de bolsão somente após encarteiramento.
         </div>
-        {isAdmin && expanded ? (
-          <div className="rounded-xl border border-[#E0CE8C]/30 bg-white/5 p-4">
-            <div className="mb-3 flex items-center gap-2 text-sm font-bold text-[#E0CE8C]"><Trophy className="h-4 w-4" /> Validação administrativa da primeira parcela</div>
-            <p className="mb-3 text-xs text-white/60">Confirme apenas após comprovar o pagamento. Sem confirmação, a venda fica pendente de bonificação, mesmo que esteja alocada.</p>
-            {!adminRows.length ? <p className="text-sm text-white/65">Nenhuma venda elegível cadastrada neste período.</p> : (
-              <div className="space-y-2">
-                {adminRows.slice(0,shown).map((v)=>{
-                  const paid = validations.get(v.id) === true;
-                  return <div key={v.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/15 px-3 py-2 text-sm">
-                    <div className="min-w-0"><div className="font-semibold">{fmt(cents(v.valor_venda))} · {v.administradora || "—"} · {v.data_venda}</div><div className="text-xs text-white/60">{byAuthId.get(v.vendedor_id) || "Vendedor"} · {v.tipo_venda || "Normal"} · {allocated(v) ? "Alocada" : "Aguardando alocação"} · {cancelled(v) ? "Cancelada" : v.inad ? "Inadimplente" : paid ? "1ª parcela confirmada" : "Pagamento não confirmado"}</div></div>
-                    <button type="button" disabled={busySale===v.id} onClick={()=>void savePayment(v,!paid)} className={paid ? "rounded-lg border border-emerald-300/50 bg-emerald-900/40 px-3 py-2 text-xs text-white" : "rounded-lg border border-[#E0CE8C]/50 bg-[#E0CE8C]/20 px-3 py-2 text-xs text-[#E0CE8C]"}>{busySale===v.id ? "Salvando..." : paid ? "Reverter confirmação" : "Confirmar 1ª parcela paga"}</button>
-                  </div>;
-                })}
-                {shown < adminRows.length ? <button type="button" onClick={()=>setShown((n)=>n+20)} className="rounded-lg border border-white/20 px-3 py-2 text-sm text-white">Mostrar mais {Math.min(20,adminRows.length-shown)} vendas</button> : null}
-              </div>
-            )}
-          </div>
-        ) : null}
         <div className="text-[11px] leading-relaxed text-white/50">Painel informativo temporário. Apuração individual até 20/02/2027 ou antes, conforme alocação das cotas; pagamento em data a divulgar. Regularizações posteriores podem gerar recálculo. Qualquer divergência deve ser verificada com a administração antes do fechamento.</div>
       </div>
     </section>

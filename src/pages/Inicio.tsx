@@ -1,6 +1,7 @@
 // src/pages/Inicio.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import AceleraConsulmax from "@/components/campaigns/AceleraConsulmax";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1176,6 +1177,8 @@ export default function Inicio() {
             </div>
           </CardContent>
         </Card>
+
+        <AceleraConsulmax me={me} users={users} isAdmin={isMatrixAdmin} />
 
         {errMsg ? (
           <Card className={`${glassCard} border-red-200 bg-red-50/80`}>

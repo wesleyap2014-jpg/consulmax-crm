@@ -48,7 +48,7 @@ type CommissionFlowRow = { id?: string; commission_id: string; mes?: number | nu
 type CommissionBatchRow = { id: string; venda_id: string; vendedor_id: string; business_unit_id?: string | null; status?: string | null; legacy?: boolean | null };
 type CommissionEntryRow = { id: string; batch_id: string; recipient_user_id?: string | null; recipient_unit_id?: string | null; business_unit_id?: string | null; status?: string | null };
 type CommissionEntryFlowRow = { id: string; entry_id: string; batch_id: string; valor_previsto: number | null; valor_pago: number | null; data_pagamento: string | null; status?: string | null };
-type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; reativada_em?: string | null; segmento?: string | null; produto?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
+type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; reativada_em?: string | null; segmento?: string | null; produto?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null; telefone?: string | null };
 type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
@@ -593,7 +593,7 @@ export default function Inicio() {
     try {
       let healthQ = supabase
         .from("vendas")
-        .select("id,vendedor_id,lead_id,cliente_lead_id,valor_venda,grupo,cota,codigo,cancelada_em,reativada_em,inad,inad_em,inad_revertida_em,administradora,segmento,produto")
+        .select("id,vendedor_id,lead_id,cliente_lead_id,telefone,valor_venda,grupo,cota,codigo,cancelada_em,reativada_em,inad,inad_em,inad_revertida_em,administradora,segmento,produto")
         .limit(5000);
       healthQ = applyVendedorScope(healthQ);
       const { data: healthRowsRaw, error: healthErr } = await healthQ;

@@ -3,7 +3,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { GOOGLE_REVIEW_URL, normalizeCs, waNumber } from "./customerSuccessModel";
 import type { CsRecord, CustomerSuccessReport, WorkItem } from "./customerSuccessModel";
 import { loadCustomerSuccess, saveCustomerSuccess } from "./customerSuccessRepository";
-import { formatFollowUpDateBR, scheduleCustomerSuccessFollowUp } from "./customerSuccessFollowUp";
+import { completeCustomerSuccessFollowUps, formatFollowUpDateBR, isCustomerSuccessFinishedStatus, scheduleCustomerSuccessFollowUp } from "./customerSuccessFollowUp";
 
 async function requestCustomerSuccessReport(item: WorkItem): Promise<CustomerSuccessReport> {
   const { data, error } = await supabase.auth.getSession();
@@ -63,6 +63,7 @@ export function useCustomerSuccess() {
 
   async function attempt() {
     if (!active || !form) return;
+    if (isCustomerSuccessFinishedStatus(form.status)) return alert("Este Sucesso do Cliente já foi concluído. Não é necessário agendar outra tentativa.");
     try {
       setSaving(true);
       const now = new Date().toISOString();
@@ -97,20 +98,34 @@ export function useCustomerSuccess() {
     if (!active || !form) return;
     try {
       setSaving(true);
+      const completed = isCustomerSuccessFinishedStatus(form.status);
       const savedRecord: CsRecord = {
         ...form,
+        ...(completed ? { proximo_contato_em: null } : {}),
         responsavel_id: form.responsavel_id || userId,
         responsavel_nome: form.responsavel_nome || userName,
         updated_at: new Date().toISOString(),
       };
       await persist(savedRecord);
+
+      // A conclusão do atendimento dispensa os retornos de tentativas anteriores,
+      // mas não altera outros eventos agendados para o cliente.
+      let followUpWarning = "";
+      if (completed) {
+        try {
+          await completeCustomerSuccessFollowUps(active, savedRecord.status);
+        } catch (followUpError: any) {
+          console.error("Sucesso do Cliente concluído, mas houve falha ao encerrar o follow-up:", followUpError);
+          followUpWarning = ` Atenção: o follow-up automático não pôde ser encerrado. ${followUpError?.message || ""}`;
+        }
+      }
       try {
         const report = await requestCustomerSuccessReport(active);
         await persist({ ...savedRecord, report, updated_at: new Date().toISOString() });
-        alert("Atendimento salvo e relatório da venda gerado pela IA.");
+        alert(`Atendimento salvo e relatório da venda gerado pela IA.${followUpWarning}`);
       } catch (reportError: any) {
         console.error("Erro ao gerar relatório do Sucesso do Cliente:", reportError);
-        alert(`Atendimento salvo, mas o relatório não pôde ser gerado agora. ${reportError?.message || ""}`.trim());
+        alert(`Atendimento salvo, mas o relatório não pôde ser gerado agora. ${reportError?.message || ""}${followUpWarning}`.trim());
       }
     } catch (e: any) {
       alert(e?.message || "Erro ao salvar atendimento.");

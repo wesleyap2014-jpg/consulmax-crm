@@ -84,7 +84,7 @@ export default function AceleraConsulmax({
 }) {
   const todayTime = localTime();
   const today = todayTime.slice(0, 10);
-  const visible = today <= HIDE_AFTER && (isAdmin || todayTime >= "2026-10-26T09:30");
+  const visible = isAdmin || (today <= HIDE_AFTER && todayTime >= "2026-10-26T09:30");
   const [sales, setSales] = useState<Sale[]>([]);
   const [validations, setValidations] = useState<Map<string, boolean>>(new Map());
   const [loading, setLoading] = useState(false);

@@ -26,6 +26,7 @@ export type CommissionFinanceLine = {
   tabela: string;
   cancelled: boolean;
   reversed: boolean;
+  hasRefund: boolean;
   gross: number;
   paid: number;
   pending: number;
@@ -94,7 +95,7 @@ function lineFromFlows(args: {
   key: string; vendaId: string; vendedorId: string; unidadeId: string | null;
   recipientId: string | null; recipientType: string; recipientUnitId: string | null;
   sale?: AnyRow; batch?: AnyRow; commission?: AnyRow; entry?: AnyRow; flows: AnyRow[];
-  legacy: boolean;
+  legacy: boolean; hasRefund?: boolean;
 }): CommissionFinanceLine {
   const { key, vendaId, vendedorId, unidadeId, recipientId, recipientType, recipientUnitId, sale, batch, commission, entry, flows, legacy } = args;
   const gross = n(legacy ? commission?.valor_total ?? (Number(commission?.base_calculo || 0) * Number(commission?.percent_aplicado || 0)) : entry?.gross_amount);
@@ -131,14 +132,14 @@ function lineFromFlows(args: {
     administradora: String(sale?.administradora || commission?.administradora || ""),
     segmento: String(sale?.segmento || commission?.segmento || ""),
     tabela: String(sale?.tabela || commission?.tabela || ""),
-    cancelled, reversed, gross, paid, pending,
+    cancelled, reversed, hasRefund: !!args.hasRefund, gross, paid, pending,
     programmed: cent(scheduledEvents.reduce((sum, event) => sum + event.amount, 0)),
     paidEvents, scheduledEvents
   };
 }
 
 export async function loadCommissionFinancialLedger(): Promise<CommissionFinanceLine[]> {
-  const [sales, commissions, legacyFlows, batches, entries, partitionFlows, users] = await Promise.all([
+  const [sales, commissions, legacyFlows, batches, entries, partitionFlows, users, adjustments] = await Promise.all([
     tableRows("vendas", "id,vendedor_id,data_venda,administradora,segmento,tabela,codigo,cancelada_em"),
     tableRows("commissions"),
     tableRows("commission_flow"),
@@ -146,6 +147,7 @@ export async function loadCommissionFinancialLedger(): Promise<CommissionFinance
     tableRows("commission_entries"),
     tableRows("commission_entry_flow"),
     tableRows("users", "id,auth_user_id,unit_id"),
+    tableRows("commission_adjustments", "id,entry_id,is_reversed"),
   ]);
   const salesById = new Map(sales.map(s => [String(s.id), s]));
   const usersById = new Map(users.flatMap(u => [u.id, u.auth_user_id].filter(Boolean).map(id => [String(id), u])));
@@ -157,6 +159,7 @@ export async function loadCommissionFinancialLedger(): Promise<CommissionFinance
   const newBatches = batches.filter(b => b.legacy === false);
   const modernSales = new Set(newBatches.map(b => String(b.venda_id)));
   const newBatchById = new Map(newBatches.map(b => [String(b.id), b]));
+  const activeRefundEntries = new Set(adjustments.filter(a => a.is_reversed !== true).map(a => String(a.entry_id)));
   const modernFlowByEntry = new Map<string, AnyRow[]>();
   for (const f of partitionFlows) {
     const key = String(f.entry_id);
@@ -192,7 +195,8 @@ export async function loadCommissionFinancialLedger(): Promise<CommissionFinance
       recipientId: recipient?.id || entry.recipient_user_id || null,
       recipientType: String(entry.recipient_type || ""),
       recipientUnitId: entry.recipient_unit_id || null,
-      sale, batch, entry, flows: modernFlowByEntry.get(String(entry.id)) || [], legacy: false,
+      sale, batch, entry, hasRefund: activeRefundEntries.has(String(entry.id)),
+      flows: modernFlowByEntry.get(String(entry.id)) || [], legacy: false,
     }));
   }
   return result;
@@ -221,7 +225,7 @@ export function selectCommissionFinance(
     if (normalizedFilters.table && normalizedFilters.table !== "all" && norm(line.tabela) !== normalizedFilters.table) return false;
     if (filters.status === "pago" && (line.pending > 0 || line.gross <= 0 || line.cancelled || line.reversed)) return false;
     if (filters.status === "a_pagar" && line.pending <= 0) return false;
-    if (filters.status === "estorno" && !line.reversed && !line.cancelled) return false;
+    if (filters.status === "estorno" && !line.reversed && !line.cancelled && !line.hasRefund) return false;
     return true;
   });
 }

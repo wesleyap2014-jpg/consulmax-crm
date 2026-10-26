@@ -3586,6 +3586,46 @@ export default function ComissoesPage() {
     );
   }
 
+  function readOnlyParcelDetails(row: (typeof partitionBatchRowsVisible)[number]) {
+    const months = Array.from(new Set(row.flows.map(f => Number(f.mes)))).sort((a, b) => a - b);
+    const cancelada = isPartitionBatchCancelada(row);
+    return (
+      <div className="rounded-lg border bg-white p-3">
+        <div className="mb-2 text-sm font-semibold text-slate-700">Situação das parcelas · somente consulta</div>
+        <table className="w-full text-sm">
+          <thead><tr className="bg-slate-50">
+            <th className="p-2 text-left">Parcela</th>
+            <th className="p-2 text-right">Previsto</th>
+            <th className="p-2 text-right">Pago</th>
+            <th className="p-2 text-left">Situação</th>
+          </tr></thead>
+          <tbody>
+            {months.map(mes => {
+              const flowsMes = row.flows.filter(f => Number(f.mes) === mes);
+              const payable = flowsMes.filter(f => Number(f.valor_previsto || 0) > 0);
+              const expected = flowsMes.reduce((a, f) => a + (Number(f.valor_previsto) || 0), 0);
+              const paid = flowsMes.reduce((a, f) => a + (Number(f.valor_pago) || 0), 0);
+              const fullyPaid = payable.length > 0 && payable.every(f => f.status === "pago" || Number(f.valor_pago || 0) >= Number(f.valor_previsto || 0));
+              const pendingDate = flowsMes.find(f => Number(f.valor_pago || 0) < Number(f.valor_previsto || 0) && !!f.data_pagamento)?.data_pagamento;
+              const paidDate = flowsMes.find(f => Number(f.valor_pago || 0) > 0 && !!f.data_pagamento)?.data_pagamento;
+              const situacao = monthHasActiveRefund(flowsMes) ? "Estornada"
+                : fullyPaid ? `Pago${paidDate ? " em " + formatISODateBR(paidDate) : ""}`
+                : cancelada ? "Perdida"
+                : pendingDate ? `Programada para ${formatISODateBR(pendingDate)}`
+                : "A pagar";
+              return <tr key={mes} className="border-b last:border-0">
+                <td className="p-2">M{mes}</td>
+                <td className="p-2 text-right">{BRL(expected)}</td>
+                <td className="p-2 text-right">{BRL(paid)}</td>
+                <td className="p-2">{situacao}</td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   function flowProgressText(flows: CommissionEntryFlow[]) {
     const byMes = new Map<number, CommissionEntryFlow[]>();
     flows.forEach((f) => {
@@ -4755,7 +4795,7 @@ export default function ComissoesPage() {
                     ? "Pago"
                     : isFlowGroupProgrammed(row.flows)
                       ? "Programado"
-                      : "A programar";
+                      : "A pagar";
 
                   return (
                     <React.Fragment key={row.batch.id}>
@@ -4796,6 +4836,11 @@ export default function ComissoesPage() {
                         </td>
                         <td className="p-2">
                           <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline"
+                              onClick={() => setExpandedPartitionBatchIds(prev => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}
+                              aria-expanded={expanded} title="Ver parcelas e status de pagamento">
+                              {expanded ? "Ocultar parcelas" : "Ver parcelas"}
+                            </Button>
                             {canEdit && (
                               <Button
                                 size="sm"
@@ -4817,7 +4862,7 @@ export default function ComissoesPage() {
                             <div className="rounded-lg border bg-white p-3">
                               <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold uppercase text-gray-500">
                                 <span>Fluxo de pagamento da venda</span>
-                                <span>Clique novamente no vendedor/cliente para recolher</span>
+                                <span>{canEdit ? "Ações de pagamento disponíveis para administração" : "Somente consulta — sem permissão para programar ou pagar"}</span>
                               </div>
                               <table className="w-full text-sm">
                                 <thead>
@@ -4931,12 +4976,13 @@ export default function ComissoesPage() {
                     <th className="p-2 text-right">Pago</th>
                     <th className="p-2 text-right">Perdida</th>
                     <th className="p-2 text-left">Fluxo</th>
+                    <th className="p-2 text-left">Detalhes</th>
                   </tr>
                 </thead>
                 <tbody>
                   {partitionBatchRowsPerdidas.length === 0 && (
                     <tr>
-                      <td colSpan={11} className="p-4 text-gray-500">
+                      <td colSpan={12} className="p-4 text-gray-500">
                         Nenhuma comissão perdida para os filtros atuais.
                       </td>
                     </tr>
@@ -4945,8 +4991,10 @@ export default function ComissoesPage() {
                     const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
                     const pago = row.flows.reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
                     const perdida = Math.max(0, row.gross - pago);
+                    const expanded = !!expandedPartitionBatchIds[row.batch.id];
                     return (
-                      <tr key={row.batch.id} className="border-b hover:bg-gray-50">
+                      <React.Fragment key={row.batch.id}>
+                      <tr className="border-b hover:bg-gray-50">
                         <td className="p-2">{row.unidade?.nome || "—"}</td>
                         <td className="p-2">{row.vendedor?.nome || userLabel(row.batch.vendedor_id)}</td>
                         <td className="p-2">{clienteNome}</td>
@@ -4958,7 +5006,10 @@ export default function ComissoesPage() {
                         <td className="p-2 text-right">{BRL(pago)}</td>
                         <td className="p-2 text-right font-semibold text-[#A11C27]">{BRL(perdida)}</td>
                         <td className="p-2">{flowProgressText(row.flows)}</td>
+                        <td className="p-2"><Button size="sm" variant="outline" onClick={() => setExpandedPartitionBatchIds(prev => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}>{expanded ? "Ocultar parcelas" : "Ver parcelas"}</Button></td>
                       </tr>
+                      {expanded && <tr className="border-b bg-slate-50"><td colSpan={12} className="p-3">{readOnlyParcelDetails(row)}</td></tr>}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -5008,8 +5059,10 @@ export default function ComissoesPage() {
                   )}
                   {partitionBatchRowsFinalizadas.map((row) => {
                     const clienteNome = (row.clienteId && clientesMap[row.clienteId]?.trim()) || "—";
+                    const expanded = !!expandedPartitionBatchIds[row.batch.id];
                     return (
-                      <tr key={row.batch.id} className="border-b hover:bg-gray-50">
+                      <React.Fragment key={row.batch.id}>
+                      <tr className="border-b hover:bg-gray-50">
                         <td className="p-2">{row.unidade?.nome || "—"}</td>
                         <td className="p-2">{row.vendedor?.nome || userLabel(row.batch.vendedor_id)}</td>
                         <td className="p-2">{clienteNome}</td>
@@ -5022,11 +5075,14 @@ export default function ComissoesPage() {
                         <td className="p-2 text-right">{BRL(row.net)}</td>
                         <td className="p-2">{flowProgressText(row.flows)}</td>
                         <td className="p-2">
+                          <Button size="sm" variant="outline" onClick={() => setExpandedPartitionBatchIds(prev => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}>{expanded ? "Ocultar parcelas" : "Ver parcelas"}</Button>
                           <Button size="sm" variant="outline" onClick={() => downloadDemonstrativoParticionadoPDF()}>
                             Demonstrativo
                           </Button>
                         </td>
                       </tr>
+                      {expanded && <tr className="border-b bg-slate-50"><td colSpan={12} className="p-3">{readOnlyParcelDetails(row)}</td></tr>}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>

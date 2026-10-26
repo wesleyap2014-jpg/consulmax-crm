@@ -1,7 +1,6 @@
 // src/pages/Comissoes.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { loadCommissionFinancialLedger, selectCommissionFinance, summarizeCommissionFinance, monthlyCommissionFinanceChart, weeklyCommissionFinanceChart, type CommissionFinanceLine } from "@/lib/commission-financial";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1087,9 +1086,6 @@ export default function ComissoesPage() {
   const canEdit = isAdmin;
 
   const [vendedorId, setVendedorId] = useState<string>("all");
-  const [financialLedger, setFinancialLedger] = useState<CommissionFinanceLine[]>([]);
-  const [financialReady, setFinancialReady] = useState(false);
-  const [financialError, setFinancialError] = useState<string | null>(null);
   const [status, setStatus] = useState<"all" | "a_pagar" | "pago" | "estorno">("all");
   const [segmento, setSegmento] = useState<string>("all");
   const [tabela, setTabela] = useState<string>("all");
@@ -1728,16 +1724,6 @@ export default function ComissoesPage() {
 
   async function fetchData() {
     setLoading(true);
-    setFinancialReady(false);
-    // Cálculo pessoal independente: não altera consultas nem listagem de vendas.
-    void loadCommissionFinancialLedger().then((result) => {
-      setFinancialLedger(result);
-      setFinancialError(null);
-      setFinancialReady(true);
-    }).catch((err) => {
-      setFinancialError(err?.message || String(err));
-      setFinancialReady(false);
-    });
 
     try {
       const vendedorIdentifiersFor = (id: string) => {
@@ -2249,42 +2235,6 @@ export default function ComissoesPage() {
       comPerdidaLiquida,
     };
   }, [rows, impostoFrac]);
-
-  const financeToday = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const financeYear = Number(financeToday.slice(0, 4));
-  const financeMonth = Number(financeToday.slice(5, 7)) - 1;
-  const financialLines = useMemo(() => {
-    const chosen = (isMatrixAdmin || isBranchManager) && vendedorId !== "all"
-      ? (usersById[vendedorId] || usersByAuth[vendedorId])
-      : null;
-    return selectCommissionFinance(financialLedger, {
-      viewerId: currentUser?.id || "",
-      viewerAuthId: authUserId,
-      viewerUnitId: currentUser?.unit_id || null,
-      matrix: isMatrixAdmin,
-      branch: isBranchManager,
-      saleVendorIds: chosen ? [chosen.id, chosen.auth_user_id].filter(Boolean) as string[] : null,
-      unitId: unitFilter !== "all" ? unitFilter : null,
-      start: periodStart,
-      end: periodEnd,
-      administradora: adminFilter,
-      segmento,
-      tabela,
-      status,
-    });
-  }, [financialLedger, currentUser, authUserId, isMatrixAdmin, isBranchManager, vendedorId, usersById, usersByAuth, unitFilter, periodStart, periodEnd, adminFilter, segmento, tabela, status]);
-  const personalSummary = useMemo(
-    () => summarizeCommissionFinance(financialLines, financeToday),
-    [financialLines, financeToday]
-  );
-  const personalMonthly = useMemo(
-    () => monthlyCommissionFinanceChart(personalSummary, financeYear),
-    [personalSummary, financeYear]
-  );
-  const personalWeekly = useMemo(
-    () => weeklyCommissionFinanceChart(personalSummary, financeYear, financeMonth),
-    [personalSummary, financeYear, financeMonth]
-  );
 
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
   const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
@@ -4484,70 +4434,13 @@ export default function ComissoesPage() {
           </CardContent>
         </Card>
 
-        <Card className="border border-[#B5A573]/50 bg-white shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg" style={{ color: "#1E293F" }}>Minha comissão</CardTitle>
-            <p className="text-sm text-slate-500">
-              Apenas valores do usuário autenticado, incluindo comissões anteriores à migração.
-              O programado já está incluído no pendente.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {financialError ? (
-              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                Resumo pessoal indisponível: {financialError}. A lista de vendas permanece inalterada.
-              </div>
-            ) : !financialReady ? (
-              <div role="status" className="text-sm text-slate-500">Atualizando valores de comissão...</div>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {[
-                    { title: "Comissão bruta", value: personalSummary.gross },
-                    { title: "Já paga", value: personalSummary.paid },
-                    { title: "Pendente", value: personalSummary.pending },
-                    { title: "Programada", value: personalSummary.programmed },
-                  ].map((item) => (
-                    <div key={item.title} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                      <div className="text-xs text-slate-500">{item.title}</div>
-                      <div className="mt-1 text-lg font-bold tabular-nums text-[#1E293F]">{BRL(item.value)}</div>
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-slate-700">Minha previsão — {forecastView === "mes" ? "mensal" : "semanal"}</div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant={forecastView === "mes" ? "default" : "outline"} onClick={() => setForecastView("mes")}>Mês</Button>
-                      <Button size="sm" variant={forecastView === "semana" ? "default" : "outline"} onClick={() => setForecastView("semana")}>Semana</Button>
-                    </div>
-                  </div>
-                  <LineChart
-                    height={175}
-                    labels={forecastView === "mes" ? personalMonthly.labels : personalWeekly.labels}
-                    series={[
-                      { name: "Programado", data: forecastView === "mes" ? personalMonthly.previstoBruto : personalWeekly.previstoBruto },
-                      { name: "Pago", data: forecastView === "mes" ? personalMonthly.pagoBruto : personalWeekly.pagoBruto },
-                    ]}
-                  />
-                  <p className="mt-2 text-xs text-slate-500">
-                    Comissões antigas apuradas pelos pagamentos originais; divergências com os espelhos de migração precisam de conciliação.
-                  </p>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {(isMatrixAdmin || isBranchManager) && (
-          <>
         <Card className="border border-slate-200/70 bg-white shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
               <div>
                 <CardTitle className="text-lg" style={{ color: "#1E293F" }}>Visão Gerencial</CardTitle>
                 <p className="text-sm text-slate-500">
-                  Indicadores consolidados da operação, incluindo comissões de outros beneficiários; não são valores pessoais a receber.
+                  Previsão de recebimento por mês e por semana, com resumo do status financeiro das comissões.
                 </p>
               </div>
               <div className="text-xs text-slate-500">
@@ -4564,10 +4457,10 @@ export default function ComissoesPage() {
                 <CardContent className="space-y-3">
                   <Donut
                     paid={combinedKpi.comPagaBruta}
-                    pending={combinedKpi.comPendenteBruta}
+                    pending={combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta}
                     label="Pago"
                     hoverPaidText={`Pago bruto: ${BRL(combinedKpi.comPagaBruta)}`}
-                    hoverPendText={`Pendente (inclui programado): ${BRL(combinedKpi.comPendenteBruta)}`}
+                    hoverPendText={`Em aberto: ${BRL(combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta)}`}
                     pendingLegend="Em aberto"
                   />
                   <div className="grid grid-cols-2 gap-2 text-xs">
@@ -4661,8 +4554,7 @@ export default function ComissoesPage() {
             );
           })}
         </div>
-          </>
-        )}
+
 
         <Card>
           <CardHeader className="pb-4">

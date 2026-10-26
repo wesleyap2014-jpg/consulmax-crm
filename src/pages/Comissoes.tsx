@@ -876,7 +876,7 @@ function buildCommissionTimeline(parcels: CommissionTimelineParcel[]): Commissio
   let lastMonth: number | null = null;
 
   for (const parcel of ordered) {
-    const officialDate = typeof parcel.data === "string" && /^\\d{4}-\\d{2}-\\d{2}/.test(parcel.data)
+    const officialDate = typeof parcel.data === "string" && /^\d{4}-\d{2}-\d{2}/.test(parcel.data)
       ? parcel.data.slice(0, 10) : null;
     const projectedDate: string | null = officialDate
       || (lastDate && lastMonth !== null ? datePlusDays(lastDate, Math.max(0, parcel.mes - lastMonth) * 30) : null);
@@ -1112,6 +1112,7 @@ export default function ComissoesPage() {
   const [partitionRefundDateBR, setPartitionRefundDateBR] = useState<string>(() => isoToBRDate(toDateInput(new Date())));
   const [partitionRefundDescription, setPartitionRefundDescription] = useState<string>("Estorno de comissão");
   const [expandedPartitionBatchIds, setExpandedPartitionBatchIds] = useState<Record<string, boolean>>({});
+  const [sellerDetailsBatchId, setSellerDetailsBatchId] = useState<string | null>(null);
   const [commissionSearch, setCommissionSearch] = useState<string>("");
   const [showFinalizadas, setShowFinalizadas] = useState<boolean>(false);
   const [showPerdidas, setShowPerdidas] = useState<boolean>(false);
@@ -3579,9 +3580,31 @@ export default function ComissoesPage() {
     );
   }
 
+  function openCommissionDetails(batchId: string) {
+    if (!canEdit) {
+      setSellerDetailsBatchId(batchId);
+      return;
+    }
+    setExpandedPartitionBatchIds(prev => ({ ...prev, [batchId]: !prev[batchId] }));
+  }
+
   function readOnlyParcelDetails(row: (typeof partitionBatchRowsVisible)[number]) {
     const months = Array.from(new Set(row.flows.map(f => Number(f.mes)))).sort((a, b) => a - b);
     const cancelada = isPartitionBatchCancelada(row);
+    const projectedDates = new Map<number, string>();
+    let anchor: string | null = null;
+    let anchorMonth: number | null = null;
+    const monthsSorted = Array.from(new Set(row.flows.map(f => Number(f.mes)))).sort((a, b) => a - b);
+    for (const mes of monthsSorted) {
+      const entries = row.flows.filter(f => Number(f.mes) === mes);
+      const official = entries.find(f => !!f.data_pagamento)?.data_pagamento?.slice(0, 10) || null;
+      const nextDate = official || (anchor && anchorMonth !== null ? datePlusDays(anchor, (mes - anchorMonth) * 30) : null);
+      if (nextDate) {
+        projectedDates.set(mes, nextDate);
+        anchor = nextDate;
+        anchorMonth = mes;
+      }
+    }
     return (
       <div className="rounded-lg border bg-white p-3">
         <div className="mb-2 text-sm font-semibold text-slate-700">Situação das parcelas · somente consulta</div>
@@ -3605,6 +3628,7 @@ export default function ComissoesPage() {
                 : fullyPaid ? `Pago${paidDate ? " em " + formatISODateBR(paidDate) : ""}`
                 : cancelada ? "Perdida"
                 : pendingDate ? `Programada para ${formatISODateBR(pendingDate)}`
+                : projectedDates.get(mes) ? `A pagar · previsão ${formatISODateBR(projectedDates.get(mes))}`
                 : "A pagar";
               return <tr key={mes} className="border-b last:border-0">
                 <td className="p-2">M{mes}</td>
@@ -4792,13 +4816,20 @@ export default function ComissoesPage() {
 
                   return (
                     <React.Fragment key={row.batch.id}>
-                      <tr className={`border-b align-middle hover:bg-gray-50 ${isFlowGroupProgrammed(row.flows) ? "bg-blue-50/70 border-l-4 border-l-[#1E40AF]" : ""}`}>
+                      <tr
+                        className={`border-b align-middle hover:bg-gray-50 cursor-pointer ${isFlowGroupProgrammed(row.flows) ? "bg-blue-50/70 border-l-4 border-l-[#1E40AF]" : ""}`}
+                        title="Clique na venda para consultar as parcelas"
+                        onClick={(event) => {
+                          if ((event.target as HTMLElement).closest("button,a,input,select")) return;
+                          openCommissionDetails(row.batch.id);
+                        }}
+                      >
                         <td className="p-2">{row.unidade?.nome || "—"}</td>
                         <td className="p-2">
                           <button
                             type="button"
                             className="font-medium text-[#1E293F] underline-offset-2 hover:underline"
-                            onClick={() => setExpandedPartitionBatchIds((prev) => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}
+                            onClick={() => openCommissionDetails(row.batch.id)}
                             title={expanded ? "Recolher detalhes" : "Expandir detalhes"}
                           >
                             {row.vendedor?.nome || userLabel(row.batch.vendedor_id)}
@@ -4808,7 +4839,7 @@ export default function ComissoesPage() {
                           <button
                             type="button"
                             className="text-left underline-offset-2 hover:underline"
-                            onClick={() => setExpandedPartitionBatchIds((prev) => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}
+                            onClick={() => openCommissionDetails(row.batch.id)}
                             title={expanded ? "Recolher detalhes" : "Expandir detalhes"}
                           >
                             {clienteNome}
@@ -4830,7 +4861,7 @@ export default function ComissoesPage() {
                         <td className="p-2">
                           <div className="flex flex-wrap gap-2">
                             <Button size="sm" variant="outline"
-                              onClick={() => setExpandedPartitionBatchIds(prev => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}
+                              onClick={() => openCommissionDetails(row.batch.id)}
                               aria-expanded={expanded} title="Ver parcelas e status de pagamento">
                               {expanded ? "Ocultar parcelas" : "Ver parcelas"}
                             </Button>
@@ -4849,7 +4880,7 @@ export default function ComissoesPage() {
                         </td>
                       </tr>
 
-                      {expanded && (
+                      {expanded && canEdit && (
                         <tr className="border-b bg-slate-50/60">
                           <td colSpan={12} className="p-3">
                             <div className="rounded-lg border bg-white p-3">
@@ -4991,7 +5022,7 @@ export default function ComissoesPage() {
                     const expanded = !!expandedPartitionBatchIds[row.batch.id];
                     return (
                       <React.Fragment key={row.batch.id}>
-                      <tr className="border-b hover:bg-gray-50">
+                      <tr className="border-b hover:bg-gray-50 cursor-pointer" title="Clique na venda para consultar as parcelas" onClick={(event) => { if ((event.target as HTMLElement).closest("button,a,input,select")) return; openCommissionDetails(row.batch.id); }}>
                         <td className="p-2">{row.unidade?.nome || "—"}</td>
                         <td className="p-2">{row.vendedor?.nome || userLabel(row.batch.vendedor_id)}</td>
                         <td className="p-2">{clienteNome}</td>
@@ -5003,9 +5034,9 @@ export default function ComissoesPage() {
                         <td className="p-2 text-right">{BRL(pago)}</td>
                         <td className="p-2 text-right font-semibold text-[#A11C27]">{BRL(perdida)}</td>
                         <td className="p-2">{flowProgressText(row.flows)}</td>
-                        <td className="p-2"><Button size="sm" variant="outline" onClick={() => setExpandedPartitionBatchIds(prev => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}>{expanded ? "Ocultar parcelas" : "Ver parcelas"}</Button></td>
+                        <td className="p-2"><Button size="sm" variant="outline" onClick={() => openCommissionDetails(row.batch.id)}>{expanded ? "Ocultar parcelas" : "Ver parcelas"}</Button></td>
                       </tr>
-                      {expanded && <tr className="border-b bg-slate-50"><td colSpan={12} className="p-3">{readOnlyParcelDetails(row)}</td></tr>}
+                      {expanded && canEdit && <tr className="border-b bg-slate-50"><td colSpan={12} className="p-3">{readOnlyParcelDetails(row)}</td></tr>}
                       </React.Fragment>
                     );
                   })}
@@ -5059,7 +5090,7 @@ export default function ComissoesPage() {
                     const expanded = !!expandedPartitionBatchIds[row.batch.id];
                     return (
                       <React.Fragment key={row.batch.id}>
-                      <tr className="border-b hover:bg-gray-50">
+                      <tr className="border-b hover:bg-gray-50 cursor-pointer" title="Clique na venda para consultar as parcelas" onClick={(event) => { if ((event.target as HTMLElement).closest("button,a,input,select")) return; openCommissionDetails(row.batch.id); }}>
                         <td className="p-2">{row.unidade?.nome || "—"}</td>
                         <td className="p-2">{row.vendedor?.nome || userLabel(row.batch.vendedor_id)}</td>
                         <td className="p-2">{clienteNome}</td>
@@ -5072,13 +5103,13 @@ export default function ComissoesPage() {
                         <td className="p-2 text-right">{BRL(row.net)}</td>
                         <td className="p-2">{flowProgressText(row.flows)}</td>
                         <td className="p-2">
-                          <Button size="sm" variant="outline" onClick={() => setExpandedPartitionBatchIds(prev => ({ ...prev, [row.batch.id]: !prev[row.batch.id] }))}>{expanded ? "Ocultar parcelas" : "Ver parcelas"}</Button>
+                          <Button size="sm" variant="outline" onClick={() => openCommissionDetails(row.batch.id)}>{expanded ? "Ocultar parcelas" : "Ver parcelas"}</Button>
                           <Button size="sm" variant="outline" onClick={() => downloadDemonstrativoParticionadoPDF()}>
                             Demonstrativo
                           </Button>
                         </td>
                       </tr>
-                      {expanded && <tr className="border-b bg-slate-50"><td colSpan={12} className="p-3">{readOnlyParcelDetails(row)}</td></tr>}
+                      {expanded && canEdit && <tr className="border-b bg-slate-50"><td colSpan={12} className="p-3">{readOnlyParcelDetails(row)}</td></tr>}
                       </React.Fragment>
                     );
                   })}
@@ -5089,6 +5120,29 @@ export default function ComissoesPage() {
         </Card>
 
 
+
+        <Dialog open={!!sellerDetailsBatchId} onOpenChange={(open) => { if (!open) setSellerDetailsBatchId(null); }}>
+          <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Detalhamento de pagamentos — consulta</DialogTitle>
+            </DialogHeader>
+            {(() => {
+              const row = partitionBatchRowsVisible.find(item => item.batch.id === sellerDetailsBatchId);
+              if (!row || canEdit) return <p className="text-sm text-slate-600">Detalhamento não disponível para este usuário ou filtro.</p>;
+              return (
+                <div className="space-y-3">
+                  <div className="text-sm text-slate-600">
+                    <strong>{(row.clienteId && clientesMap[row.clienteId]) || "Venda"}</strong>
+                    {" · "}{row.venda?.numero_proposta || "Sem número de proposta"}
+                    {" · "}{row.unidade?.nome || "Unidade"}
+                  </div>
+                  <div className="text-xs text-slate-500">Você pode acompanhar os valores, as datas e o status de cada parcela. Apenas administradores podem programar ou registrar pagamentos.</div>
+                  {readOnlyParcelDetails(row)}
+                </div>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
 
         {/* Modelo antigo ocultado após migração: Detalhamento de Comissões e Comissões pagas foram removidos da operação principal. */}
 

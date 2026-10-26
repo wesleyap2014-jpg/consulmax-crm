@@ -260,7 +260,7 @@ export default function Inicio() {
   const rangeToday = useMemo(() => { const ymd = ymdFromDateInOffset(new Date(), PV_OFFSET_MIN); const { startISO, endISO } = rangeISOForDayInOffset(ymd, PV_OFFSET_MIN); return { ymd, br: fmtDateBRFromYMD(ymd), startISO, endISO }; }, []);
   const rangeMonth = useMemo(() => monthRangeYMDFromOffset(new Date(), PV_OFFSET_MIN), []);
 
-  const [kpi, setKpi] = useState({ openOppCount: 0, openOppTotal: 0, todayEventsCount: 0, todayGroupsCount: 0, myDayCount: 0, pendingGroupRegistrationCount: 0, monthSalesTotal: 0, monthSalesMeta: 0, monthSalesPct: 0, carteiraAtivaTotal: 0, openStockReqCount: 0, vendasSemComissaoCount: 0, giroDueCount: 0, newProceduresCount: 0, commissionsPendingCount: 0, commissionsPendingTotal: 0, commissionScheduledTotal: 0, commissionScheduledDate: "" as string | null });
+  const [kpi, setKpi] = useState({ openOppCount: 0, openOppTotal: 0, todayEventsCount: 0, todayGroupsCount: 0, myDayCount: 0, pendingGroupRegistrationCount: 0, monthSalesTotal: 0, monthSalesMeta: 0, monthSalesPct: 0, carteiraAtivaTotal: 0, openStockReqCount: 0, vendasSemComissaoCount: 0, giroDueCount: 0, newProceduresCount: 0, commissionsPendingCount: 0, commissionsPendingTotal: 0, commissionProgrammedTotal: 0, commissionScheduledTotal: 0, commissionScheduledDate: "" as string | null });
   const [overdueOpps, setOverdueOpps] = useState<(OppRow & { lead_nome?: string; lead_tel?: string | null; daysWaiting?: number })[]>([]);
   const [giroAll, setGiroAll] = useState<{ id: string; nome: string; carteiraAtiva: number }[]>([]);
   const [giroPage, setGiroPage] = useState(0);
@@ -434,6 +434,7 @@ export default function Inicio() {
     const finance = summarizeCommissionFinance(entitledLines, today);
     const commissionsPendingCount = finance.countPending;
     const commissionsPendingTotal = finance.pending;
+    const commissionProgrammedTotal = finance.programmed;
     const scheduledByDate = finance.scheduledByDate;
     const commissionScheduledDate = finance.nextScheduledDate;
     const commissionScheduledTotal = finance.nextScheduledAmount;
@@ -838,7 +839,7 @@ export default function Inicio() {
     setThoughtOfDay(pickThought(today));
     setCarteiraHealth(carteiraHealthNext);
     setCarteiraHealthLists(carteiraHealthListsNext);
-    setKpi({ openOppCount, openOppTotal, todayEventsCount, todayGroupsCount, myDayCount: myDay.length, pendingGroupRegistrationCount, monthSalesTotal, monthSalesMeta, monthSalesPct, carteiraAtivaTotal, openStockReqCount, vendasSemComissaoCount, giroDueCount, newProceduresCount, commissionsPendingCount, commissionsPendingTotal, commissionScheduledTotal, commissionScheduledDate });
+    setKpi({ openOppCount, openOppTotal, todayEventsCount, todayGroupsCount, myDayCount: myDay.length, pendingGroupRegistrationCount, monthSalesTotal, monthSalesMeta, monthSalesPct, carteiraAtivaTotal, openStockReqCount, vendasSemComissaoCount, giroDueCount, newProceduresCount, commissionsPendingCount, commissionsPendingTotal, commissionProgrammedTotal, commissionScheduledTotal, commissionScheduledDate });
   }
 
   function getScopes() { return me ? buildDashboardScope(me, users, units, vendorScope) : null; }
@@ -1336,9 +1337,9 @@ export default function Inicio() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-emerald-950">Comissão programada</div>
-                    <div className="text-xs text-emerald-700">{kpi.commissionScheduledDate ? fmtDateBRFromYMD(kpi.commissionScheduledDate) : "Sem data"}</div>
+                    <div className="text-xs text-emerald-700">{kpi.commissionScheduledDate ? `Próxima: ${fmtDateBRFromYMD(kpi.commissionScheduledDate)} · ${fmtBRL(kpi.commissionScheduledTotal)}` : "Nenhum pagamento futuro programado"}</div>
                   </div>
-                  <div className="text-right text-sm font-bold text-emerald-950">{fmtBRL(kpi.commissionScheduledTotal)}</div>
+                  <div className="text-right text-sm font-bold text-emerald-950">{fmtBRL(kpi.commissionProgrammedTotal)}</div>
                 </div>
               </div>
             </CardContent>

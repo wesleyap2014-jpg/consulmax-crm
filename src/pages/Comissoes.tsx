@@ -2270,35 +2270,36 @@ export default function ComissoesPage() {
       status,
     });
   }, [financialLedger, currentUser, authUserId, isMatrixAdmin, isBranchManager, vendedorId, usersById, usersByAuth, unitFilter, periodStart, periodEnd, adminFilter, segmento, tabela, status]);
+  // Mesmo calendário operacional de Rondônia usado pelo Início.
+  const financeToday = useMemo(() => new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString().slice(0, 10), [financialLines]);
+  const financeYear = Number(financeToday.slice(0, 4));
+  const financeMonth = Number(financeToday.slice(5, 7)) - 1;
   const financialSummary = useMemo(
-    () => summarizeCommissionFinance(financialLines, toDateInput(new Date())),
-    [financialLines]
+    () => summarizeCommissionFinance(financialLines, financeToday),
+    [financialLines, financeToday]
   );
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
-  const monthlyCurr = useMemo(() => monthlyCommissionFinanceChart(financialSummary, new Date().getFullYear()), [financialSummary]);
-  const weeklyCurr = useMemo(() => weeklyCommissionFinanceChart(financialSummary, new Date().getFullYear(), new Date().getMonth()), [financialSummary]);
+  const monthlyCurr = useMemo(() => monthlyCommissionFinanceChart(financialSummary, financeYear), [financialSummary, financeYear]);
+  const weeklyCurr = useMemo(() => weeklyCommissionFinanceChart(financialSummary, financeYear, financeMonth), [financialSummary, financeYear, financeMonth]);
 
-  const currentMonthProjectedGross = useMemo(() => {
-    const monthIndex = new Date().getMonth();
-    return Number(monthlyCurr.previstoBruto[monthIndex]) || 0;
-  }, [monthlyCurr]);
+  const currentMonthProjectedGross = useMemo(() =>
+    Number(monthlyCurr.previstoBruto[financeMonth]) || 0, [monthlyCurr, financeMonth]);
 
   const currentWeekProjectedGross = useMemo(() => {
-    const now = new Date();
-    const dayToday = now.getDate();
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dayToday = Number(financeToday.slice(8, 10));
+    const monthEnd = new Date(financeYear, financeMonth + 1, 0).getDate();
     let start = 1, i = 0;
     while (start <= monthEnd) {
-      const d = new Date(now.getFullYear(), now.getMonth(), start);
+      const d = new Date(financeYear, financeMonth, start);
       const end = Math.min(monthEnd, start + (4 - d.getDay() + 7) % 7);
       if (dayToday >= start && dayToday <= end) return Number(weeklyCurr.previstoBruto[i]) || 0;
       start = end + 1;
       i++;
     }
     return 0;
-  }, [weeklyCurr]);
+  }, [weeklyCurr, financeToday, financeYear, financeMonth]);
 
-  const previousYearMonthly = useMemo(() => monthlyCommissionFinanceChart(financialSummary, new Date().getFullYear() - 1), [financialSummary]);
+  const previousYearMonthly = useMemo(() => monthlyCommissionFinanceChart(financialSummary, financeYear - 1), [financialSummary, financeYear]);
 
   const comissaoProgramada = useMemo(() => {
     const programadas: Array<{ dateIso: string; bruto: number; liquido: number }> = [];

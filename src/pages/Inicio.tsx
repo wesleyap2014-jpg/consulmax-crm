@@ -1327,8 +1327,8 @@ export default function Inicio() {
               <div className="rounded-2xl border border-[#B5A573]/40 bg-[#B5A573]/10 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">Total pendente</div>
-                    <div className="text-xs text-slate-500">Comissões a receber</div>
+                    <div className="text-sm font-semibold text-slate-900">Minha comissão • pendente</div>
+                    <div className="text-xs text-slate-500">Saldo pessoal a receber (inclui o programado)</div>
                   </div>
                   <div className="text-right text-sm font-bold text-slate-950">{fmtBRL(kpi.commissionsPendingTotal)}</div>
                 </div>
@@ -1336,7 +1336,7 @@ export default function Inicio() {
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-emerald-950">Comissão programada</div>
+                    <div className="text-sm font-semibold text-emerald-950">Minha comissão • programada</div>
                     <div className="text-xs text-emerald-700">{kpi.commissionScheduledDate ? `Próxima: ${fmtDateBRFromYMD(kpi.commissionScheduledDate)} · ${fmtBRL(kpi.commissionScheduledTotal)}` : "Nenhum pagamento futuro programado"}</div>
                   </div>
                   <div className="text-right text-sm font-bold text-emerald-950">{fmtBRL(kpi.commissionProgrammedTotal)}</div>

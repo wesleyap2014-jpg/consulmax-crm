@@ -105,12 +105,17 @@ function lineFromFlows(args: {
   const reversed = legacy ? commission?.status === "estorno" : ["estornado", "cancelado"].includes(norm(entry?.status)) || ["estornado", "cancelado"].includes(norm(batch?.status));
   const pending = cancelled || reversed ? 0 : cent(Math.max(0, gross - paid));
   const paidEvents: CommissionFinanceEvent[] = [];
+  let availablePaidForEvents = paid;
   const scheduledCandidate: CommissionFinanceEvent[] = [];
   for (const f of flows) {
     const flowPaid = n(legacy ? f.valor_pago_vendedor : f.valor_pago);
     const scheduledDate = dateOf(legacy ? f.data_pagamento_vendedor : f.data_pagamento);
     if (!scheduledDate) continue;
-    if (flowPaid > 0) paidEvents.push({ date: scheduledDate, amount: flowPaid });
+    if (flowPaid > 0 && availablePaidForEvents > 0) {
+      const amount = cent(Math.min(flowPaid, availablePaidForEvents));
+      paidEvents.push({ date: scheduledDate, amount });
+      availablePaidForEvents = cent(Math.max(0, availablePaidForEvents - amount));
+    }
     if (cancelled || reversed) continue;
     // Em fluxos antigos, o valor_previsto pode conter o crédito da venda
     // em vez da comissão (ex.: 400.000,00 para comissão de 4.000,00).

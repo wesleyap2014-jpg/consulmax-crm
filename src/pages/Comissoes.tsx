@@ -4915,7 +4915,7 @@ export default function ComissoesPage() {
                                         : "Sem estorno lançado"}
                                     </td>
                                     {canEdit && <td className="p-2">
-                                        activeRefunds.length ? (
+                                      {activeRefunds.length ? (
                                           <Button
                                             size="sm"
                                             variant="outline"
@@ -4932,8 +4932,7 @@ export default function ComissoesPage() {
                                           >
                                             Lançar Estorno
                                           </Button>
-                                        )
-                                      )}
+                                        )}
                                     </td>}
                                   </tr>
                                 </tbody>

@@ -2059,7 +2059,7 @@ export default function ComissoesPage() {
       const saleUnitId = batch.business_unit_id || vendedor?.unit_id || null;
       const recipientId = canonUserId(entry.recipient_user_id) || entry.recipient_user_id;
       const saleVendorId = canonUserId(batch.vendedor_id) || batch.vendedor_id;
-      const own = !!currentUser?.id && recipientId === currentUser.id;
+      const own = !["empresa", "unidade"].includes(entry.recipient_type) && !!currentUser?.id && recipientId === currentUser.id;
       const company = isMatrixAdmin && entry.recipient_type === "empresa";
       const unit = (isMatrixAdmin || isBranchManager) &&
         entry.recipient_type === "unidade" &&

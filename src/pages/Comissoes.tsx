@@ -2049,7 +2049,7 @@ export default function ComissoesPage() {
   // Os filtros de venda não mudam quem é dono da comissão: cada pessoa vê
   // suas próprias partes; matriz e gestor recebem apenas suas partes institucionais.
   const partitionEntriesVisible = useMemo(() => {
-    const selectedVendor = vendedorId !== "all"
+    const selectedVendor = (isMatrixAdmin || isBranchManager) && vendedorId !== "all"
       ? canonUserId(vendedorId) || vendedorId
       : null;
     return partitionEntries.filter((entry) => {
@@ -2251,7 +2251,7 @@ export default function ComissoesPage() {
   }, [rows, impostoFrac]);
 
   const financialLines = useMemo(() => {
-    const selectedVendor = vendedorId !== "all"
+    const selectedVendor = (isMatrixAdmin || isBranchManager) && vendedorId !== "all"
       ? usersById[vendedorId] || usersByAuth[vendedorId]
       : null;
     return selectCommissionFinance(financialLedger, {

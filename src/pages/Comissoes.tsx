@@ -4515,7 +4515,13 @@ export default function ComissoesPage() {
                   ))}
                 </div>
                 <div>
-                  <div className="mb-2 text-sm font-semibold text-slate-700">Minha previsão — {forecastView === "mes" ? "mensal" : "semanal"}</div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-slate-700">Minha previsão — {forecastView === "mes" ? "mensal" : "semanal"}</div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant={forecastView === "mes" ? "default" : "outline"} onClick={() => setForecastView("mes")}>Mês</Button>
+                      <Button size="sm" variant={forecastView === "semana" ? "default" : "outline"} onClick={() => setForecastView("semana")}>Semana</Button>
+                    </div>
+                  </div>
                   <LineChart
                     height={175}
                     labels={forecastView === "mes" ? personalMonthly.labels : personalWeekly.labels}
@@ -4541,7 +4547,7 @@ export default function ComissoesPage() {
               <div>
                 <CardTitle className="text-lg" style={{ color: "#1E293F" }}>Visão Gerencial</CardTitle>
                 <p className="text-sm text-slate-500">
-                  Previsão de recebimento por mês e por semana, com resumo do status financeiro das comissões.
+                  Indicadores consolidados da operação, incluindo comissões de outros beneficiários; não são valores pessoais a receber.
                 </p>
               </div>
               <div className="text-xs text-slate-500">

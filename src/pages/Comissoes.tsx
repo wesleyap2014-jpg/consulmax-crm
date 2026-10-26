@@ -2032,7 +2032,9 @@ export default function ComissoesPage() {
 
       if (!isMatrixAdmin) {
         if (isBranchManager && unitId !== currentUser?.unit_id) return false;
-        if (!isBranchManager && entryRecipientId !== currentUser?.id) return false;
+        // A parcela "empresa" pode ter o mesmo recipient_user_id do vendedor:
+        // o perfil vendedor só pode ver sua própria partilha, nunca a empresarial.
+        if (!isBranchManager && (entry.recipient_type !== "vendedor" || entryRecipientId !== currentUser?.id)) return false;
       }
 
       if (unitFilter !== "all" && unitId !== unitFilter) return false;

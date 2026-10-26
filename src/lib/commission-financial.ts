@@ -205,7 +205,7 @@ export function selectCommissionFinance(
   const viewerIds = new Set([filters.viewerId, filters.viewerAuthId].filter(Boolean));
   const normalizedFilters = { admin: norm(filters.administradora), segment: norm(filters.segmento), table: norm(filters.tabela) };
   return lines.filter(line => {
-    const mine = !!line.recipientId && viewerIds.has(line.recipientId);
+    const mine = !["empresa", "unidade"].includes(line.recipientType) && !!line.recipientId && viewerIds.has(line.recipientId);
     // A matriz recebe a parte EMPRESA, o gestor da filial a parte UNIDADE,
     // e cada consultor as próprias partes como vendedor (cumulativas).
     const company = filters.matrix && line.recipientType === "empresa";

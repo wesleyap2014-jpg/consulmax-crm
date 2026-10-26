@@ -1,6 +1,7 @@
 // src/pages/Comissoes.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { loadCommissionFinancialLedger, selectCommissionFinance, summarizeCommissionFinance, monthlyCommissionFinanceChart, weeklyCommissionFinanceChart, type CommissionFinanceLine } from "@/lib/commission-financial";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1220,6 +1221,8 @@ export default function ComissoesPage() {
 
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<CommissionWithFlow[]>([]);
+  const [financialLedger, setFinancialLedger] = useState<CommissionFinanceLine[]>([]);
+  const [financialError, setFinancialError] = useState<string | null>(null);
   const [allVendasComissao, setAllVendasComissao] = useState<Venda[]>([]);
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
@@ -1726,6 +1729,15 @@ export default function ComissoesPage() {
     setLoading(true);
 
     try {
+      // Recarrega a mesma fonte de valores usada no Início.
+      // Falhas são exibidas na tela, nunca convertidas silenciosamente em zero.
+      try {
+        setFinancialLedger(await loadCommissionFinancialLedger());
+        setFinancialError(null);
+      } catch (financeErr: any) {
+        setFinancialLedger([]);
+        setFinancialError(financeErr?.message || String(financeErr));
+      }
       const vendedorIdentifiersFor = (id: string) => {
         const profile = usersById[id] || usersByAuth[id] || null;
         return Array.from(new Set([profile?.id || id, profile?.auth_user_id].filter((value): value is string => !!value)));
@@ -2034,44 +2046,45 @@ export default function ComissoesPage() {
   }, [allVendasComissao, rows]);
 
 
+  // Os filtros de venda não mudam quem é dono da comissão: cada pessoa vê
+  // suas próprias partes; matriz e gestor recebem apenas suas partes institucionais.
   const partitionEntriesVisible = useMemo(() => {
+    const selectedVendor = vendedorId !== "all"
+      ? canonUserId(vendedorId) || vendedorId
+      : null;
     return partitionEntries.filter((entry) => {
       const batch = partitionBatches.find((b) => b.id === entry.batch_id);
-      const vendedor = batch?.vendedor_id ? usersById[batch.vendedor_id] || usersByAuth[batch.vendedor_id] : null;
-      const unitId = entry.business_unit_id || batch?.business_unit_id || vendedor?.unit_id || null;
-      const entryRecipientId = canonUserId(entry.recipient_user_id) || entry.recipient_user_id;
-      const batchVendedorId = canonUserId(batch?.vendedor_id) || batch?.vendedor_id;
-      const selectedVendedorId = canonUserId(vendedorId) || vendedorId;
-
-      if (!isMatrixAdmin) {
-        if (isBranchManager && unitId !== currentUser?.unit_id) return false;
-        if (!isBranchManager && entryRecipientId !== currentUser?.id) return false;
-      }
-
-      if (unitFilter !== "all" && unitId !== unitFilter) return false;
-      if (vendedorId !== "all" && entryRecipientId !== selectedVendedorId && batchVendedorId !== selectedVendedorId) return false;
-      if (status !== "all" && entry.status !== status) return false;
-      if (!isBetweenISO(batch?.data_venda, localDateFromISO(periodStart), localDateFromISO(periodEnd))) return false;
-
-      const venda = batch ? partitionVendaById[batch.venda_id] : null;
+      if (!batch) return false;
+      const vendedor = usersById[batch.vendedor_id] || usersByAuth[batch.vendedor_id];
+      const saleUnitId = batch.business_unit_id || vendedor?.unit_id || null;
+      const recipientId = canonUserId(entry.recipient_user_id) || entry.recipient_user_id;
+      const saleVendorId = canonUserId(batch.vendedor_id) || batch.vendedor_id;
+      const own = !!currentUser?.id && recipientId === currentUser.id;
+      const company = isMatrixAdmin && entry.recipient_type === "empresa";
+      const unit = (isMatrixAdmin || isBranchManager) &&
+        entry.recipient_type === "unidade" &&
+        !!currentUser?.unit_id &&
+        (entry.recipient_unit_id === currentUser.unit_id || saleUnitId === currentUser.unit_id);
+      if (!own && !company && !unit) return false;
+      if (unitFilter !== "all" && saleUnitId !== unitFilter) return false;
+      if (selectedVendor && saleVendorId !== selectedVendor) return false;
+      if (!isBetweenISO(batch.data_venda, localDateFromISO(periodStart), localDateFromISO(periodEnd))) return false;
+      const venda = partitionVendaById[batch.venda_id];
       if (adminFilter !== "all" && normalize(venda?.administradora) !== normalize(adminFilter)) return false;
-
+      if (segmento !== "all" && normalize(venda?.segmento) !== normalize(segmento)) return false;
+      if (tabela !== "all" && normalize(venda?.tabela) !== normalize(tabela)) return false;
+      const entryFlows = partitionFlows.filter((flow) => flow.entry_id === entry.id);
+      const paid = entryFlows.reduce((sum, flow) => sum + (Number(flow.valor_pago) || 0), 0);
+      const isSettled = Number(entry.gross_amount || 0) <= paid + 0.009;
+      if (status === "pago" && !isSettled) return false;
+      if (status === "a_pagar" && isSettled) return false;
+      if (status === "estorno" && entry.status !== "estornado") return false;
       return true;
     });
   }, [
-    partitionEntries,
-    partitionBatches,
-    usersById,
-    isMatrixAdmin,
-    isBranchManager,
-    currentUser,
-    unitFilter,
-    vendedorId,
-    status,
-    periodStart,
-    periodEnd,
-    adminFilter,
-    partitionVendaById,
+    partitionEntries, partitionBatches, partitionFlows, usersById, usersByAuth,
+    currentUser, isMatrixAdmin, isBranchManager, unitFilter, vendedorId,
+    status, periodStart, periodEnd, adminFilter, segmento, tabela, partitionVendaById
   ]);
 
   const partitionBatchRowsVisible = useMemo(() => {
@@ -2236,9 +2249,33 @@ export default function ComissoesPage() {
     };
   }, [rows, impostoFrac]);
 
+  const financialLines = useMemo(() => {
+    const selectedVendor = vendedorId !== "all"
+      ? usersById[vendedorId] || usersByAuth[vendedorId]
+      : null;
+    return selectCommissionFinance(financialLedger, {
+      viewerId: currentUser?.id || "",
+      viewerAuthId: authUserId,
+      matrix: isMatrixAdmin,
+      branch: isBranchManager,
+      viewerUnitId: currentUser?.unit_id,
+      saleVendorIds: selectedVendor ? [selectedVendor.id, selectedVendor.auth_user_id].filter(Boolean) as string[] : null,
+      unitId: unitFilter === "all" ? null : unitFilter,
+      start: periodStart,
+      end: periodEnd,
+      administradora: adminFilter,
+      segmento,
+      tabela,
+      status,
+    });
+  }, [financialLedger, currentUser, authUserId, isMatrixAdmin, isBranchManager, vendedorId, usersById, usersByAuth, unitFilter, periodStart, periodEnd, adminFilter, segmento, tabela, status]);
+  const financialSummary = useMemo(
+    () => summarizeCommissionFinance(financialLines, toDateInput(new Date())),
+    [financialLines]
+  );
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
-  const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
-  const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
+  const monthlyCurr = useMemo(() => monthlyCommissionFinanceChart(financialSummary, new Date().getFullYear()), [financialSummary]);
+  const weeklyCurr = useMemo(() => weeklyCommissionFinanceChart(financialSummary, new Date().getFullYear(), new Date().getMonth()), [financialSummary]);
 
   const currentMonthProjectedGross = useMemo(() => {
     const monthIndex = new Date().getMonth();
@@ -2246,18 +2283,21 @@ export default function ComissoesPage() {
   }, [monthlyCurr]);
 
   const currentWeekProjectedGross = useMemo(() => {
-    const ref = new Date();
-    const refDay = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
-    const intervals = getWeeklyIntervalsFriToThu(ref.getFullYear(), ref.getMonth());
-    const idx = intervals.findIndex((iv) => {
-      const start = new Date(iv.start.getFullYear(), iv.start.getMonth(), iv.start.getDate());
-      const end = new Date(iv.end.getFullYear(), iv.end.getMonth(), iv.end.getDate());
-      return refDay.getTime() >= start.getTime() && refDay.getTime() <= end.getTime();
-    });
-    return idx >= 0 ? Number(weeklyCurr.previstoBruto[idx]) || 0 : 0;
+    const now = new Date();
+    const dayToday = now.getDate();
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    let start = 1, i = 0;
+    while (start <= monthEnd) {
+      const d = new Date(now.getFullYear(), now.getMonth(), start);
+      const end = Math.min(monthEnd, start + (4 - d.getDay() + 7) % 7);
+      if (dayToday >= start && dayToday <= end) return Number(weeklyCurr.previstoBruto[i]) || 0;
+      start = end + 1;
+      i++;
+    }
+    return 0;
   }, [weeklyCurr]);
 
-  const previousYearMonthly = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]);
+  const previousYearMonthly = useMemo(() => monthlyCommissionFinanceChart(financialSummary, new Date().getFullYear() - 1), [financialSummary]);
 
   const comissaoProgramada = useMemo(() => {
     const programadas: Array<{ dateIso: string; bruto: number; liquido: number }> = [];
@@ -2761,83 +2801,25 @@ export default function ComissoesPage() {
 
 
   const combinedKpi = useMemo(() => {
-    const visibleEntryIds = new Set(partitionEntriesVisible.map((entry) => entry.id));
-    const paidByEntry = new Map<string, number>();
-    const scheduledByEntry = new Map<string, number>();
-
-    for (const flow of partitionFlows) {
-      if (!visibleEntryIds.has(flow.entry_id)) continue;
-      const previsto = Number(flow.valor_previsto) || 0;
-      const pago = Number(flow.valor_pago) || 0;
-      const isPaid = flow.status === "pago" || pago > 0;
-
-      if (pago > 0) {
-        paidByEntry.set(flow.entry_id, (paidByEntry.get(flow.entry_id) || 0) + pago);
-      }
-
-      if (!isPaid && previsto > 0 && !!flow.data_pagamento) {
-        scheduledByEntry.set(flow.entry_id, (scheduledByEntry.get(flow.entry_id) || 0) + Math.max(0, previsto - pago));
-      }
-    }
-
-    let partitionBruta = 0;
-    let partitionPaga = 0;
-    let partitionPendente = 0;
-    let partitionPerdida = 0;
-    let partitionProgramada = 0;
-    let proximaDataProgramada: string | null = null;
-    const partitionVendaIds = new Set<string>();
-
-    for (const flow of partitionFlows) {
-      if (!visibleEntryIds.has(flow.entry_id)) continue;
-      const previsto = Number(flow.valor_previsto) || 0;
-      const pago = Number(flow.valor_pago) || 0;
-      const isPaid = flow.status === "pago" || pago > 0;
-      if (!isPaid && previsto > 0 && !!flow.data_pagamento) {
-        if (!proximaDataProgramada || flow.data_pagamento < proximaDataProgramada) proximaDataProgramada = flow.data_pagamento;
-      }
-    }
-
-    for (const entry of partitionEntriesVisible) {
-      const batch = partitionBatches.find((b) => b.id === entry.batch_id);
-      const venda = batch ? partitionVendaById[batch.venda_id] : partitionVendaById[entry.venda_id];
-      const cancelada = isVendaCancelada({ codigo: venda?.codigo ?? null, cancelada_em: venda?.cancelada_em ?? null });
-      const gross = Number(entry.gross_amount) || 0;
-      const paid = paidByEntry.get(entry.id) || 0;
-      const unpaid = Math.max(0, gross - paid);
-
-      if (!cancelada) {
-        partitionVendaIds.add(entry.venda_id);
-        partitionBruta += gross;
-        partitionPaga += paid;
-        partitionPendente += unpaid;
-        partitionProgramada += scheduledByEntry.get(entry.id) || 0;
-      } else {
-        partitionPerdida += unpaid;
-      }
-    }
-
-    const partitionVendasTotal = Array.from(partitionVendaIds).reduce<number>((acc, vendaId) => {
-      const venda = partitionVendaById[vendaId];
-      const batch = partitionBatches.find((b) => b.venda_id === vendaId);
-      return acc + (Number(venda?.valor_venda ?? batch?.valor_venda) || 0);
-    }, 0);
-
+    const saleIds = new Set(financialLines.filter(line => !line.cancelled && !line.reversed).map(line => line.vendaId));
+    const vendasTotal = allVendasComissao
+      .filter(venda => saleIds.has(venda.id))
+      .reduce((total, venda) => total + (Number(venda.valor_venda) || 0), 0);
     return {
-      vendasTotal: partitionVendasTotal,
-      comBruta: partitionBruta,
-      comLiquida: commissionNet(partitionBruta, impostoFrac),
-      comPagaBruta: partitionPaga,
-      comPagaLiquida: commissionNet(partitionPaga, impostoFrac),
-      comPendenteBruta: partitionPendente,
-      comPendenteLiquida: commissionNet(partitionPendente, impostoFrac),
-      comPerdidaBruta: partitionPerdida,
-      comPerdidaLiquida: commissionNet(partitionPerdida, impostoFrac),
-      comProgramadaBruta: partitionProgramada,
-      comProgramadaLiquida: commissionNet(partitionProgramada, impostoFrac),
-      proximaDataProgramada,
+      vendasTotal,
+      comBruta: financialSummary.gross,
+      comLiquida: commissionNet(financialSummary.gross, impostoFrac),
+      comPagaBruta: financialSummary.paid,
+      comPagaLiquida: commissionNet(financialSummary.paid, impostoFrac),
+      comPendenteBruta: financialSummary.pending,
+      comPendenteLiquida: commissionNet(financialSummary.pending, impostoFrac),
+      comPerdidaBruta: financialSummary.lost,
+      comPerdidaLiquida: commissionNet(financialSummary.lost, impostoFrac),
+      comProgramadaBruta: financialSummary.programmed,
+      comProgramadaLiquida: commissionNet(financialSummary.programmed, impostoFrac),
+      proximaDataProgramada: financialSummary.nextScheduledDate,
     };
-  }, [partitionEntriesVisible, partitionFlows, partitionVendaById, partitionBatches, impostoFrac]);
+  }, [financialSummary, financialLines, allVendasComissao, impostoFrac]);
 
   function findPartitionRuleForVenda(venda: Venda) {
     const vendaTabela = normalize(venda.tabela);
@@ -4434,13 +4416,14 @@ export default function ComissoesPage() {
           </CardContent>
         </Card>
 
+        {financialError && <div role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">Não foi possível consolidar os valores financeiros: {financialError}</div>}
         <Card className="border border-slate-200/70 bg-white shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
               <div>
                 <CardTitle className="text-lg" style={{ color: "#1E293F" }}>Visão Gerencial</CardTitle>
                 <p className="text-sm text-slate-500">
-                  Previsão de recebimento por mês e por semana, com resumo do status financeiro das comissões.
+                  Previsões programadas e pagamentos confirmados conforme seus direitos de comissão. O programado já está incluído no pendente.
                 </p>
               </div>
               <div className="text-xs text-slate-500">
@@ -4457,10 +4440,10 @@ export default function ComissoesPage() {
                 <CardContent className="space-y-3">
                   <Donut
                     paid={combinedKpi.comPagaBruta}
-                    pending={combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta}
+                    pending={combinedKpi.comPendenteBruta}
                     label="Pago"
                     hoverPaidText={`Pago bruto: ${BRL(combinedKpi.comPagaBruta)}`}
-                    hoverPendText={`Em aberto: ${BRL(combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta)}`}
+                    hoverPendText={`Pendente (inclui programado): ${BRL(combinedKpi.comPendenteBruta)}`}
                     pendingLegend="Em aberto"
                   />
                   <div className="grid grid-cols-2 gap-2 text-xs">

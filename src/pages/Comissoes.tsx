@@ -572,75 +572,54 @@ function isVendaCancelada(venda: { codigo?: string | null; cancelada_em?: string
 function Donut({
   paid,
   pending,
+  lost,
   label,
-  hoverPaidText,
-  hoverPendText,
-  pendingLegend = "Previsto",
 }: {
   paid: number;
   pending: number;
+  lost: number;
   label: string;
-  hoverPaidText: string;
-  hoverPendText: string;
-  pendingLegend?: string;
 }) {
-  const paidSafe = Math.max(0, Number(paid) || 0);
-  const pendingSafe = Math.max(0, Number(pending) || 0);
-
-  const total = paidSafe + pendingSafe;
-  const paidPct = total > 0 ? (paidSafe / total) * 100 : 0;
-
-  const [hover, setHover] = useState<"paid" | "pend" | null>(null);
-
-  const navy = "#1E293F";
-  const red = "#A11C27";
+  // Programado já compõe o pendente: não é uma quarta fatia.
+  const parts = [
+    { key: "paid", title: "Pago", value: Math.max(0, Number(paid) || 0), color: "#1E293F" },
+    { key: "pending", title: "Em aberto", value: Math.max(0, Number(pending) || 0), color: "#B5A573" },
+    { key: "lost", title: "Perdidas", value: Math.max(0, Number(lost) || 0), color: "#A11C27" },
+  ] as const;
+  const total = parts.reduce((sum, p) => sum + p.value, 0);
+  const paidPct = total > 0 ? (parts[0].value / total) * 100 : 0;
+  const [hover, setHover] = useState<string | null>(null);
   const radius = 56;
   const circumference = 2 * Math.PI * radius;
-  const paidLen = (paidPct / 100) * circumference;
-  const pendLen = circumference - paidLen;
+  let offset = 0;
+  const slices = parts.map((part) => {
+    const length = total > 0 ? (part.value / total) * circumference : 0;
+    const slice = { ...part, length, offset };
+    offset += length;
+    return slice;
+  });
 
   return (
     <div className="flex items-center gap-4 p-4 border rounded-xl bg-white">
       <div className="relative">
         <svg width="160" height="160" className="-rotate-90" role="img" aria-label={label}>
           <circle cx="80" cy="80" r={radius} stroke="#e5e7eb" strokeWidth="22" fill="none" />
-
-          <circle
-            cx="80"
-            cy="80"
-            r={radius}
-            stroke={navy}
-            strokeWidth={hover === "paid" ? 26 : 22}
-            fill="none"
-            strokeDasharray={`${paidLen} ${circumference}`}
-            strokeLinecap="butt"
-            onMouseEnter={() => setHover("paid")}
-            onMouseLeave={() => setHover(null)}
-            style={{
-              transition: "all .2s ease",
-              filter: hover === "paid" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none",
-            }}
-          />
-
-          <circle
-            cx="80"
-            cy="80"
-            r={radius}
-            stroke={red}
-            strokeWidth={hover === "pend" ? 26 : 22}
-            fill="none"
-            strokeDasharray={`${pendLen} ${circumference}`}
-            strokeDashoffset={-paidLen}
-            strokeLinecap="butt"
-            onMouseEnter={() => setHover("pend")}
-            onMouseLeave={() => setHover(null)}
-            style={{
-              transition: "all .2s ease",
-              filter: hover === "pend" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none",
-            }}
-          />
+          {slices.filter((slice) => slice.length > 0).map((slice) => (
+            <circle
+              key={slice.key}
+              cx="80" cy="80" r={radius}
+              stroke={slice.color}
+              strokeWidth={hover === slice.key ? 26 : 22}
+              fill="none"
+              strokeDasharray={`${slice.length} ${circumference}`}
+              strokeDashoffset={-slice.offset}
+              strokeLinecap="butt"
+              onMouseEnter={() => setHover(slice.key)}
+              onMouseLeave={() => setHover(null)}
+              style={{ transition: "all .2s ease", filter: hover === slice.key ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none" }}
+            />
+          ))}
         </svg>
-
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <div className="text-xl font-bold">{total === 0 ? "0%" : `${paidPct.toFixed(0)}%`}</div>
@@ -648,19 +627,16 @@ function Donut({
           </div>
         </div>
       </div>
-
-      <div className="text-sm">
-        <div className="mb-1">
-          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: navy }} />
-          <span className="font-medium">Pago bruto</span>
-        </div>
-        <div className="text-gray-600">{hover === "paid" ? hoverPaidText : BRL(paidSafe)}</div>
-
-        <div className="mt-3 mb-1">
-          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: red }} />
-          <span className="font-medium">{pendingLegend}</span>
-        </div>
-        <div className="text-gray-600">{hover === "pend" ? hoverPendText : BRL(pendingSafe)}</div>
+      <div className="text-sm space-y-3">
+        {parts.map((part) => (
+          <div key={part.key} onMouseEnter={() => setHover(part.key)} onMouseLeave={() => setHover(null)}>
+            <div className="mb-1">
+              <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: part.color }} />
+              <span className="font-medium">{part.title}</span>
+            </div>
+            <div className="text-gray-600">{BRL(part.value)}{hover === part.key && total > 0 ? ` · ${(part.value / total * 100).toFixed(1)}%` : ""}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -904,11 +880,22 @@ function getWeeklyIntervalsFriToThu(year: number, month: number) {
   const eom = new Date(year, month + 1, 0);
 
   let d = new Date(year, month, 1);
-  while (d.getDay() !== 5) {
-    d = new Date(year, month, d.getDate() + 1);
-  }
-
   const intervals: Array<{ start: Date; end: Date; label: string }> = [];
+
+  // Include the partial week before the first Friday of the month.
+  if (d.getDay() !== 5) {
+    let firstFriday = new Date(d);
+    while (firstFriday.getDay() !== 5) {
+      firstFriday = new Date(firstFriday.getFullYear(), firstFriday.getMonth(), firstFriday.getDate() + 1);
+    }
+    const endPartial = new Date(firstFriday.getFullYear(), firstFriday.getMonth(), firstFriday.getDate() - 1);
+    intervals.push({
+      start: d,
+      end: endPartial,
+      label: `S1 (01/${String(month + 1).padStart(2, "0")}–${String(endPartial.getDate()).padStart(2, "0")}/${String(month + 1).padStart(2, "0")})`,
+    });
+    d = firstFriday;
+  }
 
   while (d <= eom) {
     const start = new Date(d);
@@ -2236,9 +2223,58 @@ export default function ComissoesPage() {
     };
   }, [rows, impostoFrac]);
 
+  // A fonte antiga permanece em rows. As partilhas de lotes legacy=true são
+  // apenas espelhos e jamais podem entrar uma segunda vez no gráfico.
+  const modernForecastEvents = useMemo(() => {
+    const batchById = new Map(partitionBatches.filter((batch) => batch.legacy === false).map((batch) => [batch.id, batch]));
+    const visibleIds = new Set(partitionEntriesVisible.filter((entry) => batchById.has(entry.batch_id)).map((entry) => entry.id));
+    const events: Array<{ date: string; amount: number; kind: "pago" | "previsto" }> = [];
+    for (const flow of partitionFlows) {
+      if (!visibleIds.has(flow.entry_id)) continue;
+      const batch = batchById.get(flow.batch_id);
+      if (!batch) continue;
+      const venda = partitionVendaById[batch.venda_id];
+      if (isVendaCancelada({ codigo: venda?.codigo ?? null, cancelada_em: venda?.cancelada_em ?? null })) continue;
+      const date = flow.data_pagamento?.slice(0, 10);
+      if (!date) continue; // não inventar previsão para parcela sem programação
+      const paid = Math.max(0, Number(flow.valor_pago) || 0);
+      const expected = Math.max(0, Number(flow.valor_previsto) || 0);
+      if (paid > 0) events.push({ date, amount: paid, kind: "pago" });
+      if (flow.status !== "pago" && expected > paid) {
+        events.push({ date, amount: expected - paid, kind: "previsto" });
+      }
+    }
+    return events;
+  }, [partitionBatches, partitionEntriesVisible, partitionFlows, partitionVendaById]);
+
+  const monthlyCurr = useMemo(() => {
+    const base = projectMonthlyFlows(rows, new Date().getFullYear(), true);
+    const previstoBruto = [...base.previstoBruto];
+    const pagoBruto = [...base.pagoBruto];
+    const year = new Date().getFullYear();
+    for (const event of modernForecastEvents) {
+      const date = localDateFromISO(event.date);
+      if (!date || date.getFullYear() !== year) continue;
+      (event.kind === "pago" ? pagoBruto : previstoBruto)[date.getMonth()] += event.amount;
+    }
+    return { ...base, previstoBruto, pagoBruto };
+  }, [rows, modernForecastEvents]);
+
+  const weeklyCurr = useMemo(() => {
+    const base = projectWeeklyFlows(rows);
+    const previstoBruto = [...base.previstoBruto];
+    const pagoBruto = [...base.pagoBruto];
+    const now = new Date();
+    const weeks = getWeeklyIntervalsFriToThu(now.getFullYear(), now.getMonth());
+    for (const event of modernForecastEvents) {
+      const date = localDateFromISO(event.date);
+      if (!date || date.getFullYear() !== now.getFullYear() || date.getMonth() !== now.getMonth()) continue;
+      const idx = weeks.findIndex((week) => date >= week.start && date <= week.end);
+      if (idx >= 0) (event.kind === "pago" ? pagoBruto : previstoBruto)[idx] += event.amount;
+    }
+    return { ...base, previstoBruto, pagoBruto };
+  }, [rows, modernForecastEvents]);
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
-  const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
-  const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
 
   const currentMonthProjectedGross = useMemo(() => {
     const monthIndex = new Date().getMonth();
@@ -2806,12 +2842,14 @@ export default function ComissoesPage() {
       const paid = paidByEntry.get(entry.id) || 0;
       const unpaid = Math.max(0, gross - paid);
 
+      // Pago representa todo pagamento realizado, mesmo se a venda foi
+      // posteriormente cancelada. Perdido é somente o saldo não pago.
+      partitionPaga += paid;
       if (!cancelada) {
         partitionVendaIds.add(entry.venda_id);
         partitionBruta += gross;
-        partitionPaga += paid;
         partitionPendente += unpaid;
-        partitionProgramada += scheduledByEntry.get(entry.id) || 0;
+        partitionProgramada += Math.min(unpaid, scheduledByEntry.get(entry.id) || 0);
       } else {
         partitionPerdida += unpaid;
       }
@@ -4457,11 +4495,9 @@ export default function ComissoesPage() {
                 <CardContent className="space-y-3">
                   <Donut
                     paid={combinedKpi.comPagaBruta}
-                    pending={combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta}
+                    pending={combinedKpi.comPendenteBruta}
+                    lost={combinedKpi.comPerdidaBruta}
                     label="Pago"
-                    hoverPaidText={`Pago bruto: ${BRL(combinedKpi.comPagaBruta)}`}
-                    hoverPendText={`Em aberto: ${BRL(combinedKpi.comProgramadaBruta + combinedKpi.comPendenteBruta + combinedKpi.comPerdidaBruta)}`}
-                    pendingLegend="Em aberto"
                   />
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="rounded-lg border bg-emerald-50 p-2.5">

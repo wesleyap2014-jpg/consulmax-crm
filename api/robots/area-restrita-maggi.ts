@@ -263,9 +263,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (active) {
         return res.status(409).json({
+          ...serializeSession(current),
           ok: true,
           message: "Já existe uma execução da Área Restrita Maggi em andamento.",
-          ...serializeSession(current),
         });
       }
 

@@ -2078,11 +2078,12 @@ export default function ComissoesPage() {
       const isSettled = Number(entry.gross_amount || 0) <= paid + 0.009;
       if (status === "pago" && !isSettled) return false;
       if (status === "a_pagar" && isSettled) return false;
-      if (status === "estorno" && entry.status !== "estornado") return false;
+      const hasRefund = partitionAdjustments.some((adjustment) => adjustment.entry_id === entry.id && adjustment.is_reversed !== true);
+      if (status === "estorno" && entry.status !== "estornado" && !hasRefund) return false;
       return true;
     });
   }, [
-    partitionEntries, partitionBatches, partitionFlows, usersById, usersByAuth,
+    partitionEntries, partitionBatches, partitionFlows, partitionAdjustments, usersById, usersByAuth,
     currentUser, isMatrixAdmin, isBranchManager, unitFilter, vendedorId,
     status, periodStart, periodEnd, adminFilter, segmento, tabela, partitionVendaById
   ]);

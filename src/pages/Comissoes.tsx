@@ -4867,9 +4867,11 @@ export default function ComissoesPage() {
                               <table className="w-full text-sm">
                                 <thead>
                                   <tr className="bg-gray-50">
-                                    <th className="p-2 text-left">Fluxo</th>
+                                    <th className="p-2 text-left">Parcela</th>
+                                    <th className="p-2 text-right">Previsto</th>
+                                    <th className="p-2 text-right">Pago</th>
                                     <th className="p-2 text-left">Situação</th>
-                                    <th className="p-2 text-left">Ações</th>
+                                    {canEdit && <th className="p-2 text-left">Ações</th>}
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -4877,8 +4879,10 @@ export default function ComissoesPage() {
                                     const flowsMes = row.flows.filter((flow) => flow.mes === mes);
                                     const payable = flowsMes.filter((flow) => (Number(flow.valor_previsto) || 0) > 0);
                                     const totalMes = flowsMes.reduce((acc, flow) => acc + (Number(flow.valor_previsto) || 0), 0);
-                                    const allPaid = payable.length > 0 && payable.every((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0);
-                                    const firstDate = flowsMes.find((flow) => !!flow.data_pagamento)?.data_pagamento || null;
+                                    const paidMes = flowsMes.reduce((acc, flow) => acc + (Number(flow.valor_pago) || 0), 0);
+                                    const allPaid = payable.length > 0 && payable.every((flow) => flow.status === "pago" || (Number(flow.valor_pago) || 0) >= (Number(flow.valor_previsto) || 0));
+                                    const pendingDate = flowsMes.find((flow) => (Number(flow.valor_pago) || 0) < (Number(flow.valor_previsto) || 0) && !!flow.data_pagamento)?.data_pagamento || null;
+                                    const paidDate = flowsMes.find((flow) => (Number(flow.valor_pago) || 0) > 0 && !!flow.data_pagamento)?.data_pagamento || null;
                                     const hasRefund = monthHasActiveRefund(flowsMes);
                                     const situacao =
                                       hasRefund
@@ -4886,28 +4890,31 @@ export default function ComissoesPage() {
                                         : totalMes <= 0
                                           ? "Parcela sem valor"
                                           : allPaid
-                                            ? `Pago ${formatISODateBR(firstDate)}`
-                                            : firstDate
-                                              ? `Prog. ${formatISODateBR(firstDate)}`
-                                              : "A programar";
+                                            ? `Pago${paidDate ? " em " + formatISODateBR(paidDate) : ""}`
+                                            : pendingDate
+                                              ? `Programado para ${formatISODateBR(pendingDate)}`
+                                              : "A pagar";
 
                                     return (
                                       <tr key={mes} className="border-b last:border-0">
-                                        <td className="p-2 font-medium">M{mes} • {BRL(totalMes)}</td>
+                                        <td className="p-2 font-medium">M{mes}</td>
+                                        <td className="p-2 text-right">{BRL(totalMes)}</td>
+                                        <td className="p-2 text-right">{BRL(paidMes)}</td>
                                         <td className="p-2 text-gray-600">{situacao}</td>
-                                        <td className="p-2">{canEdit ? renderPartitionMonthAction(flowsMes) : null}</td>
+                                        {canEdit && <td className="p-2">{renderPartitionMonthAction(flowsMes)}</td>
                                       </tr>
                                     );
                                   })}
                                   <tr className="border-t bg-gray-50/70">
                                     <td className="p-2 font-medium">Estorno</td>
+                                    <td className="p-2 text-right">—</td>
+                                    <td className="p-2 text-right">—</td>
                                     <td className="p-2 text-gray-600">
                                       {activeRefunds.length
                                         ? `Ativo • ${BRL(activeRefundTotal)}`
                                         : "Sem estorno lançado"}
                                     </td>
-                                    <td className="p-2">
-                                      {canEdit ? (
+                                    {canEdit && <td className="p-2">
                                         activeRefunds.length ? (
                                           <Button
                                             size="sm"
@@ -4926,10 +4933,8 @@ export default function ComissoesPage() {
                                             Lançar Estorno
                                           </Button>
                                         )
-                                      ) : (
-                                        "—"
                                       )}
-                                    </td>
+                                    </td>}
                                   </tr>
                                 </tbody>
                               </table>

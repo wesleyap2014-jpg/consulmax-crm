@@ -4901,7 +4901,7 @@ export default function ComissoesPage() {
                                         <td className="p-2 text-right">{BRL(totalMes)}</td>
                                         <td className="p-2 text-right">{BRL(paidMes)}</td>
                                         <td className="p-2 text-gray-600">{situacao}</td>
-                                        {canEdit && <td className="p-2">{renderPartitionMonthAction(flowsMes)}</td>
+                                        {canEdit && <td className="p-2">{renderPartitionMonthAction(flowsMes)}</td>}
                                       </tr>
                                     );
                                   })}

@@ -848,31 +848,80 @@ function LineChart({
 /* ========================= Projeções ========================= */
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
-function expectedDateForParcel(
-  _saleDateISO: string | null | undefined,
-  flow: CommissionFlow[] | undefined,
-  mes: number
-): Date | null {
-  const safeFlow = Array.isArray(flow) ? flow : [];
+type CommissionTimelineParcel = {
+  mes: number;
+  data: string | null | undefined;
+  previsto: number;
+  pago: number;
+  quitado?: boolean;
+};
 
-  const m2 = safeFlow.find((f) => f.mes === 2);
-  const m2Date = m2?.data_pagamento_vendedor ? localDateFromISO(m2.data_pagamento_vendedor) : null;
+type CommissionTimelineEvent = {
+  date: string;
+  amount: number;
+  kind: "pago" | "previsto";
+};
 
-  if (mes <= 2) {
-    const f = safeFlow.find((x) => x.mes === mes);
-    const regDate = f?.data_pagamento_vendedor ? localDateFromISO(f.data_pagamento_vendedor) : null;
+// A última data paga/programada de qualquer parcela corrige as subsequentes.
+// Datas calculadas são projeções, nunca são gravadas na programação financeira.
+function datePlusDays(iso: string, days: number): string {
+  const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
 
-    return regDate ?? null;
+function buildCommissionTimeline(parcels: CommissionTimelineParcel[]): CommissionTimelineEvent[] {
+  const events: CommissionTimelineEvent[] = [];
+  const ordered = [...parcels].filter(p => Number.isFinite(p.mes) && p.mes > 0).sort((a, b) => a.mes - b.mes);
+  let lastDate: string | null = null;
+  let lastMonth: number | null = null;
+
+  for (const parcel of ordered) {
+    const officialDate = typeof parcel.data === "string" && /^\\d{4}-\\d{2}-\\d{2}/.test(parcel.data)
+      ? parcel.data.slice(0, 10) : null;
+    const projectedDate: string | null = officialDate
+      || (lastDate && lastMonth !== null ? datePlusDays(lastDate, Math.max(0, parcel.mes - lastMonth) * 30) : null);
+
+    // Mesmo que M3 já tivesse previsão, ao pagar/programar M2 sua nova data
+    // substitui a base anterior e todas as posteriores são recalculadas.
+    if (projectedDate) {
+      lastDate = projectedDate;
+      lastMonth = parcel.mes;
+    }
+    if (!projectedDate) continue;
+
+    const paid = Math.max(0, Number(parcel.pago) || 0);
+    const expected = Math.max(0, Number(parcel.previsto) || 0);
+    // Pagamentos entram apenas pela data registrada (nunca estimar data paga).
+    if (paid > 0 && officialDate) events.push({ date: officialDate, amount: paid, kind: "pago" });
+
+    const remaining = parcel.quitado ? 0 : Math.max(0, expected - paid);
+    if (remaining > 0.009) events.push({ date: projectedDate, amount: remaining, kind: "previsto" });
   }
+  return events;
+}
 
-  if (!m2Date) return null;
-
-  const offset = mes - 2;
-  const expected = new Date(m2Date.getFullYear(), m2Date.getMonth(), m2Date.getDate());
-
-  expected.setDate(expected.getDate() + offset * 30);
-
-  return expected;
+function legacyCommissionTimeline(rows: CommissionWithFlow[]): CommissionTimelineEvent[] {
+  const events: CommissionTimelineEvent[] = [];
+  for (const row of rows.filter(isOperationalCommission)) {
+    const gross = Math.max(0, totalCommissionGross(row));
+    const parcels = (row.flow || []).filter(f => (Number(f.percentual) || 0) > 0).map(f => {
+      const fromPercent = gross * (Number(f.percentual) || 0);
+      const recorded = Number(f.valor_previsto);
+      // Evita registros históricos cujo 'valor_previsto' é o valor do crédito,
+      // não a parcela de comissão.
+      const expected = Number.isFinite(recorded) && recorded > 0 && recorded <= gross + 0.01
+        && recorded <= fromPercent * 1.1 + 1 ? recorded : fromPercent;
+      return {
+        mes: Number(f.mes),
+        data: f.data_pagamento_vendedor,
+        previsto: expected,
+        pago: Number(f.valor_pago_vendedor) || 0,
+        quitado: Number(f.valor_pago_vendedor) > 0 && Number(f.valor_pago_vendedor) >= expected - 0.02,
+      };
+    });
+    events.push(...buildCommissionTimeline(parcels));
+  }
+  return events;
 }
 
 function getWeeklyIntervalsFriToThu(year: number, month: number) {
@@ -965,94 +1014,31 @@ function projectAnnualFlows(rows: CommissionWithFlow[]): ProjSeries {
 }
 
 function projectMonthlyFlows(rows: CommissionWithFlow[], year: number, includePrevisto: boolean): ProjSeries {
-  const operationalRows = rows.filter(isOperationalCommission);
-
   const labels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-  const previsto = Array(12).fill(0);
-  const pagos = Array(12).fill(0);
-
-  for (const r of operationalRows) {
-    const total = totalCommissionGross(r);
-    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
-
-    for (const f of flows) {
-      if (f.data_pagamento_vendedor) {
-        const pd = localDateFromISO(f.data_pagamento_vendedor);
-
-        if (pd && pd.getFullYear() === year) {
-          pagos[pd.getMonth()] += Number(f.valor_pago_vendedor) || 0;
-        }
-      }
-
-      if (!includePrevisto) continue;
-
-      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
-      if (!exp || exp.getFullYear() !== year) continue;
-
-      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
-      if (isPaid) continue;
-
-      const expVal = Number(f.valor_previsto ?? total * (Number(f.percentual) || 0)) || 0;
-      previsto[exp.getMonth()] += expVal;
-    }
+  const previstoBruto = Array(12).fill(0);
+  const pagoBruto = Array(12).fill(0);
+  for (const event of legacyCommissionTimeline(rows)) {
+    if (!includePrevisto && event.kind === "previsto") continue;
+    const d = localDateFromISO(event.date);
+    if (!d || d.getFullYear() !== year) continue;
+    (event.kind === "pago" ? pagoBruto : previstoBruto)[d.getMonth()] += event.amount;
   }
-
-  return {
-    labels,
-    previstoBruto: previsto,
-    pagoBruto: pagos,
-  };
+  return { labels, previstoBruto, pagoBruto };
 }
 
 function projectWeeklyFlows(rows: CommissionWithFlow[]): ProjSeries {
-  const operationalRows = rows.filter(isOperationalCommission);
-
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const intervals = getWeeklyIntervalsFriToThu(year, month);
-
-  const labels = intervals.map((i) => i.label);
-  const previsto = Array(intervals.length).fill(0);
-  const pagos = Array(intervals.length).fill(0);
-
-  for (const r of operationalRows) {
-    const total = totalCommissionGross(r);
-    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
-
-    for (const f of flows) {
-      if (f.data_pagamento_vendedor) {
-        const pd = localDateFromISO(f.data_pagamento_vendedor);
-
-        if (pd && pd.getFullYear() === year && pd.getMonth() === month) {
-          const idx = intervals.findIndex((iv) => pd >= iv.start && pd <= iv.end);
-
-          if (idx >= 0) {
-            pagos[idx] += Number(f.valor_pago_vendedor) || 0;
-          }
-        }
-      }
-
-      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
-      if (!exp || exp.getFullYear() !== year || exp.getMonth() !== month) continue;
-
-      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
-      if (isPaid) continue;
-
-      const expVal = Number(f.valor_previsto ?? total * (Number(f.percentual) || 0)) || 0;
-      const idx = intervals.findIndex((iv) => exp >= iv.start && exp <= iv.end);
-
-      if (idx >= 0) {
-        previsto[idx] += expVal;
-      }
-    }
+  const today = new Date();
+  const intervals = getWeeklyIntervalsFriToThu(today.getFullYear(), today.getMonth());
+  const labels = intervals.map(i => i.label);
+  const previstoBruto = Array(labels.length).fill(0);
+  const pagoBruto = Array(labels.length).fill(0);
+  for (const event of legacyCommissionTimeline(rows)) {
+    const d = localDateFromISO(event.date);
+    if (!d || d.getFullYear() !== today.getFullYear() || d.getMonth() !== today.getMonth()) continue;
+    const index = intervals.findIndex(w => d >= w.start && d <= w.end);
+    if (index >= 0) (event.kind === "pago" ? pagoBruto : previstoBruto)[index] += event.amount;
   }
-
-  return {
-    labels,
-    previstoBruto: previsto,
-    pagoBruto: pagos,
-  };
+  return { labels, previstoBruto, pagoBruto };
 }
 
 /* ========================= Página ========================= */
@@ -2228,23 +2214,28 @@ export default function ComissoesPage() {
   // A fonte antiga permanece em rows. As partilhas de lotes legacy=true são
   // apenas espelhos e jamais podem entrar uma segunda vez no gráfico.
   const modernForecastEvents = useMemo(() => {
-    const batchById = new Map(partitionBatches.filter((batch) => batch.legacy === false).map((batch) => [batch.id, batch]));
-    const visibleIds = new Set(partitionEntriesVisible.filter((entry) => batchById.has(entry.batch_id)).map((entry) => entry.id));
-    const events: Array<{ date: string; amount: number; kind: "pago" | "previsto" }> = [];
+    const batchById = new Map(partitionBatches.filter(b => b.legacy === false).map(b => [b.id, b]));
+    const modernEntries = partitionEntriesVisible.filter(e => batchById.has(e.batch_id));
+    const flowByEntry = new Map<string, CommissionEntryFlow[]>();
     for (const flow of partitionFlows) {
-      if (!visibleIds.has(flow.entry_id)) continue;
-      const batch = batchById.get(flow.batch_id);
+      if (!flowByEntry.has(flow.entry_id)) flowByEntry.set(flow.entry_id, []);
+      flowByEntry.get(flow.entry_id)!.push(flow);
+    }
+
+    const events: CommissionTimelineEvent[] = [];
+    for (const entry of modernEntries) {
+      const batch = batchById.get(entry.batch_id);
       if (!batch) continue;
       const venda = partitionVendaById[batch.venda_id];
       if (isVendaCancelada({ codigo: venda?.codigo ?? null, cancelada_em: venda?.cancelada_em ?? null })) continue;
-      const date = flow.data_pagamento?.slice(0, 10);
-      if (!date) continue; // não inventar previsão para parcela sem programação
-      const paid = Math.max(0, Number(flow.valor_pago) || 0);
-      const expected = Math.max(0, Number(flow.valor_previsto) || 0);
-      if (paid > 0) events.push({ date, amount: paid, kind: "pago" });
-      if (flow.status !== "pago" && expected > paid) {
-        events.push({ date, amount: expected - paid, kind: "previsto" });
-      }
+      const parcels = (flowByEntry.get(entry.id) || []).map(f => ({
+        mes: Number(f.mes),
+        data: f.data_pagamento,
+        previsto: Number(f.valor_previsto) || 0,
+        pago: Number(f.valor_pago) || 0,
+        quitado: f.status === "pago",
+      }));
+      events.push(...buildCommissionTimeline(parcels));
     }
     return events;
   }, [partitionBatches, partitionEntriesVisible, partitionFlows, partitionVendaById]);

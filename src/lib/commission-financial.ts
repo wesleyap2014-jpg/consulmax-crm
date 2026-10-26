@@ -74,9 +74,20 @@ function saleCancelled(sale?: AnyRow): boolean {
 }
 
 async function tableRows(table: string, select = "*"): Promise<AnyRow[]> {
-  const { data, error } = await supabase.from(table as any).select(select).limit(10000);
-  if (error) throw new Error("Fonte financeira indisponível (" + table + "): " + error.message);
-  return (data || []) as AnyRow[];
+  // Paginação explícita: PostgREST pode limitar cada resposta a 1.000 linhas.
+  // O resultado precisa ser completo para os dois painéis permanecerem iguais.
+  const pageSize = 1000;
+  const accumulated: AnyRow[] = [];
+  for (let offset = 0; offset < 100000; offset += pageSize) {
+    const { data, error } = await supabase.from(table as any).select(select)
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error("Fonte financeira indisponível (" + table + "): " + error.message);
+    const page = (data || []) as AnyRow[];
+    accumulated.push(...page);
+    if (page.length < pageSize) return accumulated;
+  }
+  throw new Error("Limite de paginação financeira atingido para " + table);
 }
 
 function lineFromFlows(args: {

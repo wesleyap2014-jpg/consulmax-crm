@@ -1,6 +1,7 @@
 // src/pages/Inicio.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { loadCommissionFinancialLedger, selectCommissionFinance, summarizeCommissionFinance } from "@/lib/commission-financial";
 import AceleraConsulmax from "@/components/campaigns/AceleraConsulmax";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -94,6 +95,7 @@ type DashboardScope = {
   mode: "matrix" | "branch" | "seller";
   isGlobal: boolean;
   currentUserId: string;
+  currentAuthId: string | null;
   currentUnitId: string | null;
   selectedUserId: string | null;
   profileIds: string[];
@@ -167,6 +169,7 @@ function buildDashboardScope(me: UserRow, users: UserRow[], units: UnitRow[], ve
     mode: matrix ? "matrix" : branch ? "branch" : "seller",
     isGlobal: matrix && vendorScope === ALL,
     currentUserId: me.id,
+    currentAuthId: me.auth_user_id || null,
     currentUnitId: me.unit_id || null,
     selectedUserId: selected?.id || null,
     profileIds,
@@ -416,94 +419,24 @@ export default function Inicio() {
     if (reqErr) console.warn("[Inicio] Não foi possível carregar reservas de Bolsão aguardando encarteiramento:", reqErr);
     const openStockReqCount = (reqRows || []).length;
 
-    let commQ = supabase.from("commissions").select("id,venda_id,vendedor_id,valor_total,base_calculo,percent_aplicado,status,data_venda").limit(5000);
-    commQ = applyVendedorScope(commQ);
-    const { data: commRowsRaw, error: commErr } = await commQ;
-    if (commErr) console.warn("[Inicio] Não foi possível carregar comissões legadas:", commErr);
-    const commRows = (commRowsRaw || []) as any as CommissionRow[];
-    const commIds = commRows.map((c) => c.id);
-    const vendaIdsWithComm = new Set(commRows.map((c) => c.venda_id).filter(Boolean));
-
-    let flowRows: CommissionFlowRow[] = [];
-    if (commIds.length) { const { data: flowData, error: flowErr } = await supabase.from("commission_flow").select("id,commission_id,mes,percentual,valor_previsto,valor_pago_vendedor,data_pagamento_vendedor").in("commission_id", commIds).order("mes", { ascending: true }); if (flowErr) console.warn("[Inicio] Não foi possível carregar o fluxo legado de comissões:", flowErr); flowRows = (flowData || []) as any as CommissionFlowRow[]; }
-    const flowByCommission = new Map<string, CommissionFlowRow[]>();
-    for (const f of flowRows) { if (!flowByCommission.has(f.commission_id)) flowByCommission.set(f.commission_id, []); flowByCommission.get(f.commission_id)!.push(f); }
-    const vendaIds = Array.from(new Set(commRows.map((c) => c.venda_id).filter(Boolean)));
-    const vendasById = new Map<string, VendaMini>();
-    if (vendaIds.length) { const { data: vendasExtras, error: vendasExtrasErr } = await supabase.from("vendas").select("id,vendedor_id,codigo,cancelada_em").in("id", vendaIds); if (vendasExtrasErr) console.warn("[Inicio] Não foi possível validar vendas das comissões legadas:", vendasExtrasErr); (vendasExtras || []).forEach((v: any) => vendasById.set(v.id, v as VendaMini)); }
-
-    let batchQ = supabase.from("commission_batches").select("*").limit(5000);
-    batchQ = applyVendedorScope(batchQ);
-    const { data: batchRowsRaw, error: batchErr } = await batchQ;
-    if (batchErr) console.warn("[Inicio] Não foi possível carregar comissões particionadas:", batchErr);
-    const allPartitionBatches = (batchRowsRaw || []) as any as CommissionBatchRow[];
-    const partitionBatches = allPartitionBatches.filter((b) => b.legacy !== true && !["estornado", "cancelado"].includes(normalizeText(b.status)));
-    const partitionBatchIds = partitionBatches.map((b) => b.id);
-    const partitionBatchById = new Map(partitionBatches.map((b) => [b.id, b]));
-    const partitionVendaIds = new Set(partitionBatches.map((b) => b.venda_id).filter(Boolean));
-    partitionVendaIds.forEach((id) => vendaIdsWithComm.add(id));
-
-    let partitionEntries: CommissionEntryRow[] = [];
-    let partitionFlows: CommissionEntryFlowRow[] = [];
-    if (partitionBatchIds.length) {
-      const [{ data: entryRows, error: entryErr }, { data: entryFlowRows, error: entryFlowErr }] = await Promise.all([
-        supabase.from("commission_entries").select("*").in("batch_id", partitionBatchIds).limit(10000),
-        supabase.from("commission_entry_flow").select("*").in("batch_id", partitionBatchIds).limit(20000),
-      ]);
-      if (entryErr) console.warn("[Inicio] Não foi possível carregar divisões de comissão:", entryErr);
-      if (entryFlowErr) console.warn("[Inicio] Não foi possível carregar o fluxo particionado:", entryFlowErr);
-      partitionEntries = (entryRows || []) as any as CommissionEntryRow[];
-      partitionFlows = (entryFlowRows || []) as any as CommissionEntryFlowRow[];
-    }
-
-    const visiblePartitionEntries = partitionEntries.filter((entry) => {
-      if (["estornado", "cancelado"].includes(normalizeText(entry.status))) return false;
-      if (scope.mode === "matrix") return true;
-      if (scope.mode === "branch") {
-        return Boolean(scope.currentUnitId && (entry.business_unit_id === scope.currentUnitId || entry.recipient_unit_id === scope.currentUnitId));
-      }
-      return scope.vendedorIds.includes(String(entry.recipient_user_id || ""));
+    // Mesma fonte, critérios e direitos financeiros usados na guia Comissões.
+    // Os filtros de vendedor delimitam as vendas, jamais transferem a comissão do vendedor para o gestor.
+    const financialLedger = await loadCommissionFinancialLedger();
+    const vendaIdsWithComm = new Set(financialLedger.map((line) => line.vendaId));
+    const entitledLines = selectCommissionFinance(financialLedger, {
+      viewerId: scope.currentUserId,
+      viewerAuthId: scope.currentAuthId,
+      viewerUnitId: scope.currentUnitId,
+      matrix: scope.mode === "matrix",
+      branch: scope.mode === "branch",
+      saleVendorIds: scope.selectedUserId ? scope.vendedorIds : null,
     });
-    const visiblePartitionEntryIds = new Set(visiblePartitionEntries.map((entry) => entry.id));
-    const visiblePartitionFlows = partitionFlows.filter((flow) => {
-      if (!visiblePartitionEntryIds.has(flow.entry_id)) return false;
-      if (["estornado", "cancelado"].includes(normalizeText(flow.status))) return false;
-      return partitionBatchById.has(flow.batch_id);
-    });
-    const partitionPendingByBatch = new Map<string, number>();
-    for (const flow of visiblePartitionFlows) {
-      const pending = Math.max(0, (Number(flow.valor_previsto) || 0) - (Number(flow.valor_pago) || 0));
-      if (pending > 0.009) partitionPendingByBatch.set(flow.batch_id, (partitionPendingByBatch.get(flow.batch_id) || 0) + pending);
-    }
-
-    const operationalCommissions = commRows.filter((c) => c.status !== "estorno" && !partitionVendaIds.has(c.venda_id) && !isVendaCancelada(vendasById.get(c.venda_id)));
-    const pendingCommissions = operationalCommissions.map((c) => ({ c, pending: pendingCommissionGross(c, flowByCommission.get(c.id) || []) })).filter((x) => x.pending > 0.009);
-    const commissionsPendingCount = pendingCommissions.length + partitionPendingByBatch.size;
-    const commissionsPendingTotal = pendingCommissions.reduce((acc, x) => acc + x.pending, 0) + Array.from(partitionPendingByBatch.values()).reduce((acc, value) => acc + value, 0);
-
-    const scheduledByDate = new Map<string, number>();
-    for (const c of operationalCommissions) {
-      const flows = (flowByCommission.get(c.id) || []).filter((f) => (Number(f.percentual) || 0) > 0);
-      for (const f of flows) {
-        if ((Number(f.valor_pago_vendedor) || 0) > 0) continue;
-        const direct = toYMD(f.data_pagamento_vendedor);
-        if (!direct) continue;
-        const value = Number(f.valor_previsto || 0) || 0;
-        if (value <= 0) continue;
-        scheduledByDate.set(direct, (scheduledByDate.get(direct) || 0) + value);
-      }
-    }
-    for (const flow of visiblePartitionFlows) {
-      if ((Number(flow.valor_pago) || 0) > 0 || normalizeText(flow.status) === "pago") continue;
-      const direct = toYMD(flow.data_pagamento);
-      if (!direct) continue;
-      const value = Math.max(0, (Number(flow.valor_previsto) || 0) - (Number(flow.valor_pago) || 0));
-      if (value <= 0) continue;
-      scheduledByDate.set(direct, (scheduledByDate.get(direct) || 0) + value);
-    }
-    const scheduledDates = Array.from(scheduledByDate.keys()).filter((d) => d >= today).sort();
-    const commissionScheduledDate = scheduledDates[0] || null;
-    const commissionScheduledTotal = commissionScheduledDate ? scheduledByDate.get(commissionScheduledDate) || 0 : 0;
+    const finance = summarizeCommissionFinance(entitledLines, today);
+    const commissionsPendingCount = finance.countPending;
+    const commissionsPendingTotal = finance.pending;
+    const scheduledByDate = finance.scheduledByDate;
+    const commissionScheduledDate = finance.nextScheduledDate;
+    const commissionScheduledTotal = finance.nextScheduledAmount;
 
     let vendasSemQ = supabase.from("vendas").select("id,data_venda,vendedor_id,segmento,tabela,administradora,grupo,valor_venda,numero_proposta,cliente_lead_id,lead_id,encarteirada_em,codigo,cancelada_em,status,contemplada").not("encarteirada_em", "is", null).order("data_venda", { ascending: false });
     vendasSemQ = applyVendedorScope(vendasSemQ);
@@ -880,7 +813,7 @@ export default function Inicio() {
 
     birthdayToday.forEach((c) => myDay.push({ id: `birthday:${c.id}`, priority: 70, icon: "gift", title: `Hoje é aniversário do cliente ${c.nome}`, desc: "Parabenize-o e fortaleça o relacionamento.", action: { label: "Ver Clientes", to: "/clientes" } }));
     const commissionToday = scheduledByDate.get(today) || 0;
-    if (commissionToday > 0) myDay.push({ id: "commission-today", priority: 80, icon: "trophy", title: `Hoje você receberá ${fmtBRL(commissionToday)} de comissão`, desc: "Celebre esse momento. Resultado é consequência de processo bem feito.", action: { label: "Abrir Comissões", to: "/comissoes" } });
+    if (commissionToday > 0) myDay.push({ id: "commission-today", priority: 80, icon: "trophy", title: `Comissão programada para hoje: ${fmtBRL(commissionToday)}`, desc: "Pagamento previsto para hoje, sujeito à confirmação do financeiro.", action: { label: "Abrir Comissões", to: "/comissoes" } });
     myDay.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
 
     const items: NextEventItem[] = [];
@@ -891,7 +824,7 @@ export default function Inicio() {
       if (!isWithinNextWeekWindow(today, ymd)) continue;
       items.push({ id: `ag:${e.id}`, whenSort: startUtcMs, whenLabel: fmtDTForOffset(e.inicio_at, PV_OFFSET_MIN), flag: flagFromYMDWeek(today, ymd), title: e.titulo || "Evento", desc: `${e.tipo || "Agenda"} • ${e.cliente?.nome || e.lead?.nome || "—"}`, action: { label: "Abrir Agenda", to: "/agenda" } });
     }
-    for (const [d, total] of scheduledByDate.entries()) { if (!isWithinNextWeekWindow(today, d)) continue; items.push({ id: `cf:${d}`, whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 13), whenLabel: fmtDateBRFromYMD(d), flag: flagFromYMDWeek(today, d), title: d === today ? "Comissão de hoje" : "Recebimento de Comissão", desc: d === today ? `🎉 Hoje você receberá ${fmtBRL(total)} de comissão. Celebre esse momento.` : `💰 Você receberá ${fmtBRL(total)} de comissão.`, action: { label: "Abrir Comissões", to: "/comissoes" } }); }
+    for (const [d, total] of scheduledByDate.entries()) { if (!isWithinNextWeekWindow(today, d)) continue; items.push({ id: `cf:${d}`, whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 13), whenLabel: fmtDateBRFromYMD(d), flag: flagFromYMDWeek(today, d), title: d === today ? "Comissão programada para hoje" : "Comissão programada", desc: d === today ? `Pagamento previsto para hoje: ${fmtBRL(total)} (aguardando confirmação).` : `Pagamento previsto: ${fmtBRL(total)}.`, action: { label: "Abrir Comissões", to: "/comissoes" } }); }
     for (const c of birthdayToday) items.push({ id: `bday:${c.id}`, whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 8), whenLabel: fmtDateBRFromYMD(today), flag: "Hoje", title: "Aniversário", desc: `Hoje é aniversário do cliente ${c.nome}. Parabenize-o! 🎂🎉`, action: { label: "Ver Clientes", to: "/clientes" } });
     items.sort((a, b) => a.whenSort - b.whenSort);
 

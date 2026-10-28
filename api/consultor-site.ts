@@ -1,10 +1,27 @@
 import { sendTransactionalEmail } from "./_email-smtp.js";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createHash } from "node:crypto";
+import { isIP } from "node:net";
 import { getAuthUser, supabaseAdmin } from "./_supabase";
 const slugs = /^[a-z0-9][a-z0-9-]{2,59}$/;
 const choices = ["Aquisição de Imóvel","Aquisição de Automóvel","Aposentadoria com Consórcio","Garantir o Futuro dos Filhos","Alavancagem Financeira","Alavancagem Patrimonial","Capital de Giro"];
 const objetivos = ["Imóveis","Veículos","Agro","Máquinas e equipamentos","Serviços","Planejamento patrimonial","Investimentos"];
 const digits = (v: unknown) => String(v || "").replace(/\D/g,"");
+function sitePhone(raw: unknown): string | null {
+ let p=digits(raw);
+ if((p.length===12||p.length===13)&&p.startsWith("55")) p=p.slice(2);
+ if(!/^\d{10,11}$/.test(p) || (p.length===11&&p[2]!=="9") ||
+   new Set(p).size===1 || Number(p.slice(0,2))<11) return null;
+ return p;
+}
+function firstHeader(value: string|string[]|undefined): string {
+ return (Array.isArray(value)?value[0]:value||"").trim();
+}
+function safeDecode(value: string,max: number): string|null {
+ try { return decodeURIComponent(value).trim().slice(0,max)||null; }
+ catch { return value.trim().slice(0,max)||null; }
+}
+
 
 const META_GRAPH = "https://graph.facebook.com/v21.0";
 const TEMPLATE_NAME = "novo_lead_site_comercial";
@@ -82,37 +99,57 @@ export default async function handler(req: VercelRequest,res: VercelResponse){
    if(!slugs.test(slug)) return res.status(404).json({error:"Página não encontrada"});
    if(String(req.body?.website || "")) return res.status(200).json({ok:true});
    const nome=String(req.body?.nome||"").trim().slice(0,120);
-   const telefone=digits(req.body?.telefone).slice(0,15);
+   const telefone=sitePhone(req.body?.telefone);
+   const challengeId=String(req.body?.challengeId||"").trim();
+   const otpCode=String(req.body?.otpCode||"").trim();
    const objetivo=String(req.body?.objetivo||"").trim().slice(0,80);
    const valor=Number(req.body?.valor_desejado||0);
-   if(nome.length<3 || telefone.length<10 || telefone.length>15 || !objetivos.includes(objetivo) || !Number.isFinite(valor) || valor<0 || valor>1000000000 || req.body?.consentimento !== true)
+   if(nome.length<3 || !telefone || !objetivos.includes(objetivo) || !Number.isFinite(valor) || valor<0 || valor>1000000000 || req.body?.consentimento !== true
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(challengeId)
+      || !/^\d{6}$/.test(otpCode))
      return res.status(400).json({error:"Confira os dados e o consentimento."});
    const {data:site}=await supabaseAdmin.from("consultor_sites").select("user_id").eq("slug",slug).eq("publicado",true).maybeSingle();
    if(!site) return res.status(404).json({error:"Página indisponível"});
    const {data:owner}=await supabaseAdmin.from("users").select("id,auth_user_id,is_active").eq("id",site.user_id).eq("is_active",true).maybeSingle();
    if(!owner) return res.status(404).json({error:"Página indisponível"});
-   const since=new Date(Date.now()-60*60*1000).toISOString();
-   const {count, error:rateError}=await supabaseAdmin.from("consultor_site_submissions").select("id",{count:"exact",head:true}).eq("user_id",owner.id).eq("telefone",telefone).gte("created_at",since);
-   if(rateError) return res.status(503).json({error:"Tente novamente em instantes."});
-   if((count||0)>0) return res.status(200).json({ok:true});
-   // Checa clientes existentes por telefone, sem sobrescrever responsável nem duplicar lead.
-   const {data:existing,error:existingError}=await supabaseAdmin.from("leads").select("id,owner_id").eq("telefone",telefone).limit(1);
-   if(existingError) throw existingError;
-   let leadId=existing?.[0]?.id;
-   if(!leadId){
-     const {data:lead,error:leadError}=await supabaseAdmin.from("leads").insert({nome,telefone,origem:"Site Comercial",descricao:`Objetivo: ${objetivo}; crédito desejado: ${valor||"não informado"}; origem: /c/${slug}`,owner_id:owner.auth_user_id}).select("id").single();
-     if(leadError) {console.error("[consultor-site] lead",leadError);return res.status(500).json({error:"Falha ao registrar solicitação"});}
-     leadId=lead.id;
+   // Somente código enviado para este WhatsApp e este site pode criar um lead.
+   // A confirmação e todos os inserts são feitos numa única transação no Postgres.
+   const {data:challenge,error:challengeError}=await supabaseAdmin
+     .from("consultor_site_otp_challenges").select("code_salt")
+     .eq("id",challengeId).eq("phone_e164","55"+telefone).eq("site_slug",slug).maybeSingle();
+   if(challengeError) return res.status(503).json({error:"Falha na verificação. Tente novamente."});
+   if(!challenge?.code_salt) return res.status(400).json({error:"Código inválido, expirado ou já utilizado."});
+   const codeHash=createHash("sha256").update(challenge.code_salt+":"+otpCode).digest("hex");
+   const rawIp=firstHeader(req.headers["x-vercel-forwarded-for"])||firstHeader(req.headers["x-forwarded-for"]);
+   const ipCandidate=rawIp.split(",")[0].trim();
+   const ip=isIP(ipCandidate)?ipCandidate:null;
+   const city=safeDecode(firstHeader(req.headers["x-vercel-ip-city"]),120);
+   const region=firstHeader(req.headers["x-vercel-ip-country-region"]).slice(0,8)||null;
+   const country=firstHeader(req.headers["x-vercel-ip-country"]).slice(0,2)||null;
+   const userAgent=firstHeader(req.headers["user-agent"]).slice(0,400)||null;
+
+   const {data:verified,error:verifiedError}=await supabaseAdmin.rpc(
+     "finish_verified_consultor_site_submission",{
+       p_challenge_id:challengeId,
+       p_phone_e164:"55"+telefone,
+       p_code_hash:codeHash,
+       p_slug:slug,
+       p_nome:nome,
+       p_objetivo:objetivo,
+       p_valor:valor,
+       p_ip:ip,
+       p_city:city,
+       p_region_code:region,
+       p_country_code:country,
+       p_user_agent:userAgent,
+     });
+   if(verifiedError){
+     console.error("[consultor-site] falha na gravação validada",{code:verifiedError.code});
+     return res.status(503).json({error:"Não conseguimos registrar sua solicitação. Tente novamente."});
    }
-   const {data:opp,error:oppError}=await supabaseAdmin.from("opportunities").insert({
-     lead_id:leadId,vendedor_id:owner.auth_user_id,owner_id:owner.auth_user_id,
-     estagio:"Novo",stage:"novo",segmento:objetivo,valor_credito:valor||0,
-     credito_desejado:valor||null,
-     observacao:"Nova solicitação recebida pelo Meu Site Comercial (/c/"+slug+")."
-   }).select("id").single();
-   if(oppError) {console.error("[consultor-site] opportunity",oppError);return res.status(500).json({error:"Falha ao criar oportunidade"});}
-   const {error:submitError}=await supabaseAdmin.from("consultor_site_submissions").insert({user_id:owner.id,lead_id:leadId,opportunity_id:opp.id,nome,telefone,objetivo,valor_desejado:valor||null,origem_pagina:slug});
-   if(submitError) {console.error("[consultor-site] submission",submitError);return res.status(500).json({error:"Falha ao registrar solicitação"});}
+   if(!verified || typeof verified.created!=="boolean")
+     return res.status(400).json({error:"Código inválido, expirado ou já utilizado."});
+   if(!verified.created) return res.status(200).json({ok:true,duplicate:true});
    const {data:recipient}=await supabaseAdmin.from("users").select("email,nome,telefone,phone,is_active").eq("id",owner.id).maybeSingle();
    if(recipient?.is_active && recipient.email) {
      try {

@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { isIP } from "node:net";
+import { createHash } from "node:crypto";
 import { supabaseAdmin } from "./_supabase";
 
 /**
@@ -43,13 +44,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const email = String(body.email || "").trim().toLowerCase().slice(0, 200);
   const telefone = String(body.telefone || "").replace(/\D/g, "");
   const segmento = String(body.segmento || "").trim();
+  const challengeId = String(body.challengeId || "").trim();
+  const otpCode = String(body.otpCode || "").trim();
   if (
     nome.length < 3 ||
     !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) ||
     email.endsWith("@example.com") || email.endsWith("@exemplo.com") ||
     !/^\d{10,11}$/.test(telefone) ||
     (telefone.length === 11 && telefone[2] !== "9") ||
-    !ALLOWED_SEGMENTS.has(segmento)
+    !ALLOWED_SEGMENTS.has(segmento) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(challengeId) ||
+    !/^\\d{6}$/.test(otpCode)
   ) {
     return res.status(400).json({ error: "Confira o nome, e-mail, WhatsApp e segmento." });
   }
@@ -80,12 +85,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // O código só existe em memória na verificação. O banco armazena apenas
+    // o hash com sal; o RPC contabiliza tentativas e consome o código uma única vez.
+    const { data: challenge, error: challengeError } = await supabaseAdmin
+      .from("public_simulator_otp_challenges")
+      .select("code_salt")
+      .eq("id", challengeId)
+      .eq("phone_e164", "55" + telefone)
+      .maybeSingle();
+    if (challengeError) throw challengeError;
+    if (!challenge?.code_salt) {
+      return res.status(400).json({ error: "Código inválido, expirado ou já utilizado." });
+    }
+    const otpHash = createHash("sha256")
+      .update(challenge.code_salt + ":" + otpCode).digest("hex");
     const { data: opportunityId, error } = await supabaseAdmin.rpc(
-      "public_create_opportunity_logged",
+      "finish_verified_public_simulator_lead",
       {
+        p_challenge_id: challengeId,
+        p_phone_e164: "55" + telefone,
+        p_code_hash: otpHash,
         p_nome: nome,
         p_email: email,
-        p_telefone: telefone,
         p_segmento: segmento,
         p_vendedor_auth_id: CRM_OWNER_AUTH_ID,
         p_owner_auth_id: CRM_OWNER_AUTH_ID,
@@ -97,7 +118,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     );
     if (error) throw error;
-    if (typeof opportunityId !== "string") throw new Error("ID da oportunidade não retornado.");
+    if (typeof opportunityId !== "string") {
+      return res.status(400).json({ error: "Código inválido, expirado ou já utilizado." });
+    }
     return res.status(200).json({ opportunityId });
   } catch (error) {
     console.error("[public-simulator-lead] Falha no pré-cadastro seguro", error);

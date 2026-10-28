@@ -119,5 +119,5 @@ export default function PublicConsultorSite(){
     className="w-full rounded-xl bg-[#A11C27] px-5 py-3 font-semibold text-white disabled:opacity-50">
     {sending?"Processando...":challengeId?"Validar WhatsApp e enviar solicitação":"Receber código pelo WhatsApp"}
   </button>
-</form>}}</div></div></section></main><footer className="border-t bg-white px-5 py-6 text-center text-xs text-slate-500">Consulmax Consórcios • Transformando sonhos em conquistas reais.</footer></div>;
+</form>}</div></div></section></main><footer className="border-t bg-white px-5 py-6 text-center text-xs text-slate-500">Consulmax Consórcios • Transformando sonhos em conquistas reais.</footer></div>;
 }

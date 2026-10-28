@@ -411,7 +411,7 @@ export default function PublicSimulador() {
 
   async function handlePreCadastro() {
     if (!otpChallengeId) return requestOtp();
-    if (!/^\\d{6}$/.test(otpCode)) {
+    if (!/^\d{6}$/.test(otpCode)) {
       setOtpError("Informe o código de seis dígitos recebido pelo WhatsApp.");
       return;
     }

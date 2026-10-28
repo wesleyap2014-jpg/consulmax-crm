@@ -6,6 +6,15 @@ export default function PublicConsultorSite(){
  const {slug}=useParams();const[site,setSite]=useState<Site|null>(null);const[error,setError]=useState("");const[loading,setLoading]=useState(true);
  const[form,setForm]=useState({nome:"",telefone:"",objetivo:"Imóveis",valor_desejado:"",consentimento:false,website:""});
  const[sending,setSending]=useState(false);const[done,setDone]=useState(false);const[sendError,setSendError]=useState("");
+ const[challengeId,setChallengeId]=useState<string|null>(null);
+ const[otpCode,setOtpCode]=useState("");
+ const[retryCountdown,setRetryCountdown]=useState(0);
+ useEffect(()=>{
+   if(retryCountdown<=0)return;
+   const t=window.setTimeout(()=>setRetryCountdown(v=>Math.max(0,v-1)),1000);
+   return()=>window.clearTimeout(t);
+ },[retryCountdown]);
+ useEffect(()=>{setChallengeId(null);setOtpCode("");setSendError("");setRetryCountdown(0);},[slug]);
  useEffect(()=>{setLoading(true);fetch("/api/consultor-site?slug="+encodeURIComponent(slug||"")).then(async r=>{if(!r.ok)throw Error("Página indisponível");return r.json();}).then(data=>setSite(data.site)).catch(e=>setError(e.message)).finally(()=>setLoading(false));},[slug]);
  useEffect(()=>{
    if(!site?.slug)return;
@@ -15,7 +24,37 @@ export default function PublicConsultorSite(){
    fetch("/api/consultor-site?slug="+encodeURIComponent(site.slug),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"visit",visitorToken:token})}).catch(()=>{});
  },[site?.slug]);
 
- async function submit(e:React.FormEvent){e.preventDefault();setSending(true);setSendError("");try{const r=await fetch("/api/consultor-site?slug="+encodeURIComponent(slug||""),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,valor_desejado:Number(form.valor_desejado||0)})});const data=await r.json();if(!r.ok)throw Error(data.error||"Não foi possível enviar");setDone(true);}catch(e:any){setSendError(e.message)}finally{setSending(false)}}
+
+ async function requestOtp(){
+   if(sending)return;
+   setSending(true);setSendError("");
+   try{
+     const r=await fetch("/api/consultor-site-otp?slug="+encodeURIComponent(slug||""),{
+       method:"POST",headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({telefone:form.telefone,website:form.website})
+     });
+     const data=await r.json().catch(()=>({}));
+     if(!r.ok||typeof data.challengeId!=="string")throw Error(data.error||"Não foi possível enviar o código.");
+     setChallengeId(data.challengeId);setOtpCode("");setRetryCountdown(60);
+   }catch(e:any){setSendError(e.message||"Não foi possível enviar o código.");}
+   finally{setSending(false);}
+ }
+ async function submit(e:React.FormEvent){
+   e.preventDefault();
+   if(!challengeId){await requestOtp();return;}
+   if(!/^\\d{6}$/.test(otpCode)){setSendError("Informe os 6 dígitos recebidos no WhatsApp.");return;}
+   setSending(true);setSendError("");
+   try{
+     const r=await fetch("/api/consultor-site?slug="+encodeURIComponent(slug||""),{
+       method:"POST",headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({...form,valor_desejado:Number(form.valor_desejado||0),challengeId,otpCode})
+     });
+     const data=await r.json().catch(()=>({}));
+     if(!r.ok)throw Error(data.error||"Não foi possível validar o WhatsApp.");
+     setDone(true);setOtpCode("");
+   }catch(e:any){setSendError(e.message||"Código inválido ou expirado. Solicite outro código.");}
+   finally{setSending(false);}
+ }
  const phone=(site?.whatsapp||"").replace(/\D/g,"");const wa=phone?(phone.startsWith("55")?phone:"55"+phone):"";
  if(loading)return <div className="min-h-screen flex items-center justify-center text-slate-600">Carregando apresentação...</div>;
  if(!site)return <div className="min-h-screen flex items-center justify-center p-6 text-center text-slate-700">{error||"Página não disponível."}</div>;
@@ -23,5 +62,62 @@ export default function PublicConsultorSite(){
  <main><section className="bg-gradient-to-br from-[#1E293F] via-[#24334d] to-[#A11C27] px-5 py-16 text-white"><div className="mx-auto grid max-w-5xl gap-10 md:grid-cols-[1fr_auto] md:items-center"><div><div className="mb-4 text-xs font-semibold uppercase tracking-[.25em] text-[#E0CE8C]">Seu consultor de planejamento</div><h1 className="text-4xl font-bold md:text-5xl">{site.nome}</h1><p className="mt-5 max-w-xl text-xl leading-relaxed text-white/85">{site.headline}</p><a href="#planejamento" className="mt-8 inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 font-semibold text-[#A11C27]">Solicitar meu planejamento <ArrowRight size={18}/></a></div><div className="flex h-44 w-44 items-center justify-center overflow-hidden rounded-full border-4 border-white/30 bg-white/15 text-6xl font-bold">{site.foto?<img src={site.foto} alt={site.nome} className="h-full w-full object-cover"/>:site.nome.slice(0,1)}</div></div></section>
  <section className="mx-auto max-w-5xl px-5 py-12"><h2 className="text-2xl font-bold">Como posso ajudar você?</h2><p className="mt-2 text-slate-600">Soluções personalizadas para conquistar seus objetivos com planejamento.</p><div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{site.especialidades.map(x=><div key={x} className="rounded-2xl border border-slate-200 bg-white p-5 font-semibold shadow-sm"><CheckCircle2 className="mb-3 text-[#A11C27]"/>{x}</div>)}</div></section>
  <section id="sobre" className="bg-white px-5 py-14"><div className="mx-auto max-w-5xl"><div className="text-xs font-semibold uppercase tracking-[.2em] text-[#A11C27]">Conheça seu consultor</div><h2 className="mt-3 text-3xl font-bold">Sobre mim</h2><p className="mt-5 max-w-3xl whitespace-pre-line text-lg leading-relaxed text-slate-600">{site.sobre_mim||"Será um prazer conhecer seus projetos e ajudar a encontrar a melhor estratégia para realizá-los."}</p><div className="mt-6 flex items-center gap-2 text-sm text-slate-500"><ShieldCheck size={18}/>Consultor vinculado à Consulmax Consórcios</div></div></section>
- <section id="planejamento" className="px-5 py-16"><div className="mx-auto grid max-w-5xl gap-8 md:grid-cols-2"><div><div className="text-xs font-bold uppercase tracking-[.2em] text-[#A11C27]">Vamos conversar?</div><h2 className="mt-3 text-3xl font-bold">Seu próximo passo começa com um bom planejamento.</h2><p className="mt-4 text-slate-600">Conte um pouco do que você deseja conquistar. Receberei sua solicitação para preparar um atendimento personalizado.</p>{wa&&<a className="mt-6 inline-flex items-center gap-2 font-semibold text-emerald-700" href={"https://wa.me/"+wa} target="_blank" rel="noreferrer"><MessageCircle size={19}/>Falar pelo WhatsApp</a>}</div><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">{done?<div className="py-10 text-center"><CheckCircle2 className="mx-auto mb-4 text-emerald-600" size={45}/><h3 className="text-xl font-bold">Solicitação recebida!</h3><p className="mt-3 text-slate-600">Obrigado pelo contato. Seu pedido foi registrado.</p></div>:<form onSubmit={submit} className="space-y-4"><h3 className="text-xl font-bold">Solicitar meu planejamento</h3><label className="block text-sm font-medium">Nome completo<input required minLength={3} maxLength={120} value={form.nome} onChange={e=>setForm({...form,nome:e.target.value})} className="mt-1 w-full rounded-lg border p-3" /></label><label className="block text-sm font-medium">WhatsApp<input required inputMode="tel" placeholder="(69) 99999-9999" value={form.telefone} onChange={e=>setForm({...form,telefone:e.target.value})} className="mt-1 w-full rounded-lg border p-3"/></label><label className="block text-sm font-medium">O que você deseja conquistar?<select value={form.objetivo} onChange={e=>setForm({...form,objetivo:e.target.value})} className="mt-1 w-full rounded-lg border p-3">{["Imóveis","Veículos","Agro","Máquinas e equipamentos","Serviços","Planejamento patrimonial","Investimentos"].map(x=><option key={x}>{x}</option>)}</select></label><label className="block text-sm font-medium">Crédito desejado (R$)<input type="number" min="0" max="1000000000" value={form.valor_desejado} onChange={e=>setForm({...form,valor_desejado:e.target.value})} className="mt-1 w-full rounded-lg border p-3"/></label><input className="hidden" tabIndex={-1} autoComplete="off" aria-hidden="true" value={form.website} onChange={e=>setForm({...form,website:e.target.value})}/><label className="flex gap-2 text-xs text-slate-600"><input type="checkbox" required checked={form.consentimento} onChange={e=>setForm({...form,consentimento:e.target.checked})}/>Concordo em compartilhar meus dados para receber contato comercial sobre a solicitação, conforme a <a href="/politica-de-privacidade" target="_blank" rel="noreferrer" className="underline">Política de Privacidade</a>.</label>{sendError&&<p role="alert" className="text-sm text-red-700">{sendError}</p>}<button disabled={sending} className="w-full rounded-xl bg-[#A11C27] px-5 py-3 font-semibold text-white disabled:opacity-50">{sending?"Enviando...":"Quero meu planejamento"}</button></form>}</div></div></section></main><footer className="border-t bg-white px-5 py-6 text-center text-xs text-slate-500">Consulmax Consórcios • Transformando sonhos em conquistas reais.</footer></div>;
+ <section id="planejamento" className="px-5 py-16"><div className="mx-auto grid max-w-5xl gap-8 md:grid-cols-2"><div><div className="text-xs font-bold uppercase tracking-[.2em] text-[#A11C27]">Vamos conversar?</div><h2 className="mt-3 text-3xl font-bold">Seu próximo passo começa com um bom planejamento.</h2><p className="mt-4 text-slate-600">Conte um pouco do que você deseja conquistar. Receberei sua solicitação para preparar um atendimento personalizado.</p>{wa&&<a className="mt-6 inline-flex items-center gap-2 font-semibold text-emerald-700" href={"https://wa.me/"+wa} target="_blank" rel="noreferrer"><MessageCircle size={19}/>Falar pelo WhatsApp</a>}</div><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">{done?<div className="py-10 text-center"><CheckCircle2 className="mx-auto mb-4 text-emerald-600" size={45}/><h3 className="text-xl font-bold">Solicitação recebida!</h3><p className="mt-3 text-slate-600">Obrigado pelo contato. Seu pedido foi registrado.</p></div>:<form onSubmit={submit} className="space-y-4">
+  <h3 className="text-xl font-bold">{challengeId?"Confirme seu WhatsApp":"Solicitar meu planejamento"}</h3>
+  {!challengeId ? <>
+    <label className="block text-sm font-medium">Nome completo
+      <input required minLength={3} maxLength={120} value={form.nome}
+        onChange={e=>setForm({...form,nome:e.target.value})}
+        className="mt-1 w-full rounded-lg border p-3"/>
+    </label>
+    <label className="block text-sm font-medium">WhatsApp
+      <input required inputMode="tel" placeholder="(69) 99999-9999" value={form.telefone}
+        onChange={e=>setForm({...form,telefone:e.target.value})}
+        className="mt-1 w-full rounded-lg border p-3"/>
+    </label>
+    <label className="block text-sm font-medium">O que você deseja conquistar?
+      <select value={form.objetivo} onChange={e=>setForm({...form,objetivo:e.target.value})}
+        className="mt-1 w-full rounded-lg border p-3">
+        {["Imóveis","Veículos","Agro","Máquinas e equipamentos","Serviços","Planejamento patrimonial","Investimentos"].map(x=><option key={x}>{x}</option>)}
+      </select>
+    </label>
+    <label className="block text-sm font-medium">Crédito desejado (R$)
+      <input type="number" min="0" max="1000000000" value={form.valor_desejado}
+        onChange={e=>setForm({...form,valor_desejado:e.target.value})}
+        className="mt-1 w-full rounded-lg border p-3"/>
+    </label>
+    <label className="flex gap-2 text-xs text-slate-600">
+      <input type="checkbox" required checked={form.consentimento}
+        onChange={e=>setForm({...form,consentimento:e.target.checked})}/>
+      <span>Concordo em receber um código de verificação pelo WhatsApp e compartilhar meus dados para contato comercial, conforme a <a href="/politica-de-privacidade" target="_blank" rel="noreferrer" className="underline">Política de Privacidade</a>. Por segurança, registramos IP e localização aproximada do acesso.</span>
+    </label>
+  </> : <div className="space-y-4">
+    <p className="text-sm text-slate-600">
+      Enviamos um código de 6 dígitos para <strong>{form.telefone}</strong>.
+      Copie o código do WhatsApp e informe abaixo. Ele expira em 5 minutos.
+    </p>
+    <label className="block text-sm font-medium">Código de verificação
+      <input required type="text" autoComplete="one-time-code" inputMode="numeric"
+        maxLength={6} pattern="[0-9]{6}" placeholder="000000"
+        value={otpCode} onChange={e=>{setOtpCode(e.target.value.replace(/\\D/g,"").slice(0,6));setSendError("");}}
+        className="mt-1 w-full rounded-lg border p-3 text-center text-xl tracking-widest"/>
+    </label>
+    <div className="flex flex-wrap items-center gap-4 text-sm">
+      <button type="button" disabled={sending||retryCountdown>0} onClick={requestOtp}
+        className="font-semibold text-[#A11C27] underline disabled:text-slate-400 disabled:no-underline">
+        {retryCountdown>0?`Reenviar código em ${retryCountdown}s`:"Reenviar código"}
+      </button>
+      <button type="button" disabled={sending} onClick={()=>{
+        setChallengeId(null);setOtpCode("");setSendError("");setRetryCountdown(0);
+      }} className="font-semibold text-[#1E293F] underline">Corrigir número</button>
+    </div>
+  </div>}
+  <input className="hidden" tabIndex={-1} autoComplete="off" aria-hidden="true"
+    value={form.website} onChange={e=>setForm({...form,website:e.target.value})}/>
+  {sendError&&<p role="alert" className="text-sm text-red-700">{sendError}</p>}
+  <button type="submit" disabled={sending||(!!challengeId&&otpCode.length!==6)}
+    className="w-full rounded-xl bg-[#A11C27] px-5 py-3 font-semibold text-white disabled:opacity-50">
+    {sending?"Processando...":challengeId?"Validar WhatsApp e enviar solicitação":"Receber código pelo WhatsApp"}
+  </button>
+</form>}}</div></div></section></main><footer className="border-t bg-white px-5 py-6 text-center text-xs text-slate-500">Consulmax Consórcios • Transformando sonhos em conquistas reais.</footer></div>;
 }

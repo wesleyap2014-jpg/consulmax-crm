@@ -21,13 +21,6 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-/** =========================
- *  IDs padrão (AUTH USER ID)
- *  =========================
- */
-const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
-const DEFAULT_OWNER_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
-
 /** WhatsApp oficial Consulmax (E.164) — (69) 9 9391-7465 */
 const CONSULMAX_WA = "5569993917465";
 
@@ -227,33 +220,24 @@ async function createOpportunityV2({
   email,
   telefone,
   segmentoRPC,
-  vendedorAuthId = DEFAULT_VENDEDOR_AUTH_ID,
-  ownerAuthId = DEFAULT_OWNER_AUTH_ID,
+  website,
 }: {
   nome: string;
   email: string;
   telefone: string;
   segmentoRPC: string;
-  vendedorAuthId?: string;
-  ownerAuthId?: string;
+  website: string;
 }) {
-  const tel = onlyDigits(telefone);
-  const payload = {
-    p_lead_id: null as any,
-    p_nome: nome,
-    p_email: email,
-    p_telefone: tel,
-    p_segmento: segmentoRPC,
-    p_vendedor_auth_id: vendedorAuthId,
-    p_owner_auth_id: ownerAuthId,
-  };
-  const { data, error } = await supabase.rpc("public_create_opportunity_v2", payload);
-  if (error) {
-    console.error("[public_create_opportunity_v2] payload:", payload);
-    console.error(error);
-    throw error;
+  const response = await fetch("/api/public-simulator-lead", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nome, email, telefone: onlyDigits(telefone), segmento: segmentoRPC, website }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || typeof data?.opportunityId !== "string") {
+    throw new Error(data?.error || "Falha ao registrar pré-cadastro.");
   }
-  return data as string;
+  return data.opportunityId as string;
 }
 /** Nota na oportunidade */
 async function safeAppendNote(opportunityId: string, note: string) {
@@ -324,6 +308,7 @@ export default function PublicSimulador() {
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [telefone, setTelefone] = useState("");
+  const [website, setWebsite] = useState("");
   const [segmento, setSegmento] = useState<SegmentId>("automovel");
 
   // Validações visuais
@@ -395,6 +380,7 @@ export default function PublicSimulador() {
         email: email.trim(),
         telefone,
         segmentoRPC,
+        website,
       });
       setOpId(newOpId);
 
@@ -576,6 +562,9 @@ export default function PublicSimulador() {
             </div>
 
             <CardContent className="grid gap-4 pt-0">
+              <input type="text" value={website} onChange={(e) => setWebsite(e.target.value)}
+                className="absolute -left-[9999px]" tabIndex={-1} autoComplete="off"
+                aria-hidden="true" name="website" />
               <div>
                 <Label>Nome completo</Label>
                 <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Seu nome" />
@@ -626,8 +615,11 @@ export default function PublicSimulador() {
               </Button>
 
               <p className="text-xs text-[#1E293F]/60 leading-relaxed">
-                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são
-                protegidos e nunca pediremos sua senha.
+                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas.
+                Por segurança, registramos o IP público e a localização aproximada do acesso, conforme nossa{" "}
+                <a href="/politica-de-privacidade" target="_blank" rel="noopener noreferrer" className="underline">
+                  Política de Privacidade
+                </a>. Nunca pediremos sua senha.
               </p>
             </CardContent>
           </Card>

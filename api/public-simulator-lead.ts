@@ -54,7 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     (telefone.length === 11 && telefone[2] !== "9") ||
     !ALLOWED_SEGMENTS.has(segmento) ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(challengeId) ||
-    !/^\\d{6}$/.test(otpCode)
+    !/^\d{6}$/.test(otpCode)
   ) {
     return res.status(400).json({ error: "Confira o nome, e-mail, WhatsApp e segmento." });
   }

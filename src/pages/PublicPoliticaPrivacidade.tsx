@@ -9,7 +9,7 @@ const C = {
 };
 
 export default function PublicPoliticaPrivacidade() {
-  const updatedAt = "22 de maio de 2026";
+  const updatedAt = "28 de outubro de 2026";
 
   return (
     <main className="min-h-screen bg-[#F5F5F5] text-slate-800">
@@ -85,6 +85,7 @@ export default function PublicPoliticaPrivacidade() {
               <li>objetivo de aquisição, valor de crédito desejado e interesse em consórcio;</li>
               <li>histórico de atendimento, mensagens, solicitações e preferências;</li>
               <li>dados de navegação, origem do lead, campanhas e interações digitais.</li>
+              <li>IP público, data e horário da solicitação, navegador e localização aproximada (cidade, estado e país estimados a partir do IP), quando disponíveis, em formulários públicos.</li>
             </ul>
 
             <h2>3. Como coletamos os dados</h2>
@@ -109,7 +110,15 @@ export default function PublicPoliticaPrivacidade() {
               <li>enviar comunicações, lembretes, conteúdos informativos e mensagens transacionais;</li>
               <li>cumprir obrigações legais, regulatórias e contratuais;</li>
               <li>melhorar nossos processos, atendimento, segurança e experiência do usuário.</li>
+              <li>prevenir envios automatizados, fraudes e uso abusivo dos formulários públicos, e investigar incidentes de segurança.</li>
             </ul>
+
+            <p>
+              A localização de acesso é uma estimativa baseada no IP público, não uma
+              posição precisa por GPS, podendo divergir da localização real do visitante.
+              Os registros técnicos são acessíveis apenas a pessoal autorizado,
+              pelo prazo necessário à segurança e apuração de incidentes.
+            </p>
 
             <h2>5. Uso do WhatsApp e atendimento automatizado</h2>
             <p>

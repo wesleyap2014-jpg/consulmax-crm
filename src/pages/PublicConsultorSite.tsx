@@ -42,7 +42,7 @@ export default function PublicConsultorSite(){
  async function submit(e:React.FormEvent){
    e.preventDefault();
    if(!challengeId){await requestOtp();return;}
-   if(!/^\\d{6}$/.test(otpCode)){setSendError("Informe os 6 dígitos recebidos no WhatsApp.");return;}
+   if(!/^\d{6}$/.test(otpCode)){setSendError("Informe os 6 dígitos recebidos no WhatsApp.");return;}
    setSending(true);setSendError("");
    try{
      const r=await fetch("/api/consultor-site?slug="+encodeURIComponent(slug||""),{
@@ -99,7 +99,7 @@ export default function PublicConsultorSite(){
     <label className="block text-sm font-medium">Código de verificação
       <input required type="text" autoComplete="one-time-code" inputMode="numeric"
         maxLength={6} pattern="[0-9]{6}" placeholder="000000"
-        value={otpCode} onChange={e=>{setOtpCode(e.target.value.replace(/\\D/g,"").slice(0,6));setSendError("");}}
+        value={otpCode} onChange={e=>{setOtpCode(e.target.value.replace(/\D/g,"").slice(0,6));setSendError("");}}
         className="mt-1 w-full rounded-lg border p-3 text-center text-xl tracking-widest"/>
     </label>
     <div className="flex flex-wrap items-center gap-4 text-sm">

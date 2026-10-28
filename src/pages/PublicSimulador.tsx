@@ -221,17 +221,21 @@ async function createOpportunityV2({
   telefone,
   segmentoRPC,
   website,
+  challengeId,
+  otpCode,
 }: {
   nome: string;
   email: string;
   telefone: string;
   segmentoRPC: string;
   website: string;
+  challengeId: string;
+  otpCode: string;
 }) {
   const response = await fetch("/api/public-simulator-lead", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nome, email, telefone: onlyDigits(telefone), segmento: segmentoRPC, website }),
+    body: JSON.stringify({ nome, email, telefone: onlyDigits(telefone), segmento: segmentoRPC, website, challengeId, otpCode }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || typeof data?.opportunityId !== "string") {
@@ -318,6 +322,10 @@ export default function PublicSimulador() {
   // Etapas
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [saving, setSaving] = useState(false);
+  const [otpChallengeId, setOtpChallengeId] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [resendCountdown, setResendCountdown] = useState(0);
 
   // Oportunidade criada
   const [opId, setOpId] = useState<string | null>(null);
@@ -346,6 +354,11 @@ export default function PublicSimulador() {
 
   useEffect(() => setTelefone((t) => formatPhoneBR(t)), []);
   useEffect(() => {
+    if (resendCountdown <= 0) return;
+    const timer = window.setTimeout(() => setResendCountdown((n) => Math.max(0, n - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendCountdown]);
+  useEffect(() => {
     const cfg = SEGMENT_CFG[segmento];
     setCredito((prev) => clampToStep(prev, cfg.min, cfg.max, cfg.step));
   }, [segmento]);
@@ -371,9 +384,40 @@ export default function PublicSimulador() {
   }, [segmento, parcelKind, credito]);
 
   /* ===== Ações ===== */
-  async function handlePreCadastro() {
+  async function requestOtp() {
+    if (!canContinueStep1 || saving) return;
     try {
       setSaving(true);
+      setOtpError("");
+      const response = await fetch("/api/public-simulator-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telefone: onlyDigits(telefone), website }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || typeof data?.challengeId !== "string") {
+        throw new Error(data?.error || "Não foi possível enviar o código.");
+      }
+      setOtpChallengeId(data.challengeId);
+      setOtpCode("");
+      setResendCountdown(60);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e: any) {
+      setOtpError(e?.message || "Não foi possível enviar o código. Tente novamente.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handlePreCadastro() {
+    if (!otpChallengeId) return requestOtp();
+    if (!/^\\d{6}$/.test(otpCode)) {
+      setOtpError("Informe o código de seis dígitos recebido pelo WhatsApp.");
+      return;
+    }
+    try {
+      setSaving(true);
+      setOtpError("");
       const segmentoRPC = segmentLabelFromId(segmento);
       const newOpId = await createOpportunityV2({
         nome: nome.trim(),
@@ -381,21 +425,17 @@ export default function PublicSimulador() {
         telefone,
         segmentoRPC,
         website,
+        challengeId: otpChallengeId,
+        otpCode,
       });
       setOpId(newOpId);
-
-      // Tracking (Lead)
+      setOtpCode("");
       trackLead(segmentoRPC, credito);
-
-      safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`).catch(() => {});
+      safeAppendNote(newOpId, `Lead confirmado via código de WhatsApp. Segmento: ${segmentoRPC}.`).catch(() => {});
       setStep(2);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
-      const msg = e?.message || e?.hint || e?.details || "Falha ao executar a RPC public_create_opportunity_v2.";
-      alert(
-        `Não foi possível concluir o pré-cadastro/criar a oportunidade.\n\nDetalhes: ${msg}\n\nVeja o console do navegador para diagnóstico completo.`
-      );
-      console.error("[handlePreCadastro] erro:", e);
+      setOtpError(e?.message || "Código inválido ou expirado. Solicite outro código.");
     } finally {
       setSaving(false);
     }
@@ -465,11 +505,11 @@ export default function PublicSimulador() {
 
   /* ===== CTA flutuante por etapa ===== */
   function floatingCTALabel() {
-    if (step === 1) return "Continuar";
+    if (step === 1) return otpChallengeId ? "Verificar código" : "Receber código";
     if (step === 2) return "Ver opções";
     return "Finalizar";
   }
-  const floatingCTADisabled = step === 1 ? !canContinueStep1 || saving : false;
+  const floatingCTADisabled = step === 1 ? saving || (otpChallengeId ? otpCode.length !== 6 : !canContinueStep1) : false;
   function onFloatingCTA() {
     if (step === 1) return handlePreCadastro();
     if (step === 2) {
@@ -541,11 +581,11 @@ export default function PublicSimulador() {
         {step === 1 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader className="pb-2">
-              <CardTitle className="text-[#1E293F]">Comece pelo pré-cadastro</CardTitle>
+              <CardTitle className="text-[#1E293F]">{otpChallengeId ? "Valide seu WhatsApp" : "Comece pelo pré-cadastro"}</CardTitle>
             </CardHeader>
 
             {/* Chips Segmento */}
-            <div className="px-6 pb-2">
+            {!otpChallengeId && <div className="px-6 pb-2">
               <Label className="mb-2 block">Bem desejado</Label>
               <div
                 className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 justify-center [-ms-overflow-style:none] [scrollbar-width:none]"
@@ -559,9 +599,50 @@ export default function PublicSimulador() {
                   </span>
                 ))}
               </div>
-            </div>
+            </div>}
 
             <CardContent className="grid gap-4 pt-0">
+              {otpChallengeId ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-[#1E293F]/80">
+                    Enviamos um código de 6 dígitos pelo WhatsApp para <strong>{formatPhoneBR(telefone)}</strong>.
+                    Copie o código recebido e digite abaixo. Ele expira em 5 minutos.
+                  </p>
+                  <div>
+                    <Label htmlFor="public-simulator-otp">Código de verificação</Label>
+                    <Input
+                      id="public-simulator-otp"
+                      autoComplete="one-time-code"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={otpCode}
+                      onChange={(e) => { setOtpCode(onlyDigits(e.target.value).slice(0, 6)); setOtpError(""); }}
+                      placeholder="000000"
+                      className="mt-2 max-w-xs text-center text-xl tracking-[0.25em]"
+                    />
+                  </div>
+                  {otpError && <p role="alert" className="text-sm text-red-700">{otpError}</p>}
+                  <Button
+                    disabled={saving || otpCode.length !== 6}
+                    onClick={handlePreCadastro}
+                    className="hidden md:inline-flex bg-[#A11C27] hover:bg-[#8c1822]"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+                    Verificar WhatsApp e continuar
+                  </Button>
+                  <div className="flex flex-wrap items-center gap-4 text-sm">
+                    <button type="button" disabled={saving || resendCountdown > 0}
+                      onClick={requestOtp} className="font-medium text-[#A11C27] underline disabled:text-slate-400 disabled:no-underline">
+                      {resendCountdown > 0 ? `Reenviar código em ${resendCountdown}s` : "Reenviar código"}
+                    </button>
+                    <button type="button" disabled={saving} onClick={() => {
+                      setOtpChallengeId(null); setOtpCode(""); setOtpError(""); setResendCountdown(0);
+                    }} className="font-medium text-[#1E293F] underline">
+                      Corrigir número
+                    </button>
+                  </div>
+                </div>
+              ) : (<>
               <input type="text" value={website} onChange={(e) => setWebsite(e.target.value)}
                 className="absolute -left-[9999px]" tabIndex={-1} autoComplete="off"
                 aria-hidden="true" name="website" />
@@ -611,16 +692,18 @@ export default function PublicSimulador() {
                 aria-disabled={!canContinueStep1 || saving}
               >
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MousePointerClick className="w-4 h-4 mr-2" />}
-                Continuar para simulação
+                Receber código pelo WhatsApp
               </Button>
 
+              {otpError && <p role="alert" className="text-sm text-red-700">{otpError}</p>}
               <p className="text-xs text-[#1E293F]/60 leading-relaxed">
-                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas.
+                Ao continuar, você concorda em receber o código de verificação pelo WhatsApp e ser contatado pela Consulmax para apresentação de propostas.
                 Por segurança, registramos o IP público e a localização aproximada do acesso, conforme nossa{" "}
                 <a href="/politica-de-privacidade" target="_blank" rel="noopener noreferrer" className="underline">
                   Política de Privacidade
                 </a>. Nunca pediremos sua senha.
               </p>
+              </>)}
             </CardContent>
           </Card>
         )}

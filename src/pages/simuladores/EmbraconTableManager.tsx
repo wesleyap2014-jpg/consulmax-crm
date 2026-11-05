@@ -230,6 +230,14 @@ function Editor({
   const [saving, setSaving] = useState(false);
   const legacyMin = rows.length ? Math.min(...rows.map((r) => Number(r.faixa_min))) : null;
   const legacyMax = rows.length ? Math.max(...rows.map((r) => Number(r.faixa_max))) : null;
+  const camposDivergentes = [
+    new Set(rows.map((r) => Number(r.limitador_parcela_pct))).size > 1 ? "Limitador da parcela" : "",
+    new Set(rows.map((r) => Number(r.seguro_prest_pct))).size > 1 ? "Seguro por parcela" : "",
+    new Set(rows.map((r) => (r.indice_correcao || []).join("|"))).size > 1 ? "Índice de correção" : "",
+    new Set(rows.map((r) => JSON.stringify([
+      r.permite_lance_livre, r.permite_lance_fixo_25, r.permite_lance_fixo_50, r.permite_lance_embutido
+    ]))).size > 1 ? "Formas de contemplação/pagamento" : "",
+  ].filter(Boolean);
 
   const addCredito = () => {
     const valor = Number(novoCredito.replace(",", "."));
@@ -255,8 +263,8 @@ function Editor({
       alert("Cadastre prazos válidos e sem duplicidade.");
       return;
     }
-    if (!rows.length && !creditos.length) {
-      alert("Informe as faixas de crédito disponíveis antes de cadastrar a tabela.");
+    if ((!rows.length || rows.some((r) => (r.faixas_credito || []).length > 0)) && !creditos.length) {
+      alert("Informe as faixas de crédito disponíveis antes de salvar a tabela.");
       return;
     }
     if (!indices.split(",").some((x) => x.trim())) {
@@ -267,6 +275,11 @@ function Editor({
       alert("Informe uma periodicidade válida, em meses.");
       return;
     }
+    if (camposDivergentes.length && !window.confirm(
+      "Atenção: existem valores históricos diferentes por prazo em " +
+      camposDivergentes.join(", ") +
+      ". Ao salvar, esses parâmetros gerais serão padronizados em todos os prazos desta tabela. Deseja confirmar?"
+    )) return;
     setSaving(true);
     const { error } = await supabase.rpc("embracon_salvar_tabela_unificada", {
       p_admin_id: adminId,
@@ -315,6 +328,19 @@ function Editor({
           <Button variant="secondary" size="sm" disabled={saving} onClick={onClose}><X className="h-4 w-4" /></Button>
         </div>
         <div className="space-y-6 overflow-y-auto p-5">
+          {camposDivergentes.length > 0 && (
+            <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <strong>Atenção aos parâmetros históricos:</strong> há variações de {camposDivergentes.join(", ")} entre os prazos.
+              Ao salvar esta tabela, os campos gerais serão padronizados. Confira antes:
+              <div className="mt-2 space-y-1 text-xs">
+                {rows.map((r) => (
+                  <div key={r.id}>
+                    {r.prazo_limite}m · Seguro: {percent(r.seguro_prest_pct)} · Limitador: {percent(r.limitador_parcela_pct)} · Índice: {(r.indice_correcao || []).join(", ")}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <Label>Segmento</Label>

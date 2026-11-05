@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { useParams, useSearchParams } from "react-router-dom";
+import EmbraconTableManager from "./EmbraconTableManager";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
@@ -61,6 +62,11 @@ type SimTable = {
   contrata_reduzida_25: boolean;
   contrata_reduzida_50: boolean;
   indice_correcao: string[];
+  faixas_credito?: number[] | null;
+  reajusta_cada_meses?: number | null;
+  permite_sorteio?: boolean | null;
+  permite_troca_chaves?: boolean | null;
+  permite_fgts?: boolean | null;
 };
 
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
@@ -790,7 +796,11 @@ export default function EmbraconPage() {
   }, [lanceTipo]);
 
   const prazoAviso = prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte ? "⚠️ Prazo da venda ultrapassa o Prazo Até da tabela selecionada." : null;
-  const podeCalcular = !!tabelaSelecionada && credito > 0 && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
+  const creditosDisponiveis = (tabelaSelecionada?.faixas_credito || []).map(Number).sort((a, b) => a - b);
+  const creditoValido = creditosDisponiveis.length
+    ? creditosDisponiveis.some((valor) => Math.abs(valor - credito) < 0.005)
+    : !!faixa && credito >= faixa.min && credito <= faixa.max;
+  const podeCalcular = !!tabelaSelecionada && creditoValido && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
 
   useEffect(() => {
     if (!tabelaSelecionada || !podeCalcular) {
@@ -890,12 +900,10 @@ export default function EmbraconPage() {
     setSimCode(data?.code ?? null);
   }
 
-  function handleTableCreatedOrUpdated(newTable: SimTable) {
-    setTables((prev) => (prev.find((t) => t.id === newTable.id) ? prev.map((t) => (t.id === newTable.id ? newTable : t)) : [newTable, ...prev]));
-  }
-
-  function handleTableDeleted(id: string) {
-    setTables((prev) => prev.filter((t) => t.id !== id));
+  async function refreshTableData() {
+    const { data, error } = await supabase.from("sim_tables").select("*");
+    if (error) throw error;
+    setTables((data || []) as SimTable[]);
   }
 
   const resumoTexto = useMemo(() => {
@@ -1106,8 +1114,10 @@ ${wa}`;
                       </div>
 
                       <div>
-                        <Label>Faixa de crédito</Label>
-                        <Input value={faixa ? `${brMoney(faixa.min)} a ${brMoney(faixa.max)}` : ""} readOnly />
+                        <Label>Faixas de crédito</Label>
+                        <Input value={creditosDisponiveis.length
+                          ? String(creditosDisponiveis.length) + " valores disponíveis"
+                          : faixa ? brMoney(faixa.min) + " a " + brMoney(faixa.max) + " (legado)" : ""} readOnly />
                         {prazoRangeSelecionado && (
                           <p className="mt-1 text-xs text-slate-500">
                             Adm {pctHuman(prazoRangeSelecionado.taxa_adm_pct)} • FR {pctHuman(prazoRangeSelecionado.fundo_reserva_pct)}
@@ -1129,9 +1139,16 @@ ${wa}`;
                   <div className="grid gap-4 md:grid-cols-4">
                     <div>
                       <Label>Valor do crédito</Label>
-                      <MoneyInput value={credito || 0} onChange={setCredito} />
-                      {faixa && credito > 0 && (credito < faixa.min || credito > faixa.max) && (
-                        <p className="mt-1 text-xs text-amber-600">Crédito fora da faixa cadastrada.</p>
+                      {creditosDisponiveis.length ? (
+                        <select className="h-10 w-full rounded-md border px-3" value={creditoValido ? credito : 0} onChange={(e) => setCredito(Number(e.target.value))}>
+                          <option value={0}>Selecione o crédito</option>
+                          {creditosDisponiveis.map((valor) => <option key={valor} value={valor}>{brMoney(valor)}</option>)}
+                        </select>
+                      ) : (
+                        <MoneyInput value={credito || 0} onChange={setCredito} />
+                      )}
+                      {credito > 0 && !creditoValido && (
+                        <p className="mt-1 text-xs text-amber-600">Escolha um valor de crédito disponível nesta tabela.</p>
                       )}
                     </div>
 
@@ -1343,12 +1360,11 @@ ${wa}`;
       </div>
 
       {mgrOpen && activeAdmin && isAdmin && (
-        <TableManagerModal
+        <EmbraconTableManager
           admin={activeAdmin}
           allTables={adminTables}
           onClose={() => setMgrOpen(false)}
-          onCreatedOrUpdated={handleTableCreatedOrUpdated}
-          onDeleted={handleTableDeleted}
+          onChanged={refreshTableData}
         />
       )}
     </div>
@@ -1538,6 +1554,7 @@ function TablePersonalityCard({ tabela, adminRules }: { tabela: SimTable; adminR
         <div>Limitador: <strong>{pctHuman(tabela.limitador_parcela_pct)}</strong></div>
         <div>Seguro: <strong>{pctHuman(tabela.seguro_prest_pct)}</strong></div>
         <div>Índice: <strong>{(tabela.indice_correcao || []).join(", ") || "—"}</strong></div>
+        <div>Reajusta a cada: <strong>{tabela.reajusta_cada_meses ? String(tabela.reajusta_cada_meses) + " meses" : "Não configurado"}</strong></div>
         <div>Base ofertado: <strong>{adminRules?.lance_ofert_base === "valor_categoria" ? "Crédito + taxas" : "Crédito"}</strong></div>
         <div>Base embutido: <strong>{adminRules?.lance_embut_base === "valor_categoria" ? "Crédito + taxas" : "Crédito"}</strong></div>
       </div>
@@ -1545,7 +1562,10 @@ function TablePersonalityCard({ tabela, adminRules }: { tabela: SimTable; adminR
         {tabela.contrata_parcela_cheia && <span className="rounded-full bg-white px-3 py-1">Parcela Cheia</span>}
         {tabela.contrata_reduzida_25 && <span className="rounded-full bg-white px-3 py-1">Reduzida 25%</span>}
         {tabela.contrata_reduzida_50 && <span className="rounded-full bg-white px-3 py-1">Reduzida 50%</span>}
-        {tabela.permite_lance_embutido && <span className="rounded-full bg-white px-3 py-1">Embutido</span>}
+        {tabela.permite_sorteio !== false && <span className="rounded-full bg-white px-3 py-1">Sorteio</span>}
+        {tabela.permite_lance_embutido && <span className="rounded-full bg-white px-3 py-1">Embutido (25%)</span>}
+        {tabela.permite_troca_chaves && <span className="rounded-full bg-white px-3 py-1">Troca de Chaves</span>}
+        {tabela.permite_fgts && <span className="rounded-full bg-white px-3 py-1">FGTS</span>}
         {tabela.permite_lance_livre && <span className="rounded-full bg-white px-3 py-1">Livre</span>}
         {tabela.permite_lance_fixo_25 && <span className="rounded-full bg-white px-3 py-1">Fixo 25%</span>}
         {tabela.permite_lance_fixo_50 && <span className="rounded-full bg-white px-3 py-1">Fixo 50%</span>}
@@ -1554,327 +1574,3 @@ function TablePersonalityCard({ tabela, adminRules }: { tabela: SimTable; adminR
   );
 }
 
-function ModalBase({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-      <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div>
-            <div className="font-black" style={{ color: C.navy }}>{title}</div>
-            <div className="text-sm text-slate-500">Gerencie as personalidades de cada tabela sem alterar o cálculo principal.</div>
-          </div>
-          <button onClick={onClose} className="rounded-2xl border p-2 hover:bg-muted" aria-label="Fechar">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function TableManagerModal({
-  admin,
-  allTables,
-  onClose,
-  onCreatedOrUpdated,
-  onDeleted,
-}: {
-  admin: Admin;
-  allTables: SimTable[];
-  onClose: () => void;
-  onCreatedOrUpdated: (t: SimTable) => void;
-  onDeleted: (id: string) => void;
-}) {
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<SimTable | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [query, setQuery] = useState("");
-
-  const pageSize = 10;
-
-  const grouped = useMemo(() => {
-    const q = normalizeText(query);
-    return [...allTables]
-      .filter((t) => !q || normalizeText(`${t.segmento} ${t.nome_tabela} ${t.prazo_limite}`).includes(q))
-      .sort((a, b) => (a.segmento + a.nome_tabela + String(a.prazo_limite)).toLowerCase().localeCompare((b.segmento + b.nome_tabela + String(b.prazo_limite)).toLowerCase()));
-  }, [allTables, query]);
-
-  const segmentOptions = useMemo(
-    () => Array.from(new Set(allTables.map((t) => t.segmento.trim()).filter(Boolean))).sort(sortSegmentsLikeCards),
-    [allTables]
-  );
-
-  const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
-  const pageItems = useMemo(() => grouped.slice((page - 1) * pageSize, page * pageSize), [grouped, page]);
-
-  useEffect(() => setPage(1), [allTables.length, query]);
-
-  async function deletar(id: string) {
-    if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
-    setBusyId(id);
-
-    const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
-    if (delSims.error) {
-      setBusyId(null);
-      alert("Erro ao excluir simulações vinculadas: " + delSims.error.message);
-      return;
-    }
-
-    const { error } = await supabase.from("sim_tables").delete().eq("id", id);
-    setBusyId(null);
-
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
-
-    onDeleted(id);
-  }
-
-  return (
-    <ModalBase onClose={onClose} title="Configurar Tabelas Embracon">
-      <div className="max-h-[calc(92vh-76px)] overflow-y-auto p-5">
-        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="text-sm text-muted-foreground">Admin ativa: <strong>{admin.name}</strong> • {allTables.length} tabela(s)</div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-              <Input className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar tabela..." />
-            </div>
-            <Button onClick={() => { setEditing(null); setShowForm(true); }} className="h-10 rounded-2xl px-4" style={{ background: C.ruby }}>
-              <Plus className="mr-1 h-4 w-4" /> Nova Tabela
-            </Button>
-          </div>
-        </div>
-
-        <div className="overflow-auto rounded-2xl border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="p-3 text-left">Segmento</th>
-                <th className="p-3 text-left">Tabela</th>
-                <th className="p-3 text-left">Prazo</th>
-                <th className="p-3 text-left">% Adm</th>
-                <th className="p-3 text-left">% FR</th>
-                <th className="p-3 text-left">% Antecip</th>
-                <th className="p-3 text-left">Parc Ant.</th>
-                <th className="p-3 text-left">% Limite</th>
-                <th className="p-3 text-left">% Seguro</th>
-                <th className="p-3 text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.map((t) => (
-                <tr key={t.id} className="border-t">
-                  <td className="p-3">{t.segmento}</td>
-                  <td className="p-3 font-semibold" style={{ color: C.navy }}>{t.nome_tabela}</td>
-                  <td className="p-3">{t.prazo_limite}</td>
-                  <td className="p-3">{pctHuman(t.taxa_adm_pct)}</td>
-                  <td className="p-3">{pctHuman(t.fundo_reserva_pct)}</td>
-                  <td className="p-3">{pctHuman(t.antecip_pct)}</td>
-                  <td className="p-3">{t.antecip_parcelas}</td>
-                  <td className="p-3">{pctHuman(t.limitador_parcela_pct)}</td>
-                  <td className="p-3">{pctHuman(t.seguro_prest_pct)}</td>
-                  <td className="p-3">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => { setEditing(t); setShowForm(true); }} className="h-9 rounded-xl px-3">
-                        <Pencil className="mr-1 h-4 w-4" /> Editar
-                      </Button>
-                      <Button variant="destructive" size="sm" disabled={busyId === t.id} onClick={() => deletar(t.id)} className="h-9 rounded-xl px-3">
-                        {busyId === t.id ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />} Excluir
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {pageItems.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">Sem tabelas para esta administradora.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between text-sm">
-          <div>{grouped.length > 0 && <>Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}</strong> de <strong>{grouped.length}</strong></>}</div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
-            <span>Página {page} de {totalPages}</span>
-            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Próxima</Button>
-          </div>
-        </div>
-      </div>
-
-      {showForm && (
-        <TableFormOverlay
-          adminId={admin.id}
-          segmentOptions={segmentOptions}
-          initial={editing || undefined}
-          onClose={() => setShowForm(false)}
-          onSaved={(t) => {
-            onCreatedOrUpdated(t);
-            setShowForm(false);
-          }}
-        />
-      )}
-    </ModalBase>
-  );
-}
-
-function TableFormOverlay({ adminId, segmentOptions, initial, onSaved, onClose }: { adminId: string; segmentOptions: string[]; initial?: SimTable; onSaved: (t: SimTable) => void; onClose: () => void }) {
-  const [segmento, setSegmento] = useState(initial?.segmento || segmentOptions[0] || "");
-  const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
-  const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
-  const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
-  const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
-
-  function fmtPct(d: number) { return (d * 100).toFixed(4).replace(".", ","); }
-  function parsePct(s: string) {
-    const clean = (s || "").replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
-    const num = parseFloat(clean);
-    return isNaN(num) ? 0 : num / 100;
-  }
-
-  const [taxaAdmHuman, setTaxaAdmHuman] = useState(fmtPct(initial?.taxa_adm_pct ?? 0.22));
-  const [frHuman, setFrHuman] = useState(fmtPct(initial?.fundo_reserva_pct ?? 0.02));
-  const [antecipHuman, setAntecipHuman] = useState(fmtPct(initial?.antecip_pct ?? 0.02));
-  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
-  const [limHuman, setLimHuman] = useState(fmtPct(initial?.limitador_parcela_pct ?? 0.002565));
-  const [seguroHuman, setSeguroHuman] = useState(fmtPct(initial?.seguro_prest_pct ?? 0.00061));
-  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
-  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
-  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
-  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
-  const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
-  const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
-  const [cRed50, setCRed50] = useState(initial?.contrata_reduzida_50 ?? true);
-  const [indices, setIndices] = useState((initial?.indice_correcao || ["IPCA"]).join(", "));
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  async function salvar() {
-    if (!segmentOptions.includes(segmento)) {
-      alert("Selecione um segmento cadastrado para esta administradora.");
-      return;
-    }
-    setSaving(true);
-    const payload: Omit<SimTable, "id"> = {
-      admin_id: adminId,
-      segmento,
-      nome_tabela: nome,
-      faixa_min: Number(faixaMin) || 0,
-      faixa_max: Number(faixaMax) || 0,
-      prazo_limite: Number(prazoLimite) || 0,
-      taxa_adm_pct: parsePct(taxaAdmHuman),
-      fundo_reserva_pct: parsePct(frHuman),
-      antecip_pct: parsePct(antecipHuman),
-      antecip_parcelas: Number(antecipParcelas) || 0,
-      limitador_parcela_pct: parsePct(limHuman),
-      seguro_prest_pct: parsePct(seguroHuman),
-      permite_lance_embutido: perEmbutido,
-      permite_lance_fixo_25: perFixo25,
-      permite_lance_fixo_50: perFixo50,
-      permite_lance_livre: perLivre,
-      contrata_parcela_cheia: cParcelaCheia,
-      contrata_reduzida_25: cRed25,
-      contrata_reduzida_50: cRed50,
-      indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
-    };
-
-    const res = initial
-      ? await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single()
-      : await supabase.from("sim_tables").insert(payload).select("*").single();
-
-    setSaving(false);
-
-    if (res.error) {
-      alert("Erro ao salvar tabela: " + res.error.message);
-      return;
-    }
-
-    onSaved(res.data as SimTable);
-  }
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div>
-            <div className="font-black" style={{ color: C.navy }}>{initial ? "Editar Tabela" : "Nova Tabela"}</div>
-            <div className="text-sm text-slate-500">Configure a personalidade da tabela.</div>
-          </div>
-          <button onClick={onClose} className="rounded-2xl border p-2 hover:bg-muted" aria-label="Fechar"><X className="h-5 w-5" /></button>
-        </div>
-
-        <div className="max-h-[calc(92vh-76px)] overflow-y-auto p-5">
-          <div className="grid gap-4 md:grid-cols-4">
-            <div>
-              <Label>Segmento</Label>
-              <select
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={segmento}
-                onChange={(e) => setSegmento(e.target.value)}
-              >
-                {segmentOptions.map((seg) => (
-                  <option key={seg} value={seg}>{segmentVisual(seg).label}</option>
-                ))}
-              </select>
-            </div>
-            <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
-            <div><Label>Faixa mínima</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
-            <div><Label>Faixa máxima</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>
-            <div><Label>Prazo Limite</Label><Input type="number" value={prazoLimite} onChange={(e) => setPrazoLimite(Number(e.target.value))} /></div>
-            <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
-            <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
-            <div><Label>% Antecipação Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
-            <div><Label>Parcelas Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
-            <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
-            <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
-            <div><Label>Índice de Correção</Label><Input value={indices} onChange={(e) => setIndices(e.target.value)} placeholder="IPCA, INCC, IGP-M" /></div>
-
-            <div className="rounded-3xl border p-4 md:col-span-2">
-              <Label>Lances Permitidos</Label>
-              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-                <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} /> Embutido</label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} /> Fixo 25%</label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} /> Fixo 50%</label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} /> Livre</label>
-              </div>
-            </div>
-
-            <div className="rounded-3xl border p-4 md:col-span-2">
-              <Label>Formas de Contratação</Label>
-              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-                <label className="flex items-center gap-2"><input type="checkbox" checked={cParcelaCheia} onChange={(e) => setCParcelaCheia(e.target.checked)} /> Parcela Cheia</label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={cRed25} onChange={(e) => setCRed25(e.target.checked)} /> Reduzida 25%</label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={cRed50} onChange={(e) => setCRed50(e.target.checked)} /> Reduzida 50%</label>
-              </div>
-            </div>
-
-            <div className="flex gap-2 md:col-span-4">
-              <Button onClick={salvar} disabled={saving} className="h-10 rounded-2xl px-4" style={{ background: C.ruby }}>
-                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {initial ? "Salvar alterações" : "Salvar Tabela"}
-              </Button>
-              <Button variant="secondary" onClick={onClose} disabled={saving} className="h-10 rounded-2xl px-4">Cancelar</Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

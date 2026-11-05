@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  AlertTriangle,
   Banknote,
   Bike,
   Calculator,
@@ -16,19 +15,15 @@ import {
   FileText,
   Home,
   Loader2,
-  Pencil,
-  Plus,
   Save,
   Search,
   Settings,
   ShieldCheck,
   Sparkles,
-  Trash2,
   TrendingUp,
   Truck,
   UserRound,
   Wrench,
-  X,
 } from "lucide-react";
 import { useParams, useSearchParams } from "react-router-dom";
 import EmbraconTableManager from "./EmbraconTableManager";

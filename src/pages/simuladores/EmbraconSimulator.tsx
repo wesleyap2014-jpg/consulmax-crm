@@ -13,6 +13,7 @@ import {
   ChevronsUpDown,
   Copy,
   FileText,
+  Eye,
   Home,
   Loader2,
   Save,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 import { useParams, useSearchParams } from "react-router-dom";
 import EmbraconTableManager from "./EmbraconTableManager";
+import EmbraconCommercialTable from "./EmbraconCommercialTable";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
@@ -647,6 +649,7 @@ export default function EmbraconPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
   const [mgrOpen, setMgrOpen] = useState(false);
+  const [commercialOpen, setCommercialOpen] = useState(false);
 
   const [leadId, setLeadId] = useState("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
@@ -790,12 +793,18 @@ export default function EmbraconPage() {
     }
   }, [lanceTipo]);
 
-  const prazoAviso = prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte ? "⚠️ Prazo da venda ultrapassa o Prazo Até da tabela selecionada." : null;
-  const creditosDisponiveis = (tabelaSelecionada?.faixas_credito || []).map(Number).sort((a, b) => a - b);
-  const creditoValido = creditosDisponiveis.length
-    ? creditosDisponiveis.some((valor) => Math.abs(valor - credito) < 0.005)
-    : !!faixa && credito >= faixa.min && credito <= faixa.max;
-  const podeCalcular = !!tabelaSelecionada && creditoValido && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
+  const prazoAviso = tabelaSelecionada && prazoVenda > tabelaSelecionada.prazo_limite
+    ? `O prazo de ${prazoVenda} meses ultrapassa o limite de ${tabelaSelecionada.prazo_limite} meses da faixa escolhida. O cálculo foi bloqueado.`
+    : null;
+  const creditosDisponiveis = (tabelaSelecionada?.faixas_credito || [])
+    .map(Number).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  const faixaResumo = creditosDisponiveis.length
+    ? { min: creditosDisponiveis[0], max: creditosDisponiveis[creditosDisponiveis.length - 1] }
+    : faixa;
+  const creditoForaFaixa = !!faixaResumo && credito > 0 &&
+    (credito < faixaResumo.min || credito > faixaResumo.max);
+  const prazoValido = !!tabelaSelecionada && prazoVenda > 0 && prazoVenda <= tabelaSelecionada.prazo_limite;
+  const podeCalcular = prazoValido && credito > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
 
   useEffect(() => {
     if (!tabelaSelecionada || !podeCalcular) {
@@ -839,7 +848,7 @@ export default function EmbraconPage() {
   }, [tabelaSelecionada, credito, prazoVenda, forma, seguroPrest, lanceOfertPct, lanceEmbutPct, parcContemplacao, adminRules, prazoOriginalGrupo, lanceOfertParcelas, lanceEmbutParcelas, podeCalcular, embutCapPct]);
 
   async function salvarSimulacao() {
-    if (!tabelaSelecionada || !calc) return;
+    if (!tabelaSelecionada || !calc || !podeCalcular) return;
 
     setSalvando(true);
 
@@ -1110,9 +1119,19 @@ ${wa}`;
 
                       <div>
                         <Label>Faixas de crédito</Label>
-                        <Input value={creditosDisponiveis.length
-                          ? String(creditosDisponiveis.length) + " valores disponíveis"
-                          : faixa ? brMoney(faixa.min) + " a " + brMoney(faixa.max) + " (legado)" : ""} readOnly />
+                        <div className="mt-1 flex items-center gap-2">
+                          <Input
+                            className="min-w-0 flex-1"
+                            value={faixaResumo ? `${brMoney(faixaResumo.min)} a ${brMoney(faixaResumo.max)}` : ""}
+                            readOnly
+                          />
+                          <Button type="button" variant="secondary" className="h-10 shrink-0 rounded-xl px-3"
+                            aria-label="Ver tabela comercial" title="Ver créditos e parcelas por prazo"
+                            disabled={!nomeTabela || variantesDaTabela.length === 0}
+                            onClick={() => setCommercialOpen(true)}>
+                            <Eye className="mr-1 h-4 w-4" /> Ver tabela
+                          </Button>
+                        </div>
                         {prazoRangeSelecionado && (
                           <p className="mt-1 text-xs text-slate-500">
                             Adm {pctHuman(prazoRangeSelecionado.taxa_adm_pct)} • FR {pctHuman(prazoRangeSelecionado.fundo_reserva_pct)}
@@ -1134,16 +1153,11 @@ ${wa}`;
                   <div className="grid gap-4 md:grid-cols-4">
                     <div>
                       <Label>Valor do crédito</Label>
-                      {creditosDisponiveis.length ? (
-                        <select className="h-10 w-full rounded-md border px-3" value={creditoValido ? credito : 0} onChange={(e) => setCredito(Number(e.target.value))}>
-                          <option value={0}>Selecione o crédito</option>
-                          {creditosDisponiveis.map((valor) => <option key={valor} value={valor}>{brMoney(valor)}</option>)}
-                        </select>
-                      ) : (
-                        <MoneyInput value={credito || 0} onChange={setCredito} />
-                      )}
-                      {credito > 0 && !creditoValido && (
-                        <p className="mt-1 text-xs text-amber-600">Escolha um valor de crédito disponível nesta tabela.</p>
+                      <MoneyInput value={credito || 0} onChange={setCredito} />
+                      {creditoForaFaixa && (
+                        <p className="mt-1 text-xs text-amber-700">
+                          Fora da faixa de referência cadastrada; o cálculo continua liberado.
+                        </p>
                       )}
                     </div>
 
@@ -1154,7 +1168,7 @@ ${wa}`;
                         setPrazoVenda(n);
                         if (!prazoOriginalGrupo) setPrazoOriginalGrupo(n);
                       }} />
-                      {prazoAviso && <p className="mt-1 text-xs text-amber-600">{prazoAviso}</p>}
+                      {prazoAviso && <p role="alert" className="mt-1 text-xs font-semibold text-red-700">{prazoAviso}</p>}
                     </div>
 
                     <div>
@@ -1176,8 +1190,8 @@ ${wa}`;
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <MetricCard title={labelAntecipacao(tabelaSelecionada?.antecip_parcelas)} value={calc ? brMoney(calc.parcelaAte) : "—"} hint="Antes da contemplação" />
-                    <MetricCard title="Demais parcelas" value={calc ? brMoney(calc.parcelaDemais) : "—"} hint="Antes da contemplação" />
+                    <MetricCard title={labelAntecipacao(tabelaSelecionada?.antecip_parcelas)} value={calc && podeCalcular ? brMoney(calc.parcelaAte) : "—"} hint="Antes da contemplação" />
+                    <MetricCard title="Demais parcelas" value={calc && podeCalcular ? brMoney(calc.parcelaDemais) : "—"} hint="Antes da contemplação" />
                   </div>
                 </CardContent>
               </Card>
@@ -1281,8 +1295,10 @@ ${wa}`;
               <SectionTitle icon={ShieldCheck} title="Resultado da simulação" subtitle="Resumo dos principais números." />
             </CardHeader>
             <CardContent>
-              {!calc ? (
-                <div className="rounded-3xl border border-dashed p-8 text-center text-sm text-slate-500">Preencha os dados da simulação para visualizar o resultado.</div>
+              {!calc || !podeCalcular ? (
+                <div className={`rounded-3xl border border-dashed p-8 text-center text-sm ${prazoAviso ? "border-red-200 bg-red-50 text-red-700" : "text-slate-500"}`}>
+                  {prazoAviso || "Preencha os dados da simulação para visualizar o resultado."}
+                </div>
               ) : (
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -1301,7 +1317,7 @@ ${wa}`;
                   )}
 
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <Button className="h-10 rounded-2xl" onClick={salvarSimulacao} disabled={!calc || salvando} style={{ background: C.ruby }}>
+                    <Button className="h-10 rounded-2xl" onClick={salvarSimulacao} disabled={!calc || !podeCalcular || salvando} style={{ background: C.ruby }}>
                       {salvando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                       Salvar Simulação
                     </Button>
@@ -1315,8 +1331,10 @@ ${wa}`;
           <Card className={glassCardClass()}>
             <CardHeader><CardTitle className="text-base" style={{ color: C.navy }}>Memória de cálculo</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
-              {!tabelaSelecionada ? (
-                <div className="text-muted-foreground">Selecione uma tabela para ver os detalhes.</div>
+              {!tabelaSelecionada || !podeCalcular ? (
+                <div className="text-muted-foreground">
+                  {prazoAviso || "Preencha os dados válidos da simulação para visualizar a memória de cálculo."}
+                </div>
               ) : (
                 <>
                   <div className="grid grid-cols-2 gap-2">
@@ -1354,6 +1372,15 @@ ${wa}`;
         </div>
       </div>
 
+      {commercialOpen && nomeTabela && variantesDaTabela.length > 0 && (
+        <EmbraconCommercialTable
+          segmento={segmento}
+          nomeTabela={nomeTabela}
+          variantes={variantesDaTabela}
+          rules={adminRules}
+          onClose={() => setCommercialOpen(false)}
+        />
+      )}
       {mgrOpen && activeAdmin && isAdmin && (
         <EmbraconTableManager
           admin={activeAdmin}

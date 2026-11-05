@@ -1,5 +1,5 @@
 // src/pages/simuladores/EmbraconSimulator.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,6 @@ import {
   Eye,
   Home,
   Loader2,
-  Save,
   Search,
   Settings,
   ShieldCheck,
@@ -67,7 +66,7 @@ type SimTable = {
 };
 
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
-type LanceTipo = "livre" | "fixo_25" | "fixo_50";
+type LanceTipo = "sorteio" | "livre" | "fixo_25" | "fixo_50";
 
 
 /* ======================= Helpers ========================= */
@@ -614,6 +613,7 @@ function segmentVisual(seg?: string | null) {
 }
 
 function lanceTipoLabel(tipo: LanceTipo) {
+  if (tipo === "sorteio") return "Sorteio";
   if (tipo === "fixo_50") return "Fixo de 50%";
   if (tipo === "fixo_25") return "Fixo de 25%";
   return "Lance Livre";
@@ -629,6 +629,7 @@ function allowedLanceTipos(tabela?: SimTable | null): LanceTipo[] {
   if (!tabela) return [];
 
   const opts: LanceTipo[] = [];
+  if (tabela.permite_sorteio !== false) opts.push("sorteio");
   if (tabela.permite_lance_livre) opts.push("livre");
   if (tabela.permite_lance_fixo_50) opts.push("fixo_50");
   if (tabela.permite_lance_fixo_25) opts.push("fixo_25");
@@ -671,9 +672,14 @@ export default function EmbraconPage() {
   const [lanceOfertParcelas, setLanceOfertParcelas] = useState(0);
   const [lanceEmbutParcelas, setLanceEmbutParcelas] = useState(0);
   const [parcContemplacao, setParcContemplacao] = useState(1);
-  const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacao> | null>(null);
+  const [simulacaoSalva, setSimulacaoSalva] = useState<{
+    assinatura: string;
+    codigo: number;
+    calculo: ReturnType<typeof calcularSimulacao>;
+  } | null>(null);
+  const [erroSalvamento, setErroSalvamento] = useState<{ assinatura: string; mensagem: string } | null>(null);
   const [salvando, setSalvando] = useState(false);
-  const [simCode, setSimCode] = useState<number | null>(null);
+  const salvandoRef = useRef(false);
   const [userPhone, setUserPhone] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -788,7 +794,10 @@ export default function EmbraconPage() {
   }, [tabelaSelecionada, lanceTipo, lanceEmbutPct]);
 
   useEffect(() => {
-    if (lanceTipo === "fixo_50" || lanceTipo === "fixo_25") {
+    if (lanceTipo === "sorteio") {
+      setLanceOfertPct(0);
+      setLanceEmbutPct(0);
+    } else if (lanceTipo === "fixo_50" || lanceTipo === "fixo_25") {
       setLanceOfertPct(lancePctFromTipo(lanceTipo));
     }
   }, [lanceTipo]);
@@ -804,30 +813,52 @@ export default function EmbraconPage() {
   const creditoForaFaixa = !!faixaResumo && credito > 0 &&
     (credito < faixaResumo.min || credito > faixaResumo.max);
   const prazoValido = !!tabelaSelecionada && prazoVenda > 0 && prazoVenda <= tabelaSelecionada.prazo_limite;
-  const podeCalcular = prazoValido && credito > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
+  const podeCalcular = prazoValido && Number.isFinite(credito) && credito > 0 && Number.isInteger(prazoVenda) && Number.isInteger(parcContemplacao) && parcContemplacao > 0 && parcContemplacao < prazoVenda;
 
-  useEffect(() => {
-    if (!tabelaSelecionada || !podeCalcular) {
-      setCalc(null);
-      return;
-    }
 
+  // O resultado só existe depois que esta configuração exata for salva no banco.
+  // A alteração de qualquer campo invalida imediatamente o resultado anterior.
+  const assinaturaAtual = JSON.stringify({
+    admin: activeAdminId,
+    tabela: tabelaSelecionada?.id,
+    lead: leadId,
+    nomeLead: leadInfo?.nome,
+    telefoneLead: leadInfo?.telefone,
+    grupo,
+    credito,
+    prazoVenda,
+    forma,
+    seguroPrest,
+    lanceTipo,
+    lanceOfertPct,
+    lanceEmbutPct,
+    prazoOriginalGrupo,
+    lanceOfertParcelas,
+    lanceEmbutParcelas,
+    parcContemplacao,
+    regras: adminRules,
+    embutCapPct,
+  });
+  const calc = simulacaoSalva?.assinatura === assinaturaAtual && podeCalcular ? simulacaoSalva.calculo : null;
+  const simCode = calc ? simulacaoSalva?.codigo ?? null : null;
+  const erroAtual = erroSalvamento?.assinatura === assinaturaAtual ? erroSalvamento.mensagem : null;
+
+  function calcularResultado(tabela: SimTable) {
     const modeloLance = adminRules?.modelo_lance ?? "percentual";
     const lanceBase = (adminRules?.modelo_lance_base ?? (modeloLance === "parcela" ? "parcela_termo" : "credito")) as "credito" | "parcela_termo";
 
-    setCalc(
-      calcularSimulacao({
+    return calcularSimulacao({
         credito,
         prazoVenda,
         forma,
         seguro: seguroPrest,
-        segmento: tabelaSelecionada.segmento,
-        taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
-        frPct: tabelaSelecionada.fundo_reserva_pct,
-        antecipPct: tabelaSelecionada.antecip_pct,
-        antecipParcelas: (tabelaSelecionada.antecip_parcelas as any) ?? 0,
-        limitadorPct: tabelaSelecionada.limitador_parcela_pct,
-        seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
+        segmento: tabela.segmento,
+        taxaAdmFull: tabela.taxa_adm_pct,
+        frPct: tabela.fundo_reserva_pct,
+        antecipPct: tabela.antecip_pct,
+        antecipParcelas: (tabela.antecip_parcelas as any) ?? 0,
+        limitadorPct: tabela.limitador_parcela_pct,
+        seguroPrestPct: tabela.seguro_prest_pct,
         modeloLance,
         lanceBase,
         prazoOriginalGrupo: Number(prazoOriginalGrupo || prazoVenda),
@@ -843,14 +874,26 @@ export default function EmbraconPage() {
         lanceEmbutParcelas,
         lanceOfertPct,
         lanceEmbutPct,
-      })
-    );
-  }, [tabelaSelecionada, credito, prazoVenda, forma, seguroPrest, lanceOfertPct, lanceEmbutPct, parcContemplacao, adminRules, prazoOriginalGrupo, lanceOfertParcelas, lanceEmbutParcelas, podeCalcular, embutCapPct]);
+      });
+  }
 
-  async function salvarSimulacao() {
-    if (!tabelaSelecionada || !calc || !podeCalcular) return;
 
+  async function calcularESalvar() {
+    // Nunca liberar uma simulação sem código persistido no CRM.
+    if (salvandoRef.current || !tabelaSelecionada || !leadId || !podeCalcular) return;
+    salvandoRef.current = true;
     setSalvando(true);
+    setSimulacaoSalva(null);
+    setErroSalvamento(null);
+    const assinaturaDoClique = assinaturaAtual;
+
+    try {
+      const resultado = calcularResultado(tabelaSelecionada);
+      if (![resultado.parcelaAte, resultado.parcelaDemais, resultado.valorCategoria,
+        resultado.saldoDevedorFinal, resultado.novoCredito, resultado.parcelaEscolhida]
+        .every(Number.isFinite)) {
+        throw new Error("Os valores calculados são inválidos. Confira os parâmetros antes de tentar novamente.");
+      }
 
     const payload: any = {
       admin_id: activeAdminId,
@@ -875,33 +918,49 @@ export default function EmbraconPage() {
       lance_embutido_parcelas: lanceEmbutParcelas,
       parcela_contemplacao: parcContemplacao,
       antecip_parcelas: tabelaSelecionada.antecip_parcelas,
-      valor_categoria: calc.valorCategoria,
-      parcela_termo: calc.parcelaTermo,
-      parcela_ate_1_ou_2: calc.parcelaAte,
-      parcela_demais: calc.parcelaDemais,
-      lance_ofertado_valor: calc.lanceOfertadoValor,
-      lance_embutido_valor: calc.lanceEmbutidoValor,
-      lance_proprio_valor: calc.lanceProprioValor,
-      lance_percebido_pct: calc.lancePercebidoPct,
-      novo_credito: calc.novoCredito,
-      nova_parcela_sem_limite: calc.novaParcelaSemLimite,
-      parcela_limitante: calc.parcelaLimitante,
-      parcela_escolhida: calc.parcelaEscolhida,
-      saldo_devedor_final: calc.saldoDevedorFinal,
-      novo_prazo: calc.novoPrazo,
+      valor_categoria: resultado.valorCategoria,
+      parcela_termo: resultado.parcelaTermo,
+      parcela_ate_1_ou_2: resultado.parcelaAte,
+      parcela_demais: resultado.parcelaDemais,
+      lance_ofertado_valor: resultado.lanceOfertadoValor,
+      lance_embutido_valor: resultado.lanceEmbutidoValor,
+      lance_proprio_valor: resultado.lanceProprioValor,
+      lance_percebido_pct: resultado.lancePercebidoPct,
+      novo_credito: resultado.novoCredito,
+      nova_parcela_sem_limite: resultado.novaParcelaSemLimite,
+      parcela_limitante: resultado.parcelaLimitante,
+      parcela_escolhida: resultado.parcelaEscolhida,
+      saldo_devedor_final: resultado.saldoDevedorFinal,
+      novo_prazo: resultado.novoPrazo,
       adm_tax_pct: tabelaSelecionada.taxa_adm_pct,
       fr_tax_pct: tabelaSelecionada.fundo_reserva_pct,
     };
 
-    const { data, error } = await supabase.from("sim_simulations").insert(payload).select("code").single();
-    setSalvando(false);
 
-    if (error) {
-      alert("Erro ao salvar simulação: " + error.message);
-      return;
+      const { data, error } = await supabase
+        .from("sim_simulations")
+        .insert(payload)
+        .select("id,code")
+        .single();
+      if (error) throw error;
+      if (!data?.id || !Number.isInteger(Number(data.code)) || Number(data.code) < 1) {
+        throw new Error("O CRM não confirmou o código da simulação gravada.");
+      }
+
+      setSimulacaoSalva({
+        assinatura: assinaturaDoClique,
+        codigo: Number(data.code),
+        calculo: resultado,
+      });
+    } catch (err: any) {
+      setErroSalvamento({
+        assinatura: assinaturaDoClique,
+        mensagem: err?.message || "Não foi possível salvar a simulação. Tente novamente.",
+      });
+    } finally {
+      salvandoRef.current = false;
+      setSalvando(false);
     }
-
-    setSimCode(data?.code ?? null);
   }
 
   async function refreshTableData() {
@@ -972,7 +1031,7 @@ ${wa}`;
   return (
     <div className="space-y-6 p-4 md:p-6">
       <section
-        className="relative overflow-hidden rounded-[28px] border p-6 shadow-sm md:p-8"
+        className="relative overflow-hidden rounded-[24px] border p-4 shadow-sm md:p-5"
         style={{
           background: "linear-gradient(135deg, rgba(30,41,63,.98), rgba(161,28,39,.94))",
           borderColor: "rgba(255,255,255,.22)",
@@ -985,9 +1044,9 @@ ${wa}`;
             <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur">
               <Calculator className="h-3.5 w-3.5" /> Simulador Embracon
             </div>
-            <h1 className="text-2xl font-black tracking-tight md:text-4xl">Tabelas com personalidade própria</h1>
-            <p className="mt-3 text-sm text-white/82 md:text-base">
-              Cada tabela mantém suas regras de prazo, taxa, fundo reserva, antecipação, limitador, seguro e modalidade de lance.
+            <h1 className="text-xl font-black tracking-tight md:text-2xl">Simulação de consórcio Embracon</h1>
+            <p className="mt-1 text-sm text-white/85">
+              Preencha as condições, clique em Calcular e gere automaticamente uma simulação numerada.
             </p>
           </div>
 
@@ -1147,7 +1206,7 @@ ${wa}`;
 
               <Card className={glassCardClass()}>
                 <CardHeader>
-                  <SectionTitle icon={Banknote} title="Configuração da venda" subtitle="Informe crédito, prazo, forma de contratação e seguro." />
+                  <SectionTitle icon={Banknote} title="Configurações da venda e contemplação" subtitle="Informe crédito, prazo, modalidade e condições de contemplação." />
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-4">
@@ -1189,18 +1248,9 @@ ${wa}`;
                     </div>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <MetricCard title={labelAntecipacao(tabelaSelecionada?.antecip_parcelas)} value={calc && podeCalcular ? brMoney(calc.parcelaAte) : "—"} hint="Antes da contemplação" />
-                    <MetricCard title="Demais parcelas" value={calc && podeCalcular ? brMoney(calc.parcelaDemais) : "—"} hint="Antes da contemplação" />
+                  <div className="border-t pt-4">
+                    <SectionTitle icon={TrendingUp} title="Contemplação e lance" subtitle="Selecione a modalidade e informe o lance para a simulação." />
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card className={glassCardClass()}>
-                <CardHeader>
-                  <SectionTitle icon={TrendingUp} title="Estratégia de lance" subtitle="Respeita o modelo configurado nas regras da administradora." />
-                </CardHeader>
-                <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-3">
                     {lanceModoParcela ? (
                       <>
@@ -1222,7 +1272,7 @@ ${wa}`;
                     ) : (
                       <>
                         <div>
-                          <Label>Tipo de lance</Label>
+                          <Label>Tipo de contemplação</Label>
                           <select
                             className="h-10 w-full rounded-md border px-3"
                             value={lanceTipo}
@@ -1239,7 +1289,11 @@ ${wa}`;
                           </p>
                         </div>
 
-                        {lanceTipo === "livre" ? (
+                        {lanceTipo === "sorteio" ? (
+                          <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                            Sorteio: sem lance ofertado.
+                          </div>
+                        ) : lanceTipo === "livre" ? (
                           <div>
                             <Label>Lance livre (%)</Label>
                             <PercentInput valueDecimal={lanceOfertPct} onChangeDecimal={setLanceOfertPct} />
@@ -1253,7 +1307,7 @@ ${wa}`;
                           </div>
                         )}
 
-                        {permiteEmbutido ? (
+                        {permiteEmbutido && lanceTipo !== "sorteio" ? (
                           <div>
                             <Label>Lance embutido (%)</Label>
                             <PercentInput
@@ -1267,7 +1321,7 @@ ${wa}`;
                           </div>
                         ) : (
                           <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-500">
-                            Esta tabela não permite lance embutido.
+                            {lanceTipo === "sorteio" ? "Sorteio não utiliza lance embutido." : "Esta tabela não permite lance embutido."}
                           </div>
                         )}
                       </>
@@ -1277,6 +1331,39 @@ ${wa}`;
                       <Label>Parcela da contemplação</Label>
                       <Input type="number" value={parcContemplacao} onChange={(e) => setParcContemplacao(Math.max(1, Number(e.target.value)))} />
                       <p className="mt-1 text-xs text-slate-500">Deve ser menor que o prazo da venda.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 border-t pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="max-w-md text-xs text-slate-500">
+                        Cada clique em Calcular gera um novo código e grava a simulação no CRM antes de exibir os resultados.
+                      </p>
+                      <Button
+                        type="button"
+                        className="h-11 min-w-[190px] rounded-xl bg-[#A11C27] font-bold text-white hover:bg-[#8c1822]"
+                        disabled={!leadId || !podeCalcular || salvando}
+                        onClick={calcularESalvar}
+                      >
+                        {salvando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calculator className="mr-2 h-4 w-4" />}
+                        {salvando ? "Calculando e salvando..." : "Calcular"}
+                      </Button>
+                    </div>
+                    {prazoAviso && <p role="alert" className="text-sm font-semibold text-red-700">{prazoAviso}</p>}
+                    {erroAtual && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      O cálculo não foi liberado porque o salvamento falhou: {erroAtual}
+                    </p>}
+                    {simCode && (
+                      <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
+                        Simulação nº {simCode} gerada e salva no CRM para apresentação.
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-3 border-t pt-4">
+                    <h3 className="text-sm font-bold uppercase tracking-wide text-[#1E293F]">Cálculo da tabela</h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <MetricCard title={labelAntecipacao(tabelaSelecionada?.antecip_parcelas)} value={calc ? brMoney(calc.parcelaAte) : "—"} hint="Antes da contemplação" />
+                      <MetricCard title="Demais parcelas" value={calc ? brMoney(calc.parcelaDemais) : "—"} hint="Antes da contemplação" />
                     </div>
                   </div>
                 </CardContent>
@@ -1297,32 +1384,45 @@ ${wa}`;
             <CardContent>
               {!calc || !podeCalcular ? (
                 <div className={`rounded-3xl border border-dashed p-8 text-center text-sm ${prazoAviso ? "border-red-200 bg-red-50 text-red-700" : "text-slate-500"}`}>
-                  {prazoAviso || "Preencha os dados da simulação para visualizar o resultado."}
+                  {prazoAviso || (salvando ? "Salvando a simulação no CRM..." : "Clique em Calcular para gerar o código e visualizar o resultado.")}
                 </div>
               ) : (
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <MetricCard title="Crédito contratado" value={brMoney(credito)} />
                     <MetricCard title="Crédito líquido" value={brMoney(calc.novoCredito)} hint="Após embutido" />
+                    <MetricCard title="Lance total" value={brMoney(calc.lanceOfertadoValor)} />
                     <MetricCard title="Lance próprio" value={brMoney(calc.lanceProprioValor)} />
-                    <MetricCard title="Lance embutido" value={brMoney(calc.lanceEmbutidoValor)} />
                     <MetricCard title="Parcela escolhida" value={brMoney(calc.parcelaEscolhida)} hint={calc.aplicouLimitador ? "Limitador aplicado" : "Sem limitador maior"} />
                     <MetricCard title="Novo prazo" value={`${calc.novoPrazo} meses`} />
                   </div>
 
-                  {calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null && (
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                      2ª parcela com antecipação: <strong>{brMoney(calc.segundaParcelaComAntecipacao)}</strong>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#1E293F]">Parcelas e prazos</h3>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+                        <span>1ª parcela (na contratação)</span>
+                        <strong>{brMoney(calc.parcelaAte)}</strong>
+                      </div>
+                      {calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+                          <span>2ª parcela diferenciada</span>
+                          <strong>{brMoney(calc.segundaParcelaComAntecipacao)}</strong>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span>+ {calc.novoPrazo} parcelas pós-contemplação</span>
+                        <strong>{brMoney(calc.parcelaEscolhida)}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {simCode && (
+                    <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                      <ShieldCheck className="h-4 w-4 shrink-0" />
+                      <span>Simulação <strong>nº {simCode}</strong> salva automaticamente.</span>
                     </div>
                   )}
-
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Button className="h-10 rounded-2xl" onClick={salvarSimulacao} disabled={!calc || !podeCalcular || salvando} style={{ background: C.ruby }}>
-                      {salvando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                      Salvar Simulação
-                    </Button>
-                    {simCode && <div className="flex items-center rounded-2xl border bg-slate-50 px-3 text-sm">✅ Salvo como <strong className="ml-1">#{simCode}</strong></div>}
-                  </div>
                 </div>
               )}
             </CardContent>
@@ -1331,9 +1431,9 @@ ${wa}`;
           <Card className={glassCardClass()}>
             <CardHeader><CardTitle className="text-base" style={{ color: C.navy }}>Memória de cálculo</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
-              {!tabelaSelecionada || !podeCalcular ? (
+              {!tabelaSelecionada || !calc || !podeCalcular ? (
                 <div className="text-muted-foreground">
-                  {prazoAviso || "Preencha os dados válidos da simulação para visualizar a memória de cálculo."}
+                  {prazoAviso || "Clique em Calcular para salvar e liberar a memória de cálculo."}
                 </div>
               ) : (
                 <>
@@ -1350,7 +1450,12 @@ ${wa}`;
                     <div>Fundo Reserva</div><div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
                     <div>Antecipação Adm</div><div className="text-right">{pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x</div>
                     <div>Valor de categoria</div><div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
-                    <div>Parcela termo</div><div className="text-right">{calc ? brMoney(calc.parcelaTermo) : "—"}</div>
+                    <div>Parcela termo</div><div className="text-right">{brMoney(calc.parcelaTermo)}</div>
+                    <div className="font-semibold">Saldo devedor pós-contemplação</div>
+                    <div className="text-right font-semibold">{brMoney(calc.saldoDevedorFinal)}</div>
+                    <div className="col-span-2 text-xs text-slate-500">
+                      Valor da categoria menos parcelas pagas (sem seguro) e lance ofertado (próprio + embutido).
+                    </div>
                   </div>
                 </>
               )}
@@ -1360,7 +1465,7 @@ ${wa}`;
           <Card className={glassCardClass()}>
             <CardHeader><CardTitle className="text-base" style={{ color: C.navy }}>Resumo para WhatsApp</CardTitle></CardHeader>
             <CardContent className="space-y-2">
-              <textarea className="h-64 w-full rounded-md border p-3 text-sm leading-relaxed" style={{ lineHeight: "1.6" }} readOnly value={resumoTexto} placeholder="Preencha os campos para gerar o resumo." />
+              <textarea className="h-64 w-full rounded-md border p-3 text-sm leading-relaxed" style={{ lineHeight: "1.6" }} readOnly value={resumoTexto} placeholder="Calcule e salve a simulação para liberar o resumo." />
               <div className="flex justify-end">
                 <Button onClick={copiarResumo} disabled={!resumoTexto} variant="secondary" className="rounded-2xl">
                   <Copy className="mr-2 h-4 w-4" /> Copiar

@@ -1609,6 +1609,11 @@ function TableManagerModal({
       .sort((a, b) => (a.segmento + a.nome_tabela + String(a.prazo_limite)).toLowerCase().localeCompare((b.segmento + b.nome_tabela + String(b.prazo_limite)).toLowerCase()));
   }, [allTables, query]);
 
+  const segmentOptions = useMemo(
+    () => Array.from(new Set(allTables.map((t) => t.segmento.trim()).filter(Boolean))).sort(sortSegmentsLikeCards),
+    [allTables]
+  );
+
   const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
   const pageItems = useMemo(() => grouped.slice((page - 1) * pageSize, page * pageSize), [grouped, page]);
 
@@ -1710,6 +1715,7 @@ function TableManagerModal({
       {showForm && (
         <TableFormOverlay
           adminId={admin.id}
+          segmentOptions={segmentOptions}
           initial={editing || undefined}
           onClose={() => setShowForm(false)}
           onSaved={(t) => {
@@ -1722,8 +1728,8 @@ function TableManagerModal({
   );
 }
 
-function TableFormOverlay({ adminId, initial, onSaved, onClose }: { adminId: string; initial?: SimTable; onSaved: (t: SimTable) => void; onClose: () => void }) {
-  const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
+function TableFormOverlay({ adminId, segmentOptions, initial, onSaved, onClose }: { adminId: string; segmentOptions: string[]; initial?: SimTable; onSaved: (t: SimTable) => void; onClose: () => void }) {
+  const [segmento, setSegmento] = useState(initial?.segmento || segmentOptions[0] || "");
   const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
   const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
   const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
@@ -1761,6 +1767,10 @@ function TableFormOverlay({ adminId, initial, onSaved, onClose }: { adminId: str
   }, [onClose]);
 
   async function salvar() {
+    if (!segmentOptions.includes(segmento)) {
+      alert("Selecione um segmento cadastrado para esta administradora.");
+      return;
+    }
     setSaving(true);
     const payload: Omit<SimTable, "id"> = {
       admin_id: adminId,
@@ -1812,7 +1822,18 @@ function TableFormOverlay({ adminId, initial, onSaved, onClose }: { adminId: str
 
         <div className="max-h-[calc(92vh-76px)] overflow-y-auto p-5">
           <div className="grid gap-4 md:grid-cols-4">
-            <div><Label>Segmento</Label><Input value={segmento} onChange={(e) => setSegmento(e.target.value)} /></div>
+            <div>
+              <Label>Segmento</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={segmento}
+                onChange={(e) => setSegmento(e.target.value)}
+              >
+                {segmentOptions.map((seg) => (
+                  <option key={seg} value={seg}>{segmentVisual(seg).label}</option>
+                ))}
+              </select>
+            </div>
             <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
             <div><Label>Faixa mínima</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
             <div><Label>Faixa máxima</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>

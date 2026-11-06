@@ -76,6 +76,12 @@ const cappedAtRequest = maxSearchStrategies(explicitLimit, { credito: 90000, seg
 truthy(cappedAtRequest.offers.every((o) => o.qtdCotas <= 3), "Só limitar por solicitação explícita do vendedor.");
 const clearedLimit = maxSearchStrategies(explicitLimit, { credito: 90000, segmento: "Automóvel", maxCotas: 0 }, 0.025);
 equal(clearedLimit.offers[0].qtdCotas, 9, "Zero remove limite de cotas previamente informado.");
+// A amostra heurística não é um teto de cartas: junção longa pelo estoque integral.
+const overTwoHundred = Array.from({ length: 205 }, (_, i) => sample(2000 + i, 1000, 200, 12, 25));
+const longCombination = maxSearchStrategies(overTwoHundred, { credito: 205000, segmento: "Automóvel" }, 0.025);
+equal(longCombination.offers[0].qtdCotas, 205, "Sem limite arbitrário mesmo acima da amostra heurística.");
+equal(longCombination.offers[0].codigos.length, 205, "Todos os códigos reais presentes na junção extensa.");
+moneyNear(longCombination.offers[0].credito, 205000);
 const incompatible = sample(35, 25000, 5000, 20, 300, "BB");
 assert.throws(() => maxEvaluateOffer([a, incompatible], criteria, 0.025), /restri/i); assertions++;
 equal(maxSearchStrategies([a, incompatible], { credito: 85000 }, 0.025).offers.some((o) => o.qtdCotas > 1), false, "Não misturar administradoras.");
@@ -97,4 +103,4 @@ moneyNear(requested.entrada, 38700);
 moneyNear(requested.complementoCompra, 3100);
 moneyNear(requested.deficit, 1800);
 moneyNear(requested.recursosRestantes, -1800);
-console.log("[max2] OK — " + assertions + " afirmações: individual, 2/3/4/5/6/8/12/20 cotas, faixas, comissão, recurso, avaliação, indisponibilidade, agrupamento, WhatsApp e cenário de R$ 1.800.");
+console.log("[max2] OK — " + assertions + " afirmações: individual, 2/3/4/5/6/8/12/20/205 cotas, faixas, comissão, recurso, avaliação, indisponibilidade, agrupamento, WhatsApp e cenário de R$ 1.800.");

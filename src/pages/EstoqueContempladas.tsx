@@ -1602,150 +1602,173 @@ export default function EstoqueContempladas() {
               </select>
             </label>
           </div>
-          <div className="-mx-2 overflow-auto rounded-xl border border-slate-200 shadow-sm md:mx-0">
-            <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
-              <thead className="sticky top-0 z-10 bg-[#F1F5F9] text-xs uppercase tracking-wide text-slate-500">
-                <tr className="text-left">
-                  <th className="p-3 w-10"></th>
-                  <th className="p-3">Administradora</th>
-                  <th className="p-3">Segmento</th>
-                  <th className="p-3">Código</th>
-                  <th className="p-3">Crédito</th>
-                  <th className="p-3">Entrada</th>
-                  <th className="p-3">Saldo devedor *</th>
-                  <th className="p-3">Comissão</th>
-                  <th className="p-3">Parcela</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3 text-right">Ações</th>
+          <div className="-mx-2 overflow-x-auto rounded-2xl border border-[#E5E9F0] bg-[#F7F8FB] px-2 pb-1 shadow-sm md:mx-0 md:px-3">
+            <table className="w-full min-w-[1350px] border-separate border-spacing-x-0 border-spacing-y-3 text-left text-sm">
+              <thead className="text-[10px] font-extrabold uppercase tracking-[0.06em] text-[#64748B]">
+                <tr className="h-10 align-middle">
+                  <th className="w-11 px-3"><span className="sr-only">Selecionar</span></th>
+                  <th className="min-w-[165px] px-3">Administradora</th>
+                  <th className="min-w-[115px] px-3">Categoria</th>
+                  <th className="min-w-[78px] px-3">Nº</th>
+                  <th className="min-w-[125px] px-3 text-[#A11C27]">Crédito <span aria-hidden="true">↕</span></th>
+                  <th className="min-w-[128px] px-3">Entrada</th>
+                  <th className="min-w-[150px] px-3">Saldo devedor *</th>
+                  <th className="min-w-[118px] px-3">Comissão</th>
+                  <th className="min-w-[165px] px-3">Parcela</th>
+                  <th className="min-w-[98px] px-3">Status</th>
+                  <th className="min-w-[176px] px-3 text-right">Ações</th>
                 </tr>
               </thead>
-
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td className="p-6 text-muted-foreground" colSpan={11}>
-                      Nenhuma cota encontrada.
+                    <td colSpan={11} className="rounded-2xl border border-[#E5E9F0] bg-white px-6 py-12 text-center">
+                      <div className="mx-auto flex max-w-sm flex-col items-center gap-2">
+                        <Search className="h-7 w-7 text-slate-400"/>
+                        <strong className="text-sm text-[#1E293F]">Nenhuma cota encontrada</strong>
+                        <span className="text-xs text-slate-500">Tente ajustar a categoria, administradora ou faixa de crédito.</span>
+                      </div>
                     </td>
                   </tr>
                 ) : (
                   rows.map((c: CotaCalc) => {
                     const checked = selectedIds.includes(c.id);
                     const allowed = c.status === "disponivel" && matchesRule(c, anchorRule);
-                    const dim = anchorRule && !allowed && !checked;
+                    const dim = Boolean(anchorRule && !allowed && !checked);
                     const external = isExternalCota(c);
-
+                    const cellClass = "border-y border-l border-[#E4E8EE] px-3 py-4 align-middle transition-colors " +
+                      (checked ? "border-[#51617B] bg-[#1E293F] text-white" : "bg-white text-[#1E293F] group-hover:bg-[#FFFEFC]");
+                    const cellCaption = "mb-1.5 block text-[10px] font-medium " + (checked ? "text-slate-300" : "text-[#94A3B8]");
+                    const muted = checked ? "text-slate-300" : "text-[#94A3B8]";
+                    const credit = Number(c.credito_disponivel || 0);
+                    const saldo = Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0);
+                    const sdPercent = credit > 0 ? (saldo / credit - 1) * 100 : null;
+                    const installmentPercent = credit > 0 ? Number(c.valor_parcela || 0) / credit * 100 : null;
                     return (
-                      <tr key={c.id} className={"border-b border-slate-100 transition-colors " + (checked ? "bg-[#1E293F] text-white" : "bg-white hover:bg-slate-50") + (dim ? " opacity-40" : "")}>
-                        <td className="p-3">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={!allowed && !checked}
-                            onChange={(e) => toggleSelected(c, e.target.checked)}
-                            title={!allowed && !checked ? (c.status !== "disponivel" ? "Cota indisponível para seleção." : "Essa cota não pode ser somada com a seleção atual.") : "Selecionar para somar"}
-                             className="h-4 w-4 accent-[#A11C27]"
-                          />
+                      <tr key={c.id} className={"group shadow-[0_3px_12px_rgba(20,35,57,0.035)] " + (dim ? "opacity-50" : "")}>
+                        <td className={cellClass + " rounded-l-2xl pl-4"}>
+                          <input type="checkbox" checked={checked} disabled={!allowed && !checked}
+                            onChange={(event) => toggleSelected(c, event.target.checked)}
+                            aria-label={"Selecionar cota " + c.codigo}
+                            title={!allowed && !checked ? (c.status !== "disponivel" ? "Cota indisponível para seleção." : "Cota incompatível com a seleção atual.") : "Selecionar para compor"}
+                            className="h-[18px] w-[18px] cursor-pointer rounded border-slate-300 accent-[#A11C27] disabled:cursor-not-allowed"/>
                         </td>
 
-                        <td className="p-3">
-                          <div className="flex items-center gap-2">
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Administradora</span>
+                          <div className="flex min-w-0 items-center gap-2">
                             {external && c.admin?.logo_path ? (
-                              <img
-                                src={c.admin.logo_path}
-                                alt={c.admin?.nome || "Administradora"}
-                                className="h-7 w-7 rounded object-contain border bg-white"
-                                onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                                }}
-                              />
+                              <img src={c.admin.logo_path} alt={c.admin?.nome || "Administradora"}
+                                className="h-8 w-8 shrink-0 rounded-lg border border-slate-200 bg-white object-contain p-0.5"
+                                onError={(event) => { event.currentTarget.style.display = "none"; }}/>
                             ) : null}
-
-                            <div>
-                              <div className="font-medium">{c.admin?.nome || "—"}</div>
-                              <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Parceiro: {c.partner?.nome || "—"}</div>
+                            <div className="min-w-0">
+                              <div className="truncate text-xs font-extrabold" title={c.admin?.nome || "—"}>{c.admin?.nome || "—"}</div>
+                              <div className={"truncate text-[10px] " + muted} title={c.partner?.nome || "—"}>{c.partner?.nome || "—"}</div>
                             </div>
                           </div>
                         </td>
 
-                        <td className="p-3">{c.segmento}</td>
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Categoria</span>
+                          <span className="inline-flex items-center gap-1.5 text-xs font-bold">
+                            {c.segmento === "Imóvel" ? <Home className="h-4 w-4 shrink-0"/> : <CarFront className="h-4 w-4 shrink-0"/>}
+                            {c.segmento === "Automóvel" ? "Veículo" : c.segmento}
+                          </span>
+                        </td>
 
-                        <td className="p-3">
-                          <button
-                            type="button"
-                            className={`font-semibold ${isAdmin && !external ? "underline underline-offset-2 hover:opacity-80" : ""}`}
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Nº da cota</span>
+                          <button type="button"
+                            className={"text-[13px] font-extrabold tabular-nums " + (isAdmin && !external ? "underline decoration-[#B5A573] underline-offset-4 hover:opacity-80" : "")}
                             onClick={() => (isAdmin && !external ? openManageDialog(c) : undefined)}
                             disabled={!isAdmin || external}
-                            title={external ? "Cota externa espelhada" : isAdmin ? "Ver/Editar/Excluir" : undefined}
-                          >
+                            title={external ? "Cota externa espelhada" : isAdmin ? "Ver, editar ou excluir cota" : undefined}>
                             {c.codigo}
                           </button>
-                          {c.numero_proposta ? <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Proposta: {c.numero_proposta}</div> : null}
+                          {c.numero_proposta ? <p className={"mt-1 text-[10px] " + muted}>Proposta {c.numero_proposta}</p> : null}
                         </td>
 
-                        <td className="p-3 font-extrabold">{formatBRL(Number(c.credito_disponivel || 0))}</td>
-                        <td className="p-3 font-semibold">{formatBRL(c._calc.entrada)}<div className={"text-xs font-normal " + (checked ? "text-slate-300" : "text-slate-400")}>{c.credito_disponivel > 0 ? (c._calc.entrada / c.credito_disponivel * 100).toFixed(1).replace(".", ",") + "% do crédito" : ""}</div></td>
-                        <td className="p-3" title="Estimado pela soma das parcelas a vencer; sujeito a reajustes e encargos.">{formatBRL(c.prazo_restante * c.valor_parcela)}</td>
-                        <td className="p-3">
-                          <div>{formatBRL(c._calc.comissaoVendedor)}</div>
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Crédito</span>
+                          <strong className="whitespace-nowrap text-[13px] font-extrabold tabular-nums">{formatBRL(credit)}</strong>
                         </td>
 
-                        <td className="p-3">
-                          {c.prazo_restante}x de {formatBRL(Number(c.valor_parcela || 0))}
-                          {external && c.external_prox_reajuste ? <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Reajuste: {c.external_prox_reajuste}</div> : null}
-                          {external && Number(c.external_fundo || 0) > 0 ? <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Fundo: {formatBRL(Number(c.external_fundo || 0))}</div> : null}
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Entrada</span>
+                          <strong className="block whitespace-nowrap text-[13px] font-extrabold tabular-nums">{formatBRL(c._calc.entrada)}</strong>
+                          <span className={"mt-1 block text-[11px] " + muted}>
+                            {credit > 0 ? (c._calc.entrada / credit * 100).toFixed(1).replace(".", ",") + "% do crédito" : "—"}
+                          </span>
                         </td>
 
-                        <td className="p-3">
+                        <td className={cellClass} title="Saldo nominal calculado pelas parcelas restantes. Pode sofrer reajustes e encargos.">
+                          <span className={cellCaption}>Saldo devedor</span>
+                          <strong className="whitespace-nowrap text-[13px] font-extrabold tabular-nums">{formatBRL(saldo)}</strong>
+                          {sdPercent !== null ? (
+                            <span className={"mt-1 block text-[11px] " + muted} title="Diferença percentual do saldo nominal em relação ao crédito">
+                              {sdPercent > 0 ? "+" : ""}{sdPercent.toFixed(2).replace(".", ",")}% vs. crédito
+                            </span>
+                          ) : null}
+                        </td>
+
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Comissão vendedor</span>
+                          <strong className="whitespace-nowrap text-[13px] font-extrabold tabular-nums">{formatBRL(c._calc.comissaoVendedor)}</strong>
+                        </td>
+
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Parcela</span>
+                          <strong className="block whitespace-nowrap text-xs font-extrabold tabular-nums">{c.prazo_restante}× de {formatBRL(Number(c.valor_parcela || 0))}</strong>
+                          {installmentPercent !== null ? <span className={"mt-1 block text-[11px] " + muted}>{installmentPercent.toFixed(2).replace(".", ",")}% do crédito</span> : null}
+                          {external && c.external_prox_reajuste ? <p className={"mt-1 text-[10px] " + muted}>Reajuste: {c.external_prox_reajuste}</p> : null}
+                          {external && Number(c.external_fundo || 0) > 0 ? <p className={"text-[10px] " + muted}>Fundo: {formatBRL(Number(c.external_fundo || 0))}</p> : null}
+                        </td>
+
+                        <td className={cellClass}>
+                          <span className={cellCaption}>Situação</span>
                           {c.status === "disponivel" ? (
-                            <Badge className="gap-1">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Disponível
+                            <Badge className="gap-1 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50">
+                              <CheckCircle2 className="h-3 w-3"/>Disponível
                             </Badge>
                           ) : c.status === "reservada" ? (
-                            <Badge variant="secondary" className="gap-1">
-                              <Lock className="h-3 w-3" />
-                              Reservada
+                            <Badge variant="secondary" className="gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] text-amber-800">
+                              <Lock className="h-3 w-3"/>Reservada
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="gap-1">
-                              <CheckCheck className="h-3 w-3" />
-                              Transferida
+                            <Badge variant="outline" className="gap-1 rounded-full border-slate-300 px-2 py-1 text-[10px]">
+                              <CheckCheck className="h-3 w-3"/>Transferida
                             </Badge>
                           )}
                         </td>
 
-                        <td className="p-3 text-right">
+                        <td className={cellClass + " rounded-r-2xl border-r pr-4 text-right"}>
+                          <span className={cellCaption + " text-right"}>Ações</span>
                           {c.status === "disponivel" ? (
-                            <div className="flex items-center justify-end gap-2">
-                              <Button variant="outline" size="icon" onClick={() => copyRowResumo(c)} title="Copiar resumo">
-                                <Copy className="h-4 w-4" />
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button variant="outline" size="icon" onClick={() => copyRowResumo(c)} title="Copiar resumo" aria-label={"Copiar resumo da cota " + c.codigo}
+                                className="h-8 w-8 shrink-0 rounded-xl border-slate-200 bg-white text-[#1E293F] hover:border-[#B5A573]">
+                                <Copy className="h-3.5 w-3.5"/>
                               </Button>
                               <Button variant="outline" size="icon" onClick={() => {
-                                setSelectedIds([c.id]);
-                                setAnchorRule(getRuleFromRow(c));
-                                setOpenCard(true);
-                              }} title="Gerar anúncio desta cota" aria-label="Gerar anúncio desta cota">
-                                <Palette className="h-4 w-4 text-[#A11C27]" />
+                                  setSelectedIds([c.id]); setAnchorRule(getRuleFromRow(c)); setOpenCard(true);
+                                }} title="Gerar anúncio da cota" aria-label={"Gerar anúncio da cota " + c.codigo}
+                                className="h-8 w-8 shrink-0 rounded-xl border-slate-200 bg-white text-[#A11C27] hover:border-[#B5A573]">
+                                <Palette className="h-3.5 w-3.5"/>
                               </Button>
-
                               {isAdmin && !external ? (
-                                <Button
-                                  onClick={async () => {
-                                    resetReserveForm();
-                                    setOpenReserve({ open: true, cota: c });
-                                    await loadRequestsForCota(c.id);
-                                  }}
-                                >
+                                <Button onClick={async () => {
+                                    resetReserveForm(); setOpenReserve({ open: true, cota: c }); await loadRequestsForCota(c.id);
+                                  }} className="h-8 rounded-xl bg-[#A11C27] px-2.5 text-[11px] font-bold text-white hover:bg-[#821821]">
                                   Reservar
                                 </Button>
                               ) : (
-                                <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>Reservar</Button>
+                                <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}
+                                  className="h-8 rounded-xl bg-[#A11C27] px-2.5 text-[11px] font-bold text-white hover:bg-[#821821]">Reservar</Button>
                               )}
                             </div>
                           ) : (
-                            <Button variant="outline" disabled>
-                              Indisponível
-                            </Button>
+                            <span className={"text-[11px] font-semibold " + muted}>Indisponível</span>
                           )}
                         </td>
                       </tr>

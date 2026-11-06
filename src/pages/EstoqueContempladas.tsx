@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import MaxContempladas from "@/components/contempladas/MaxContempladas";
+import { ContempladasHero, ContempladasIndicadores, ContempladasDock, ContempladasCardDialog, ContempladasPropostaDialog } from "@/components/contempladas/ContempladasExperience";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import {
   Pencil,
   Calculator,
   CheckCheck,
+  Palette,
 } from "lucide-react";
 
 type Segmento = "Automóvel" | "Imóvel" | "Pesados" | "Motocicletas" | "Serviços";
@@ -274,6 +276,11 @@ export default function EstoqueContempladas() {
   const [adminFilter, setAdminFilter] = useState<string>("all");
   const [minValue, setMinValue] = useState<string>("");
   const [maxValue, setMaxValue] = useState<string>("");
+  const [searchText, setSearchText] = useState("");
+  const [sortBy, setSortBy] = useState<"creditoAsc" | "creditoDesc" | "entradaAsc" | "parcelaAsc">("creditoAsc");
+  const [maxOpenSignal, setMaxOpenSignal] = useState(0);
+  const [openCard, setOpenCard] = useState(false);
+  const [openProposta, setOpenProposta] = useState(false);
 
   const [commissionPct, setCommissionPct] = useState<number>(DEFAULT_VENDOR_COMMISSION_PCT);
   const commissionPctHuman = useMemo(() => pctToHuman(commissionPct), [commissionPct]);
@@ -658,15 +665,22 @@ export default function EstoqueContempladas() {
   const rows = useMemo<CotaCalc[]>(() => {
     const min = parseBRNumber(minValue);
     const max = parseBRNumber(maxValue);
+    const search = normalizeText(searchText);
     return maxRows.filter((c) => {
       if (statusFilter !== "all" && c.status !== statusFilter) return false;
       if (segFilter !== "all" && c.segmento !== segFilter) return false;
       if (adminFilter !== "all" && c.admin?.id !== adminFilter) return false;
       if (minValue.trim() !== "" && c.credito_disponivel < min) return false;
       if (maxValue.trim() !== "" && c.credito_disponivel > max) return false;
+      if (search && !normalizeText([c.codigo, c.segmento, c.admin?.nome, c.partner?.nome, c.numero_proposta].filter(Boolean).join(" ")).includes(search)) return false;
       return true;
+    }).sort((a, b) => {
+      if (sortBy === "creditoDesc") return b.credito_disponivel - a.credito_disponivel;
+      if (sortBy === "entradaAsc") return a._calc.entrada - b._calc.entrada;
+      if (sortBy === "parcelaAsc") return a.valor_parcela - b.valor_parcela;
+      return a.credito_disponivel - b.credito_disponivel;
     });
-  }, [maxRows, segFilter, statusFilter, adminFilter, minValue, maxValue]);
+  }, [maxRows, segFilter, statusFilter, adminFilter, minValue, maxValue, searchText, sortBy]);
 
   function seguroVidaLabel(c: any) {
     const raw = c?.external_seguro_vida;
@@ -979,6 +993,7 @@ export default function EstoqueContempladas() {
   }
 
   function toggleSelected(r: any, checked: boolean) {
+    if (checked && r.status !== "disponivel") { showToast("Somente cotas disponíveis podem ser selecionadas."); return; }
     const id = r.id as string;
 
     setSelectedIds((prev) => {
@@ -1307,9 +1322,10 @@ export default function EstoqueContempladas() {
   }
 
   return (
-    <div className="p-4 space-y-4 relative">
+    <div className={"relative mx-auto w-full max-w-[1700px] space-y-4 p-3 sm:p-5 " + (selectedIds.length ? "pb-56 sm:pb-40" : "")}>
       <MaxContempladas
         key={sourceMode}
+        openSignal={maxOpenSignal}
         cotas={maxRows}
         sourceMode={sourceMode}
         onOpenCombination={(ids) => {
@@ -1325,22 +1341,14 @@ export default function EstoqueContempladas() {
       />
       {toast ? <div className="fixed top-4 right-4 z-50 rounded-lg border bg-background/95 px-4 py-2 text-sm shadow-md">{toast}</div> : null}
 
-      <div className="fixed bottom-24 right-4 z-40 sm:bottom-24 sm:right-5">
-        <Button
-          onClick={() => setOpenSum(true)}
-          disabled={selectedIds.length < 1}
-          size="icon"
-          className="rounded-full shadow-lg h-12 w-12 sm:h-10 sm:w-10"
-          title={selectedIds.length < 1 ? "Selecione cotas para somar" : "Somar (resumo)"}
-        >
-          <Calculator className="h-5 w-5" />
-        </Button>
-      </div>
+      <ContempladasHero busca={searchText} setBusca={setSearchText} origem={sourceMode === "externo" ? "Parceiro externo" : "CRM Consulmax"} onOpenMax={() => setMaxOpenSignal((n) => n + 1)} />
+      <ContempladasIndicadores cotas={maxRows} />
 
-      <Card className="border-none shadow-sm">
+      <Card className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <CardTitle>Estoque • Cotas Contempladas</CardTitle>
+            <CardTitle className="text-xl font-extrabold text-[#1E293F]">Estoque de cartas contempladas</CardTitle>
+            <p className="mt-1 text-sm text-slate-500">Filtre, selecione e combine cotas para gerar anúncios e propostas.</p>
           </div>
 
           <div className="flex w-full sm:w-auto items-center gap-2">

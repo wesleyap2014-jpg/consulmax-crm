@@ -218,12 +218,14 @@ function timeLabel(date: string): string {
 
 const OPENING: Message = { id: 1, speaker: "bot", text: "Olá! Sou o MAX. Selecione um segmento e me diga qual crédito você procura." };
 
-export default function MaxContempladas({ cotas, sourceMode, onOpenCombination }: {
+export default function MaxContempladas({ cotas, sourceMode, onOpenCombination, openSignal = 0 }: {
   cotas: MaxCota[];
   sourceMode: "externo" | "crm";
   onOpenCombination: (ids: string[]) => void;
+  openSignal?: number;
 }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => { if (openSignal > 0) setOpen(true); }, [openSignal]);
   const [segment, setSegment] = useState<Segment | null>(null);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([OPENING]);

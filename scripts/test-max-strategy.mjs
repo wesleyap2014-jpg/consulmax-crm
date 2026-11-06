@@ -63,6 +63,19 @@ const five = [sample(20, 24000, 6000, 10, 300),sample(21, 24000, 6000, 12, 300),
 const found5 = maxSearchStrategies(five, { credito: 120000, segmento: "Automóvel" }, 0.025);
 equal(found5.offers[0].qtdCotas, 5, "Deve encontrar junção de cinco cartas.");
 equal(found5.offers[0].codigos.length, 5);
+// Sem teto comercial: usa a quantidade que o objetivo realmente exigir.
+for (const count of [6, 8, 12, 20]) {
+  const set = Array.from({ length: count }, (_, index) => sample(1000 + index, 10000, 2500, 20, 120));
+  const found = maxSearchStrategies(set, { credito: count * 10000, segmento: "Automóvel" }, 0.025);
+  equal(found.offers[0].qtdCotas, count, "Deve avaliar uma composição de " + count + " cartas, sem teto de 5.");
+  equal(found.offers[0].codigos.length, count, "Códigos reais em junções de " + count + ".");
+  moneyNear(found.offers[0].credito, count * 10000);
+}
+const explicitLimit = Array.from({ length: 9 }, (_, index) => sample(1100 + index, 10000, 2500, 20, 120));
+const cappedAtRequest = maxSearchStrategies(explicitLimit, { credito: 90000, segmento: "Automóvel", maxCotas: 3 }, 0.025);
+truthy(cappedAtRequest.offers.every((o) => o.qtdCotas <= 3), "Só limitar por solicitação explícita do vendedor.");
+const clearedLimit = maxSearchStrategies(explicitLimit, { credito: 90000, segmento: "Automóvel", maxCotas: 0 }, 0.025);
+equal(clearedLimit.offers[0].qtdCotas, 9, "Zero remove limite de cotas previamente informado.");
 const incompatible = sample(35, 25000, 5000, 20, 300, "BB");
 assert.throws(() => maxEvaluateOffer([a, incompatible], criteria, 0.025), /restri/i); assertions++;
 equal(maxSearchStrategies([a, incompatible], { credito: 85000 }, 0.025).offers.some((o) => o.qtdCotas > 1), false, "Não misturar administradoras.");
@@ -84,4 +97,4 @@ moneyNear(requested.entrada, 38700);
 moneyNear(requested.complementoCompra, 3100);
 moneyNear(requested.deficit, 1800);
 moneyNear(requested.recursosRestantes, -1800);
-console.log("[max2] OK — " + assertions + " afirmações: individual, 2/3/4/5 cotas, faixas, comissão, recurso, avaliação, indisponibilidade, agrupamento, WhatsApp e cenário de R$ 1.800.");
+console.log("[max2] OK — " + assertions + " afirmações: individual, 2/3/4/5/6/8/12/20 cotas, faixas, comissão, recurso, avaliação, indisponibilidade, agrupamento, WhatsApp e cenário de R$ 1.800.");

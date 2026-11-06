@@ -1,12 +1,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { z } from "zod";
-import { getAuthUser, json, supabaseAdmin, unauthorized } from "../_supabase";
+import { getAuthUser, json, supabaseAdmin, unauthorized } from "../_supabase.js";
 import {
   maxSearchStrategies, maxEvaluateOffer, maxExternalRow, maxInternalRow,
   maxCommercialText, maxMoney, maxNorm, maxValidCommission,
   MAX_DEFAULT_VENDOR_COMMISSION,
   type MaxStockRow, type MaxCriteria, type MaxOffer, type MaxOrigin,
-} from "../../src/lib/contempladas/maxStrategyEngine";
+} from "../../src/lib/contempladas/maxStrategyEngine.js";
 
 const inputSchema = z.object({
   action: z.enum(["chat", "validate"]).default("chat"),

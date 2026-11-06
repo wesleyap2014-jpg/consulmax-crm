@@ -886,7 +886,9 @@ export default function EmbraconPage() {
     ? "Informe um valor válido de FGTS para compor o lance." : null;
   const podeCalcular = prazoValido && Number.isFinite(credito) && credito > 0
     && Number.isInteger(prazoVenda) && Number.isInteger(parcContemplacao)
-    && parcContemplacao > 0 && parcContemplacao < prazoVenda && recursosEspeciaisValidos;
+    && parcContemplacao > 0 && parcContemplacao < prazoVenda && recursosEspeciaisValidos
+    // Enquanto não houver exemplo homologado da Embracon, não gerar propostas com fórmulas presumidas.
+    && !trocaChaves && !fgtsAtivo;
 
 
   // O resultado só existe depois que esta configuração exata for salva no banco.
@@ -1538,6 +1540,12 @@ ${wa}`;
                           <p className="mt-2 text-xs text-slate-500">Lance embutido zerado e bloqueado nesta modalidade.</p>
                           {avisoTroca && <p role="alert" className="mt-2 text-xs font-semibold text-[#A11C27]">{avisoTroca}</p>}
                         </div>
+                      )}
+                      {(trocaChaves || fgtsAtivo) && (
+                        <p role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-900">
+                          Cálculo temporariamente bloqueado nesta modalidade até a validação da fórmula comercial da Embracon.
+                          Os campos e os limites já podem ser conferidos.
+                        </p>
                       )}
                       {fgtsAtivo && (
                         <div className="mt-3 rounded-xl border border-[#B5A573]/35 bg-white p-3">

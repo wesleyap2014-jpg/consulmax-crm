@@ -1326,6 +1326,7 @@ export default function EstoqueContempladas() {
       <MaxContempladas
         key={sourceMode}
         openSignal={maxOpenSignal}
+        suspended={openCard || openProposta || openSum || openCreate || openReserve.open || openVendorReserve.open || openManage.open}
         cotas={maxRows}
         sourceMode={sourceMode}
         onOpenCombination={(ids) => {

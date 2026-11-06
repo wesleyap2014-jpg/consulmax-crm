@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import { MAX_APPROVED_AVATAR } from "./maxApprovedAvatar";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
 import { BadgeCheck, Calculator, CarFront, Check, Copy, Download, FileText, Home, Layers3, Megaphone, Palette, Search, Share2, Sparkles, Truck, Wallet, X } from "lucide-react";
@@ -58,11 +59,17 @@ export function ContempladasHero({ busca, setBusca, onOpenMax, origem }: HeroPro
           <p className="mt-3 text-xs text-slate-300">Estoque em consulta: {origem}</p>
         </div>
         <div className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Search className="h-4 w-4 text-[#E0CE8C]"/> Busca rápida ou inteligência MAX</div>
+          <div className="mb-3 flex items-center gap-3">
+            <img src={MAX_APPROVED_AVATAR} alt="MAX, mascote da Consulmax" width={56} height={56} className="h-14 w-14 rounded-full border-2 border-[#E0CE8C] object-cover shadow-md" />
+            <div>
+              <div className="text-sm font-extrabold">Conte com o MAX</div>
+              <div className="text-xs text-slate-200">Seu parceiro na busca por contempladas</div>
+            </div>
+          </div>
           <div className="flex gap-2">
             <input aria-label="Buscar por código, administradora ou segmento" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Código, administradora ou segmento..." className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white px-3 py-3 text-sm text-[#1E293F] outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-[#E0CE8C]" />
           </div>
-          <button type="button" onClick={onOpenMax} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[#A11C27] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#8b1822]"><Sparkles className="h-4 w-4" /> Conversar com o MAX <span className="text-white/80">• Busca inteligente</span></button>
+          <button type="button" onClick={onOpenMax} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[#A11C27] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#8b1822]"><Sparkles className="h-4 w-4" /> Conversar com o MAX <span className="hidden text-white/80 sm:inline">• Busca inteligente</span></button>
         </div>
       </div>
     </section>

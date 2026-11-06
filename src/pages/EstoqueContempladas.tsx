@@ -1319,7 +1319,7 @@ export default function EstoqueContempladas() {
   }
 
   async function openMaxComposition(ids: string[]) {
-    if (!ids.length || ids.length > 5) return;
+    if (!ids.length || new Set(ids).size !== ids.length) { showToast("Seleção de cotas inválida."); return; }
     const external = ids.every((id) => id.startsWith("external-"));
     const internal = ids.every((id) => !id.startsWith("external-"));
     if (!external && !internal) {

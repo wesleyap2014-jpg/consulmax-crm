@@ -1410,155 +1410,149 @@ export default function EstoqueContempladas() {
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <section aria-label="Filtros do estoque contemplado" className="overflow-hidden rounded-2xl border border-[#A11C27]/20 bg-gradient-to-br from-[#7E1B21] via-[#861E24] to-[#6E1A23] px-4 py-4 text-white shadow-[0_10px_30px_rgba(113,27,34,0.16)] lg:px-5">
-            <div className="flex flex-wrap items-end gap-x-4 gap-y-4 xl:justify-between">
-              <div className="flex shrink-0 items-center gap-2 self-center border-white/15 pr-2 xl:border-r xl:pr-5">
-                <span className="rounded-xl bg-white/10 p-2.5"><SlidersHorizontal className="h-[18px] w-[18px]"/></span>
-                <div>
-                  <div className="text-sm font-extrabold tracking-tight">Filtros</div>
-                  <div className="text-[10px] text-white/65">Encontre a melhor cota</div>
-                </div>
+          <section aria-label="Filtros do estoque contemplado" className="rounded-2xl border border-[#922A32] bg-gradient-to-r from-[#821E27] via-[#7D2028] to-[#711A23] px-4 py-4 text-white shadow-[0_9px_23px_rgba(90,20,32,0.12)] sm:px-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/15 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15">
+                  <SlidersHorizontal className="h-4 w-4"/>
+                </span>
+                <span className="text-sm font-extrabold tracking-tight">Filtros do estoque</span>
               </div>
+              <span aria-live="polite" className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-semibold tabular-nums text-white/90">
+                {rows.length} {rows.length === 1 ? "cota encontrada" : "cotas encontradas"}
+              </span>
+            </div>
 
-              <div className="min-w-0 flex-1 space-y-2 sm:flex-none">
-                <label className="block text-[11px] font-bold text-white/80">Categoria</label>
-                <div className="flex w-fit max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-white/20 bg-white p-1 text-[12px] shadow-sm">
+            <div className="mt-4 grid grid-cols-1 items-end gap-x-4 gap-y-4 sm:grid-cols-2 xl:grid-cols-[minmax(270px,1.2fr)_minmax(250px,1fr)_minmax(190px,0.88fr)_minmax(270px,1.15fr)]">
+              <div className="min-w-0 space-y-2">
+                <span className="block text-[11px] font-semibold text-white/80">Categoria</span>
+                <div className="flex h-11 w-full min-w-0 items-center gap-0.5 overflow-x-auto rounded-xl border border-white/20 bg-white p-1 text-xs shadow-sm">
                   {([
                     { value: "all", label: "Todos" },
                     { value: "Imóvel", label: "Imóvel" },
                     { value: "Automóvel", label: "Veículo" },
                   ] as const).map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={segFilter === option.value}
+                    <button key={option.value} type="button" aria-pressed={segFilter === option.value}
                       onClick={() => setSegFilter(option.value)}
-                      className={"rounded-lg px-3.5 py-2.5 font-semibold transition-colors " + (segFilter === option.value ? "bg-[#871B22] text-white shadow-sm" : "text-[#475569] hover:bg-slate-100")}
-                    >
+                      className={"h-9 shrink-0 whitespace-nowrap rounded-lg px-3 font-bold transition " + (segFilter === option.value ? "bg-[#891D28] text-white" : "text-[#475569] hover:bg-slate-100")}>
                       {option.label}
                     </button>
                   ))}
-                  <Select value={["Pesados", "Motocicletas", "Serviços"].includes(segFilter) ? segFilter : "other"} onValueChange={(value) => setSegFilter(value as Segmento)}>
-                    <SelectTrigger aria-label="Outras categorias" title="Outras categorias" className={"h-9 w-[92px] border-0 px-2 text-xs shadow-none focus:ring-0 " + (["Pesados", "Motocicletas", "Serviços"].includes(segFilter) ? "bg-[#871B22] text-white" : "text-slate-600")}>
-                      <span className="truncate">{["Pesados", "Motocicletas", "Serviços"].includes(segFilter) ? segFilter : "Outros"}</span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Pesados">Pesados</SelectItem>
-                      <SelectItem value="Motocicletas">Motocicletas</SelectItem>
-                      <SelectItem value="Serviços">Serviços</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <select aria-label="Outras categorias" value={["Pesados", "Motocicletas", "Serviços"].includes(segFilter) ? segFilter : "other"}
+                    onChange={(event) => setSegFilter(event.target.value as Segmento)}
+                    className={"h-9 min-w-[80px] flex-1 cursor-pointer rounded-lg border-0 px-2 text-[11px] font-bold outline-none " + (["Pesados", "Motocicletas", "Serviços"].includes(segFilter) ? "bg-[#891D28] text-white" : "bg-white text-[#475569] hover:bg-slate-100")}>
+                    <option value="other" disabled>Outros</option>
+                    <option value="Pesados">Pesados</option>
+                    <option value="Motocicletas">Motocicletas</option>
+                    <option value="Serviços">Serviços</option>
+                  </select>
                 </div>
               </div>
 
               <div className="min-w-0 space-y-2">
-                <label className="block text-[11px] font-bold text-white/80">Situação</label>
-                <div className="flex flex-wrap gap-0.5 rounded-xl border border-white/20 bg-white p-1 text-xs shadow-sm">
+                <span className="block text-[11px] font-semibold text-white/80">Situação</span>
+                <div className="flex h-11 min-w-0 items-center gap-0.5 overflow-x-auto rounded-xl border border-white/20 bg-white p-1 text-xs shadow-sm">
                   {([
                     { value: "all", label: "Todas" },
                     { value: "disponivel", label: "Disponíveis" },
                     { value: "reservada", label: "Reservadas" },
                   ] as const).map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={statusFilter === option.value}
+                    <button key={option.value} type="button" aria-pressed={statusFilter === option.value}
                       onClick={() => setStatusFilter(option.value)}
-                      className={"rounded-lg px-3 py-2.5 font-semibold transition-colors " + (statusFilter === option.value ? "bg-[#871B22] text-white shadow-sm" : "text-[#475569] hover:bg-slate-100")}
-                    >
+                      className={"h-9 flex-1 shrink-0 whitespace-nowrap rounded-lg px-2.5 font-bold transition " + (statusFilter === option.value ? "bg-[#891D28] text-white" : "text-[#475569] hover:bg-slate-100")}>
                       {option.label}
                     </button>
                   ))}
                   {sourceMode === "crm" && supportsTransferida ? (
                     <button type="button" aria-pressed={statusFilter === "transferida"} onClick={() => setStatusFilter("transferida")}
-                      className={"rounded-lg px-3 py-2.5 font-semibold " + (statusFilter === "transferida" ? "bg-[#871B22] text-white" : "text-[#475569] hover:bg-slate-100")}>
+                      className={"h-9 shrink-0 whitespace-nowrap rounded-lg px-2.5 font-bold " + (statusFilter === "transferida" ? "bg-[#891D28] text-white" : "text-[#475569] hover:bg-slate-100")}>
                       Transferidas
                     </button>
                   ) : null}
                 </div>
               </div>
 
-              <div className="min-w-[172px] flex-1 space-y-2 sm:max-w-[230px]">
-                <label className="block text-[11px] font-bold text-white/80">Administradora</label>
-                <Select value={adminFilter} onValueChange={setAdminFilter}>
-                  <SelectTrigger aria-label="Filtrar administradora" className="h-11 w-full rounded-xl border border-[#E3B9BA]/50 bg-[#A11C27]/45 px-3 text-xs font-semibold text-white shadow-sm focus:ring-[#E0CE8C]">
-                    <SelectValue placeholder="Todas as administradoras" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas as administradoras</SelectItem>
+              <label className="min-w-0 space-y-2">
+                <span className="block text-[11px] font-semibold text-white/80">Administradora</span>
+                <div className="relative">
+                  <select aria-label="Filtrar administradora" value={adminFilter}
+                    onChange={(event) => setAdminFilter(event.target.value)}
+                    className="h-11 w-full cursor-pointer appearance-none truncate rounded-xl border border-white/20 bg-white py-2 pl-3 pr-8 text-xs font-bold text-[#1E293F] shadow-sm outline-none focus:border-[#E0CE8C] focus:ring-2 focus:ring-[#E0CE8C]/30">
+                    <option value="all">Todas as administradoras</option>
                     {adminFilterOptions.map((admin) => (
-                      <SelectItem key={admin.id} value={admin.id}>{admin.nome}</SelectItem>
+                      <option key={admin.id} value={admin.id}>{admin.nome}</option>
                     ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="min-w-[245px] space-y-2 xl:border-l xl:border-white/20 xl:pl-5">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="text-[11px] font-bold text-white/85">Comissão do vendedor</label>
-                  <span className="text-[10px] text-white/60">{selectedRows.length ? "Cotas selecionadas" : "Primeira cota da lista"}</span>
+                  </select>
+                  <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-[#64748B]"/>
                 </div>
-                <div className="flex h-11 items-center gap-1.5">
-                  <button type="button" title="Diminuir a comissão" aria-label="Diminuir comissão" disabled={commissionPct <= ALLOWED_COMMISSION_PCTS[0]}
+              </label>
+
+              <div className="min-w-0 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-semibold text-white/80">Comissão do vendedor</span>
+                  <span className="hidden text-[10px] text-white/60 2xl:inline">{selectedRows.length ? "Cotas selecionadas" : "Primeira cota"}</span>
+                </div>
+                <div className="flex h-11 min-w-0 items-center gap-1.5">
+                  <button type="button" aria-label="Diminuir comissão" title="Diminuir comissão"
+                    disabled={commissionPct <= ALLOWED_COMMISSION_PCTS[0]}
                     onClick={() => {
                       const index = ALLOWED_COMMISSION_PCTS.findIndex((pct) => Math.abs(pct - commissionPct) < 0.00001);
                       void saveCommissionSetting(ALLOWED_COMMISSION_PCTS[Math.max(0, index - 1)]);
                     }}
-                    className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-white transition hover:bg-white/25 disabled:opacity-40">
+                    className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40">
                     <Minus className="h-4 w-4"/>
                   </button>
-                  <div className="flex h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border border-white/15 bg-white/20 px-3 text-sm font-bold">
-                    <span className="truncate tabular-nums">{formatBRL(selectedRows.length ? selectedRows.reduce((total, row) => total + row._calc.comissaoVendedor, 0) : Number(rows[0]?._calc.comissaoVendedor || 0))}</span>
-                    <Select value={String(commissionPct * 100)} onValueChange={(value) => { void saveCommissionSetting(Number(value) / 100); }}>
-                      <SelectTrigger aria-label="Percentual de comissão do vendedor" title="Alterar percentual de comissão" className="h-9 w-[76px] shrink-0 border-0 bg-transparent px-1 text-xs font-extrabold text-white shadow-none focus:ring-0">
-                        <SelectValue placeholder="2,5%"/>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ALLOWED_COMMISSION_PCTS.map((pct) => (
-                          <SelectItem key={pct} value={String(pct * 100)}>{pctToHuman(pct)}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/20 bg-white px-3 text-[#1E293F] shadow-sm">
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-extrabold tabular-nums" title="Valor estimado da comissão do vendedor">
+                      {formatBRL(selectedRows.length ? selectedRows.reduce((total, row) => total + row._calc.comissaoVendedor, 0) : Number(rows[0]?._calc.comissaoVendedor || 0))}
+                    </span>
+                    <span className="h-6 w-px shrink-0 bg-slate-200"/>
+                    <select aria-label="Percentual de comissão do vendedor" title="Percentual de comissão do vendedor"
+                      value={String(commissionPct)} onChange={(event) => { void saveCommissionSetting(Number(event.target.value)); }}
+                      className="w-[68px] shrink-0 cursor-pointer bg-white text-right text-xs font-extrabold text-[#891D28] outline-none">
+                      {ALLOWED_COMMISSION_PCTS.map((pct) => (
+                        <option key={pct} value={String(pct)}>{pctToHuman(pct)}</option>
+                      ))}
+                    </select>
                   </div>
-                  <button type="button" title="Aumentar a comissão" aria-label="Aumentar comissão" disabled={commissionPct >= ALLOWED_COMMISSION_PCTS[ALLOWED_COMMISSION_PCTS.length - 1]}
+                  <button type="button" aria-label="Aumentar comissão" title="Aumentar comissão"
+                    disabled={commissionPct >= ALLOWED_COMMISSION_PCTS[ALLOWED_COMMISSION_PCTS.length - 1]}
                     onClick={() => {
                       const index = ALLOWED_COMMISSION_PCTS.findIndex((pct) => Math.abs(pct - commissionPct) < 0.00001);
                       void saveCommissionSetting(ALLOWED_COMMISSION_PCTS[Math.min(ALLOWED_COMMISSION_PCTS.length - 1, index + 1)]);
                     }}
-                    className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-white transition hover:bg-white/25 disabled:opacity-40">
+                    className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40">
                     <Plus className="h-4 w-4"/>
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-white/15 pt-3">
-              <div className="flex min-w-[150px] items-center gap-2 text-xs">
-                <span className="font-medium text-white/70">Origem</span>
-                <Select value={sourceMode} onValueChange={(value) => {
-                  setSelectedIds([]);
-                  setAnchorRule(null);
-                  setCotas([]);
-                  setAdminFilter("all");
-                  setSourceMode(value as SourceMode);
-                }}>
-                  <SelectTrigger aria-label="Origem do estoque" className="h-9 min-w-[132px] rounded-lg border-white/25 bg-white/10 text-xs font-semibold text-white focus:ring-[#E0CE8C]">
-                    <SelectValue/>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="externo">Estoque externo</SelectItem>
-                    <SelectItem value="crm">Estoque CRM</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="relative min-w-[180px] flex-[1_1_200px] sm:max-w-[310px]">
-                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/60"/>
+            <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-white/15 pt-3">
+              <label className="flex min-w-0 items-center gap-2 text-xs text-white/85">
+                <span className="shrink-0 text-[11px] font-medium">Origem</span>
+                <select aria-label="Origem do estoque" value={sourceMode}
+                  onChange={(event) => {
+                    setSelectedIds([]);
+                    setAnchorRule(null);
+                    setCotas([]);
+                    setAdminFilter("all");
+                    setSourceMode(event.target.value as SourceMode);
+                  }}
+                  className="h-9 cursor-pointer rounded-lg border border-white/20 bg-white px-3 text-[11px] font-bold text-[#1E293F] outline-none focus:border-[#E0CE8C]">
+                  <option value="externo">Estoque externo</option>
+                  <option value="crm">Estoque CRM</option>
+                </select>
+              </label>
+              <div className="relative min-w-[180px] flex-[1_1_240px] sm:max-w-[335px]">
+                <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[#64748B]"/>
                 <Input aria-label="Buscar cota por código, segmento ou administradora" value={searchText} onChange={(event) => setSearchText(event.target.value)}
-                  placeholder="Buscar código, segmento..." className="h-9 rounded-lg border-white/25 bg-white/10 pl-9 text-xs text-white placeholder:text-white/65 focus-visible:ring-[#E0CE8C]"/>
+                  placeholder="Buscar código, segmento ou administradora..."
+                  className="h-9 rounded-lg border-white/20 bg-white pl-9 text-xs font-medium text-[#1E293F] placeholder:text-[#94A3B8] focus-visible:ring-[#E0CE8C]"/>
               </div>
               <button type="button" aria-expanded={showAdvancedFilters} onClick={() => setShowAdvancedFilters((value) => !value)}
-                className={"inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors " + (showAdvancedFilters || minValue || maxValue ? "border-[#E0CE8C] bg-white/20 text-white" : "border-white/25 bg-white/10 text-white/90 hover:bg-white/20")}>
-                <ListFilter className="h-4 w-4"/> Faixa de crédito
+                className={"inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition " + (showAdvancedFilters || minValue || maxValue ? "border-[#E0CE8C] bg-white/20" : "border-white/25 bg-white/10 hover:bg-white/20")}>
+                <ListFilter className="h-3.5 w-3.5"/> Faixa de crédito
                 <ChevronDown className={"h-3.5 w-3.5 transition-transform " + (showAdvancedFilters ? "rotate-180" : "")}/>
               </button>
               {(segFilter !== "all" || statusFilter !== "disponivel" || adminFilter !== "all" || minValue || maxValue || searchText) ? (
@@ -1569,12 +1563,13 @@ export default function EstoqueContempladas() {
                   setMinValue("");
                   setMaxValue("");
                   setSearchText("");
-                }} className="inline-flex h-9 items-center gap-1.5 px-2 text-xs font-medium text-white/75 hover:text-white">
-                  <FilterX className="h-4 w-4"/> Limpar filtros
+                }} className="inline-flex h-9 shrink-0 items-center gap-1.5 px-2 text-[11px] font-semibold text-white/80 hover:text-white">
+                  <FilterX className="h-3.5 w-3.5"/> Limpar
                 </button>
               ) : null}
-              <span className="ml-auto text-[11px] font-medium text-white/75">{rows.length} {rows.length === 1 ? "cota encontrada" : "cotas encontradas"}</span>
+              <span className="ml-auto hidden text-[11px] text-white/70 lg:inline">Selecione e compare as melhores oportunidades</span>
             </div>
+
             {showAdvancedFilters ? (
               <div className="mt-3 grid gap-3 rounded-xl border border-white/15 bg-black/10 p-3 sm:grid-cols-2">
                 <label className="space-y-1.5 text-[11px] font-semibold text-white/85">

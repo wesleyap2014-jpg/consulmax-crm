@@ -1125,76 +1125,97 @@ ${wa}`;
                       </div>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-[1fr_1.35fr_1fr]">
-                      <div>
-                        <Label>Tabela</Label>
-                        <select
-                          className="h-10 w-full rounded-md border px-3"
-                          value={nomeTabela}
-                          disabled={!segmento}
-                          onChange={(e) => {
-                            setNomeTabela(e.target.value);
-                            setTabelaId("");
-                          }}
-                        >
-                          <option value="">{segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
-                          {nomesTabelaSegmento.map((n) => (
-                            <option key={n} value={n}>{n}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <div className="flex items-center justify-between gap-3">
-                          <Label>Prazo até</Label>
-                          <span className="text-xs font-semibold" style={{ color: C.ruby }}>
-                            {prazoRangeSelecionado ? `${prazoRangeSelecionado.prazo_limite} meses` : "—"}
-                          </span>
-                        </div>
-
-                        <div className="mt-2 rounded-2xl border bg-slate-50/70 px-4 py-3">
-                          <input
-                            type="range"
-                            className="w-full accent-[#A11C27]"
-                            min={0}
-                            max={Math.max(0, variantesDaTabela.length - 1)}
-                            step={1}
-                            value={prazoRangeIndex}
-                            disabled={!nomeTabela || variantesDaTabela.length === 0}
+                    <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <Label className="text-xs font-bold text-[#1E293F]">Tabela</Label>
+                        <div className="relative mt-2">
+                          <select
+                            className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-3 pr-10 text-sm font-semibold text-[#1E293F] outline-none transition focus:border-[#A11C27] focus:ring-2 focus:ring-[#A11C27]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                            value={nomeTabela}
+                            disabled={!segmento}
                             onChange={(e) => {
-                              const idx = Number(e.target.value);
-                              const next = variantesDaTabela[idx];
-                              if (next) setTabelaId(next.id);
+                              setNomeTabela(e.target.value);
+                              setTabelaId("");
                             }}
-                          />
-
-                          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-                            <span>{variantesDaTabela[0] ? `${variantesDaTabela[0].prazo_limite}m` : "—"}</span>
-                            <span>{variantesDaTabela.length} faixa(s) de prazo</span>
-                            <span>{variantesDaTabela[variantesDaTabela.length - 1] ? `${variantesDaTabela[variantesDaTabela.length - 1].prazo_limite}m` : "—"}</span>
-                          </div>
+                          >
+                            <option value="">{segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
+                            {nomesTabelaSegmento.map((n) => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                          <ChevronsUpDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-500" />
                         </div>
                       </div>
 
-                      <div>
-                        <Label>Faixas de crédito</Label>
-                        <div className="mt-1 flex items-center gap-2">
-                          <Input
-                            className="min-w-0 flex-1"
-                            value={faixaResumo ? `${brMoney(faixaResumo.min)} a ${brMoney(faixaResumo.max)}` : ""}
-                            readOnly
-                          />
-                          <Button type="button" variant="secondary" className="h-10 shrink-0 rounded-xl px-3"
-                            aria-label="Ver tabela comercial" title="Ver créditos e parcelas por prazo"
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                          <Label className="text-xs font-bold text-[#1E293F]">Prazo até</Label>
+                          {!!variantesDaTabela.length && (
+                            <span className="text-[11px] font-medium text-slate-500">
+                              {variantesDaTabela.length} {variantesDaTabela.length === 1 ? "opção disponível" : "opções disponíveis"}
+                            </span>
+                          )}
+                        </div>
+                        {variantesDaTabela.length ? (
+                          <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Escolher prazo máximo da tabela">
+                            {variantesDaTabela.map((opcao) => {
+                              const selecionada = prazoRangeSelecionado?.id === opcao.id;
+                              return (
+                                <button
+                                  key={opcao.id}
+                                  type="button"
+                                  aria-pressed={selecionada}
+                                  onClick={() => setTabelaId(opcao.id)}
+                                  className={
+                                    "inline-flex min-h-10 min-w-[94px] items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-bold tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A11C27] focus-visible:ring-offset-2 " +
+                                    (selecionada
+                                      ? "border-[#A11C27] bg-[#A11C27] text-white shadow-[0_4px_12px_rgba(161,28,39,0.18)]"
+                                      : "border-slate-200 bg-slate-50 text-[#1E293F] hover:border-[#A11C27]/50 hover:bg-[#A11C27]/5")
+                                  }
+                                >
+                                  {opcao.prazo_limite}
+                                  <span className={"text-xs font-medium " + (selecionada ? "text-white/85" : "text-slate-500")}>meses</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-sm text-slate-400">Selecione uma tabela para visualizar os prazos.</p>
+                        )}
+                      </div>
+
+                      <div className="rounded-2xl border border-[#B5A573]/35 bg-gradient-to-r from-[#B5A573]/[0.08] to-white px-4 py-3 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <Label className="text-xs font-bold text-[#1E293F]">Faixa de crédito</Label>
+                            <p className="mt-1 break-words text-[15px] font-extrabold tracking-tight text-[#1E293F] sm:text-base">
+                              {faixaResumo
+                                ? brMoney(faixaResumo.min) + " a " + brMoney(faixaResumo.max)
+                                : "Selecione uma tabela e um prazo"}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="h-10 shrink-0 rounded-xl border border-[#A11C27]/20 bg-white px-3 text-[#A11C27] hover:border-[#A11C27]/45 hover:bg-[#A11C27]/5"
+                            aria-label="Ver tabela comercial"
+                            title="Ver créditos e parcelas por prazo"
                             disabled={!nomeTabela || variantesDaTabela.length === 0}
-                            onClick={() => setCommercialOpen(true)}>
-                            <Eye className="mr-1 h-4 w-4" /> Ver tabela
+                            onClick={() => setCommercialOpen(true)}
+                          >
+                            <Eye className="mr-2 h-4 w-4" />
+                            Ver tabela
                           </Button>
                         </div>
                         {prazoRangeSelecionado && (
-                          <p className="mt-1 text-xs text-slate-500">
-                            Adm {pctHuman(prazoRangeSelecionado.taxa_adm_pct)} • FR {pctHuman(prazoRangeSelecionado.fundo_reserva_pct)}
-                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2 border-t border-[#B5A573]/20 pt-3">
+                            <span className="rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                              Adm {pctHuman(prazoRangeSelecionado.taxa_adm_pct)}
+                            </span>
+                            <span className="rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                              Fundo de reserva {pctHuman(prazoRangeSelecionado.fundo_reserva_pct)}
+                            </span>
+                          </div>
                         )}
                       </div>
                     </div>

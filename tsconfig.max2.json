@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["node", "vite/client"] },
+  "include": [
+    "api/_supabase.ts",
+    "api/contempladas/max-consultor.ts",
+    "src/lib/contempladas/maxStrategyEngine.ts"
+  ]
+}

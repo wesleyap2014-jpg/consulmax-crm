@@ -1371,7 +1371,15 @@ export default function EstoqueContempladas() {
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="flex flex-wrap gap-2 border-b border-slate-100 pb-4">
+            {(["all", "Automóvel", "Imóvel", "Pesados", "Motocicletas", "Serviços"] as const).map((segment) => (
+              <button type="button" key={segment} onClick={() => setSegFilter(segment)}
+                className={"rounded-full px-4 py-2 text-xs font-semibold transition " + (segFilter === segment ? "bg-[#1E293F] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200")}>
+                {segment === "all" ? "Todos os segmentos" : segment}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 bg-[#F8FAFC] p-3 md:grid-cols-12 sm:p-4">
             <div className="md:col-span-3">
               <Label>Origem do estoque</Label>
               <Select
@@ -1487,9 +1495,20 @@ export default function EstoqueContempladas() {
             </div>
           </div>
 
-          <div className="overflow-auto rounded-lg border -mx-2 md:mx-0 shadow-sm">
-            <table className="w-full min-w-[980px] text-sm">
-              <thead className="bg-muted/50">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-[#1E293F]">{rows.length} cotas encontradas <span className="text-xs font-normal text-slate-500">• Selecione as disponíveis para combinar</span></p>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">Ordenar por
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+                <option value="creditoAsc">Menor crédito</option>
+                <option value="creditoDesc">Maior crédito</option>
+                <option value="entradaAsc">Menor entrada</option>
+                <option value="parcelaAsc">Menor parcela</option>
+              </select>
+            </label>
+          </div>
+          <div className="-mx-2 overflow-auto rounded-xl border border-slate-200 shadow-sm md:mx-0">
+            <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
+              <thead className="sticky top-0 z-10 bg-[#F1F5F9] text-xs uppercase tracking-wide text-slate-500">
                 <tr className="text-left">
                   <th className="p-3 w-10"></th>
                   <th className="p-3">Administradora</th>
@@ -1497,6 +1516,7 @@ export default function EstoqueContempladas() {
                   <th className="p-3">Código</th>
                   <th className="p-3">Crédito</th>
                   <th className="p-3">Entrada</th>
+                  <th className="p-3">Saldo devedor *</th>
                   <th className="p-3">Comissão</th>
                   <th className="p-3">Parcela</th>
                   <th className="p-3">Status</th>
@@ -1507,26 +1527,27 @@ export default function EstoqueContempladas() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td className="p-6 text-muted-foreground" colSpan={10}>
+                    <td className="p-6 text-muted-foreground" colSpan={11}>
                       Nenhuma cota encontrada.
                     </td>
                   </tr>
                 ) : (
                   rows.map((c: CotaCalc) => {
                     const checked = selectedIds.includes(c.id);
-                    const allowed = matchesRule(c, anchorRule);
+                    const allowed = c.status === "disponivel" && matchesRule(c, anchorRule);
                     const dim = anchorRule && !allowed && !checked;
                     const external = isExternalCota(c);
 
                     return (
-                      <tr key={c.id} className={`border-t ${dim ? "opacity-40" : ""}`}>
+                      <tr key={c.id} className={"border-b border-slate-100 transition-colors " + (checked ? "bg-[#1E293F] text-white" : "bg-white hover:bg-slate-50") + (dim ? " opacity-40" : "")}>
                         <td className="p-3">
                           <input
                             type="checkbox"
                             checked={checked}
                             disabled={!allowed && !checked}
                             onChange={(e) => toggleSelected(c, e.target.checked)}
-                            title={!allowed && !checked ? "Essa cota não pode ser somada com a seleção atual." : "Selecionar para somar"}
+                            title={!allowed && !checked ? (c.status !== "disponivel" ? "Cota indisponível para seleção." : "Essa cota não pode ser somada com a seleção atual.") : "Selecionar para somar"}
+                             className="h-4 w-4 accent-[#A11C27]"
                           />
                         </td>
 
@@ -1545,7 +1566,7 @@ export default function EstoqueContempladas() {
 
                             <div>
                               <div className="font-medium">{c.admin?.nome || "—"}</div>
-                              <div className="text-xs text-muted-foreground">Parceiro: {c.partner?.nome || "—"}</div>
+                              <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Parceiro: {c.partner?.nome || "—"}</div>
                             </div>
                           </div>
                         </td>
@@ -1562,19 +1583,20 @@ export default function EstoqueContempladas() {
                           >
                             {c.codigo}
                           </button>
-                          {c.numero_proposta ? <div className="text-xs text-muted-foreground">Proposta: {c.numero_proposta}</div> : null}
+                          {c.numero_proposta ? <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Proposta: {c.numero_proposta}</div> : null}
                         </td>
 
-                        <td className="p-3">{formatBRL(Number(c.credito_disponivel || 0))}</td>
-                        <td className="p-3">{formatBRL(c._calc.entrada)}</td>
+                        <td className="p-3 font-extrabold">{formatBRL(Number(c.credito_disponivel || 0))}</td>
+                        <td className="p-3 font-semibold">{formatBRL(c._calc.entrada)}<div className={"text-xs font-normal " + (checked ? "text-slate-300" : "text-slate-400")}>{c.credito_disponivel > 0 ? (c._calc.entrada / c.credito_disponivel * 100).toFixed(1).replace(".", ",") + "% do crédito" : ""}</div></td>
+                        <td className="p-3" title="Estimado pela soma das parcelas a vencer; sujeito a reajustes e encargos.">{formatBRL(c.prazo_restante * c.valor_parcela)}</td>
                         <td className="p-3">
                           <div>{formatBRL(c._calc.comissaoVendedor)}</div>
                         </td>
 
                         <td className="p-3">
                           {c.prazo_restante}x de {formatBRL(Number(c.valor_parcela || 0))}
-                          {external && c.external_prox_reajuste ? <div className="text-xs text-muted-foreground">Reajuste: {c.external_prox_reajuste}</div> : null}
-                          {external && Number(c.external_fundo || 0) > 0 ? <div className="text-xs text-muted-foreground">Fundo: {formatBRL(Number(c.external_fundo || 0))}</div> : null}
+                          {external && c.external_prox_reajuste ? <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Reajuste: {c.external_prox_reajuste}</div> : null}
+                          {external && Number(c.external_fundo || 0) > 0 ? <div className={"text-xs " + (checked ? "text-slate-300" : "text-muted-foreground")}>Fundo: {formatBRL(Number(c.external_fundo || 0))}</div> : null}
                         </td>
 
                         <td className="p-3">

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { MAX_APPROVED_AVATAR } from "./maxApprovedAvatar";
 import { supabase } from "@/lib/supabaseClient";
 import { CarFront, CircleAlert, ChevronDown, House, Loader2, Bike, Send, Truck, X, Search, Plus, Clock3, History } from "lucide-react";
 
@@ -179,24 +180,18 @@ function OfferCard({ alternative, onDetails }: { alternative: Alternative; onDet
 }
 
 
-/** Ícone do MAX como cachorro (sem dependência de imagem externa). */
+/** Mascote MAX aprovado. Reutilizado no botão, cabeçalho e mensagens do chat. */
 function MaxDog({ size = 42 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 72 72" role="img" aria-label="MAX, mascote cachorro da Consulmax" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="36" cy="36" r="35" fill="#fff" />
-      <path d="M15 29 Q4 10 17 10 Q27 13 30 25 L21 41Z" fill="#493427" stroke="#30241f" strokeWidth="2.2"/>
-      <path d="M57 29 Q68 10 55 10 Q45 13 42 25 L51 41Z" fill="#493427" stroke="#30241f" strokeWidth="2.2"/>
-      <path d="M17 33 Q17 15 36 16 Q55 15 55 33 L53 48 Q47 60 36 61 Q25 60 19 48Z" fill="#C99B6C" stroke="#392820" strokeWidth="2"/>
-      <path d="M25 43 Q29 35 36 39 Q43 35 47 43 Q46 55 36 56 Q26 55 25 43Z" fill="#F8EBDD"/>
-      <ellipse cx="28" cy="35" rx="3" ry="4" fill="#242222"/>
-      <ellipse cx="44" cy="35" rx="3" ry="4" fill="#242222"/>
-      <circle cx="29" cy="34" r="1" fill="white"/>
-      <circle cx="45" cy="34" r="1" fill="white"/>
-      <path d="M31 44 Q36 40 41 44 Q42 49 36 50 Q30 49 31 44" fill="#312723"/>
-      <path d="M36 50 Q36 54 31 53 M36 50 Q36 54 41 53" stroke="#312723" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
-      <path d="M22 59 Q36 67 50 59 L46 67 L26 67Z" fill="#A11C27"/>
-      <circle cx="36" cy="64" r="2" fill="#E0CE8C"/>
-    </svg>
+    <img
+      src={MAX_APPROVED_AVATAR}
+      width={size}
+      height={size}
+      alt="MAX, mascote oficial da Consulmax"
+      draggable={false}
+      className="block shrink-0 rounded-full object-cover"
+      style={{ width: size, height: size }}
+    />
   );
 }
 
@@ -455,8 +450,8 @@ export default function MaxContempladas({ cotas, sourceMode, onOpenCombination, 
         </section>
       ) : null}
       <button type="button" onClick={() => setOpen((wasOpen) => !wasOpen)} aria-label={open ? "Recolher MAX" : "Abrir MAX"} aria-expanded={open}
-        className="pointer-events-auto absolute bottom-4 right-4 flex h-16 w-16 items-center justify-center rounded-full border-2 border-white bg-[#A11C27] shadow-xl transition hover:scale-105 sm:bottom-5 sm:right-5" title="Fale com MAX">
-        <MaxDog size={54}/>
+        className="pointer-events-auto absolute bottom-4 right-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border-[3px] border-[#E0CE8C] bg-[#1E293F] shadow-xl transition hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#A11C27] sm:bottom-5 sm:right-5" title="Fale com MAX">
+        <MaxDog size={60}/>
         <span className="absolute -bottom-0.5 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-400"/>
       </button>
       {!open ? <span className="pointer-events-none absolute bottom-[85px] right-[28px] rounded-md bg-[#1E293F] px-2 py-1 text-[10px] font-bold text-white sm:bottom-[90px] sm:right-[31px]">MAX</span> : null}

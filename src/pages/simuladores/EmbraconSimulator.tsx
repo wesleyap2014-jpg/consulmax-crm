@@ -211,24 +211,38 @@ function PercentInput({
   onChangeDecimal,
   maxDecimal,
   placeholder,
+  maxFractionDigits,
+  disabled = false,
 }: {
   valueDecimal: number;
   onChangeDecimal: (d: number) => void;
   maxDecimal?: number;
   placeholder?: string;
+  maxFractionDigits?: number;
+  disabled?: boolean;
 }) {
-  const [raw, setRaw] = useState<string>(() => (valueDecimal * 100 || 0).toString().replace(".", ","));
+  const showValue = (decimal: number) => typeof maxFractionDigits === "number"
+    ? Number((decimal * 100).toFixed(maxFractionDigits)).toString().replace(".", ",")
+    : (decimal * 100 || 0).toString().replace(".", ",");
+  const [raw, setRaw] = useState<string>(() => showValue(valueDecimal));
 
   useEffect(() => {
-    const target = (valueDecimal * 100).toString().replace(".", ",");
+    const target = showValue(valueDecimal);
     if (target !== raw) setRaw(target);
-  }, [valueDecimal]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [valueDecimal, maxFractionDigits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function commit(val: string) {
-    const clean = val.trim().replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
-    const num = parseFloat(clean);
-    let dec = isNaN(num) ? 0 : num / 100;
+    const normalized = val.trim().replace(/\s|%/g, "");
+    const clean = normalized.includes(",")
+      ? normalized.replace(/\./g, "").replace(",", ".")
+      : normalized;
+    const num = Number(clean);
+    let dec = Number.isFinite(num) ? Math.max(0, num) / 100 : 0;
     if (typeof maxDecimal === "number") dec = clamp(dec, 0, maxDecimal);
+    if (typeof maxFractionDigits === "number") {
+      dec = Math.round(dec * 100 * Math.pow(10, maxFractionDigits)) / (100 * Math.pow(10, maxFractionDigits));
+      setRaw(showValue(dec));
+    }
     onChangeDecimal(dec);
   }
 
@@ -238,8 +252,16 @@ function PercentInput({
         value={raw}
         placeholder={placeholder}
         inputMode="decimal"
-        onChange={(e) => setRaw(e.target.value)}
+        onChange={(e) => {
+          const value = e.target.value;
+          if (typeof maxFractionDigits === "number" && value) {
+            const places = value.match(/[.,](\d+)$/)?.[1]?.length ?? 0;
+            if (places > maxFractionDigits) return;
+          }
+          setRaw(value);
+        }}
         onBlur={(e) => commit(e.target.value)}
+        disabled={disabled}
         className="text-right"
       />
       <span className="text-sm text-muted-foreground">%</span>
@@ -381,6 +403,10 @@ export type CalcInput = {
   lanceEmbutParcelas?: number;
   lanceOfertPct?: number;
   lanceEmbutPct?: number;
+  trocaChavesAtivo?: boolean;
+  valorAvaliacaoVeiculo?: number;
+  fgtsAtivo?: boolean;
+  fgtsValor?: number;
   embutCapPct?: number | null;
   embutCapBase?: "credito" | "parcela_termo";
   ofertBaseKind?: "credito" | "valor_categoria";
@@ -411,6 +437,10 @@ function calcularSimulacao(i: CalcInput) {
     lanceEmbutParcelas = 0,
     lanceOfertPct = 0,
     lanceEmbutPct = 0,
+    trocaChavesAtivo = false,
+    valorAvaliacaoVeiculo = 0,
+    fgtsAtivo = false,
+    fgtsValor = 0,
     embutCapPct = 0.25,
     embutCapBase = "credito",
     ofertBaseKind = "credito",
@@ -467,7 +497,15 @@ function calcularSimulacao(i: CalcInput) {
     lanceEmbutidoValor = Math.min(baseEmbut * embutPct, embutValorMaximo);
   }
 
+  // As modalidades especiais compõem o lance, sem duplicar valores já ofertados.
+  // Troca de Chaves substitui totalmente o lance embutido.
+  const trocaValor = trocaChavesAtivo ? Math.max(0, Number(valorAvaliacaoVeiculo)) : 0;
+  const recursoFgts = fgtsAtivo ? Math.max(0, Number(fgtsValor)) : 0;
+  if (trocaChavesAtivo) lanceEmbutidoValor = 0;
+  const recursosOfertados = trocaValor + recursoFgts + lanceEmbutidoValor;
+  lanceOfertadoValor = Math.max(lanceOfertadoValor, recursosOfertados);
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
+  const lanceDinheiroValor = Math.max(0, lanceProprioValor - trocaValor - recursoFgts);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
   const saldoDevedorFinal = Math.max(0, valorCategoria - totalPagoSemSeguro - lanceOfertadoValor);
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
@@ -502,6 +540,9 @@ function calcularSimulacao(i: CalcInput) {
     lanceOfertadoValor,
     lanceEmbutidoValor,
     lanceProprioValor,
+    lanceDinheiroValor,
+    trocaValor,
+    recursoFgts,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
     novaParcelaSemLimite,
@@ -668,6 +709,10 @@ export default function EmbraconPage() {
   const [lanceTipo, setLanceTipo] = useState<LanceTipo>("livre");
   const [lanceOfertPct, setLanceOfertPct] = useState(0);
   const [lanceEmbutPct, setLanceEmbutPct] = useState(0);
+  const [trocaChaves, setTrocaChaves] = useState(false);
+  const [valorAvaliacaoVeiculo, setValorAvaliacaoVeiculo] = useState(0);
+  const [fgtsAtivo, setFgtsAtivo] = useState(false);
+  const [valorFgts, setValorFgts] = useState(0);
   const [prazoOriginalGrupo, setPrazoOriginalGrupo] = useState(0);
   const [lanceOfertParcelas, setLanceOfertParcelas] = useState(0);
   const [lanceEmbutParcelas, setLanceEmbutParcelas] = useState(0);
@@ -788,10 +833,18 @@ export default function EmbraconPage() {
 
     if (nextTipo !== lanceTipo) setLanceTipo(nextTipo);
 
-    if (!tabelaSelecionada.permite_lance_embutido && lanceEmbutPct !== 0) {
+    if ((!tabelaSelecionada.permite_lance_embutido || trocaChaves) && lanceEmbutPct !== 0) {
       setLanceEmbutPct(0);
     }
-  }, [tabelaSelecionada, lanceTipo, lanceEmbutPct]);
+    if ((!tabelaSelecionada.permite_troca_chaves || lanceTipo === "sorteio") && trocaChaves) {
+      setTrocaChaves(false);
+      setValorAvaliacaoVeiculo(0);
+    }
+    if ((!tabelaSelecionada.permite_fgts || lanceTipo === "sorteio") && fgtsAtivo) {
+      setFgtsAtivo(false);
+      setValorFgts(0);
+    }
+  }, [tabelaSelecionada, lanceTipo, lanceEmbutPct, trocaChaves, fgtsAtivo]);
 
   useEffect(() => {
     if (lanceTipo === "sorteio") {
@@ -813,7 +866,27 @@ export default function EmbraconPage() {
   const creditoForaFaixa = !!faixaResumo && credito > 0 &&
     (credito < faixaResumo.min || credito > faixaResumo.max);
   const prazoValido = !!tabelaSelecionada && prazoVenda > 0 && prazoVenda <= tabelaSelecionada.prazo_limite;
-  const podeCalcular = prazoValido && Number.isFinite(credito) && credito > 0 && Number.isInteger(prazoVenda) && Number.isInteger(parcContemplacao) && parcContemplacao > 0 && parcContemplacao < prazoVenda;
+  const limiteTrocaChaves = credito > 0 ? credito * 0.5 : 0;
+  const trocaChavesDisponivel = !!tabelaSelecionada?.permite_troca_chaves && lanceTipo !== "sorteio";
+  const fgtsDisponivel = !!tabelaSelecionada?.permite_fgts && lanceTipo !== "sorteio";
+  const valorTrocaValido = !trocaChaves || (
+    trocaChavesDisponivel && !fgtsAtivo && Number.isFinite(valorAvaliacaoVeiculo)
+    && valorAvaliacaoVeiculo > 0 && valorAvaliacaoVeiculo <= limiteTrocaChaves
+    && lanceEmbutPct === 0 && lanceEmbutParcelas === 0
+  );
+  const valorFgtsValido = !fgtsAtivo || (
+    fgtsDisponivel && !trocaChaves && Number.isFinite(valorFgts) && valorFgts > 0
+  );
+  const recursosEspeciaisValidos = valorTrocaValido && valorFgtsValido;
+  const avisoTroca = trocaChaves && (!Number.isFinite(valorAvaliacaoVeiculo)
+    || valorAvaliacaoVeiculo <= 0 || valorAvaliacaoVeiculo > limiteTrocaChaves)
+    ? "A avaliação do veículo deve ser maior que zero e de até " + brMoney(limiteTrocaChaves) + " (50% do crédito)."
+    : null;
+  const avisoFgts = fgtsAtivo && (!Number.isFinite(valorFgts) || valorFgts <= 0)
+    ? "Informe um valor válido de FGTS para compor o lance." : null;
+  const podeCalcular = prazoValido && Number.isFinite(credito) && credito > 0
+    && Number.isInteger(prazoVenda) && Number.isInteger(parcContemplacao)
+    && parcContemplacao > 0 && parcContemplacao < prazoVenda && recursosEspeciaisValidos;
 
 
   // O resultado só existe depois que esta configuração exata for salva no banco.
@@ -832,6 +905,10 @@ export default function EmbraconPage() {
     lanceTipo,
     lanceOfertPct,
     lanceEmbutPct,
+    trocaChaves,
+    valorAvaliacaoVeiculo,
+    fgtsAtivo,
+    valorFgts,
     prazoOriginalGrupo,
     lanceOfertParcelas,
     lanceEmbutParcelas,
@@ -871,9 +948,13 @@ export default function EmbraconPage() {
         redutorBase: (adminRules?.redutor_base ?? "valor_categoria") as any,
         parcContemplacao,
         lanceOfertParcelas,
-        lanceEmbutParcelas,
         lanceOfertPct,
-        lanceEmbutPct,
+        lanceEmbutPct: trocaChaves ? 0 : lanceEmbutPct,
+        lanceEmbutParcelas: trocaChaves ? 0 : lanceEmbutParcelas,
+        trocaChavesAtivo: trocaChaves,
+        valorAvaliacaoVeiculo: trocaChaves ? valorAvaliacaoVeiculo : 0,
+        fgtsAtivo,
+        fgtsValor: fgtsAtivo ? valorFgts : 0,
       });
   }
 
@@ -889,6 +970,15 @@ export default function EmbraconPage() {
 
     try {
       const resultado = calcularResultado(tabelaSelecionada);
+      if ((lanceTipo === "fixo_25" || lanceTipo === "fixo_50") && (trocaChaves || fgtsAtivo)) {
+        const baseLanceFixo = adminRules?.lance_ofert_base === "valor_categoria" ? resultado.valorCategoria : credito;
+        if (resultado.lanceOfertadoValor > baseLanceFixo * lancePctFromTipo(lanceTipo) + 0.01) {
+          throw new Error("A soma dos recursos supera o valor permitido para o lance fixo selecionado. Ajuste os valores ou escolha Lance Livre.");
+        }
+      }
+      if ((trocaChaves || fgtsAtivo) && resultado.lanceOfertadoValor > resultado.valorCategoria + 0.01) {
+        throw new Error("O lance total não pode ultrapassar o valor da categoria nesta simulação.");
+      }
       if (![resultado.parcelaAte, resultado.parcelaDemais, resultado.valorCategoria,
         resultado.saldoDevedorFinal, resultado.novoCredito, resultado.parcelaEscolhida]
         .every(Number.isFinite)) {
@@ -910,12 +1000,17 @@ export default function EmbraconPage() {
       seguro_prestamista: seguroPrest,
       lance_modelo: adminRules?.modelo_lance ?? "percentual",
       lance_base: adminRules?.modelo_lance_base ?? (adminRules?.modelo_lance === "parcela" ? "parcela_termo" : "credito"),
-      modelo_lance: lanceModoParcela ? "parcela" : lanceTipoLabel(lanceTipo),
+      modelo_lance: trocaChaves ? "Troca de Chaves" : fgtsAtivo ? "FGTS + Embutido" : lanceModoParcela ? "parcela" : lanceTipoLabel(lanceTipo),
       prazo_original_grupo: prazoOriginalGrupo || null,
-      lance_ofertado_pct: lanceOfertPct,
-      lance_embutido_pct: Math.min(lanceEmbutPct, embutCapPct),
+      lance_ofertado_pct: resultado.lanceOfertadoValor / Math.max(1,
+        adminRules?.lance_ofert_base === "valor_categoria" ? resultado.valorCategoria : credito),
+      lance_embutido_pct: trocaChaves ? 0 : Math.min(lanceEmbutPct, embutCapPct),
+      troca_chaves_ativo: trocaChaves,
+      troca_chaves_valor_avaliacao: trocaChaves ? valorAvaliacaoVeiculo : null,
+      fgts_ativo: fgtsAtivo,
+      fgts_valor: fgtsAtivo ? valorFgts : null,
       lance_ofertado_parcelas: lanceOfertParcelas,
-      lance_embutido_parcelas: lanceEmbutParcelas,
+      lance_embutido_parcelas: trocaChaves ? 0 : lanceEmbutParcelas,
       parcela_contemplacao: parcContemplacao,
       antecip_parcelas: tabelaSelecionada.antecip_parcelas,
       valor_categoria: resultado.valorCategoria,
@@ -989,6 +1084,11 @@ export default function EmbraconPage() {
       antecipParcelas: tabelaSelecionada.antecip_parcelas,
       parcContemplacao,
     });
+    const detalheLanceEspecial = trocaChaves
+      ? "\n🚘 Troca de Chaves: " + brMoney(calc.trocaValor)
+      : fgtsAtivo
+        ? "\n🏠 FGTS no lance: " + brMoney(calc.recursoFgts)
+        : "";
 
     return `🎯 *Simulação Embracon ${segmentoLabel}${grupoInfo}*
 
@@ -997,7 +1097,7 @@ export default function EmbraconPage() {
 ${parcelasAteContemplacaoTexto}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
-🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
+🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}${detalheLanceEspecial}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
 
@@ -1007,7 +1107,7 @@ ${parcelasRestantesTexto}
 
 Me chama aqui e eu te mostro o melhor caminho 👇
 ${wa}`;
-  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone, grupo]);
+  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone, grupo, trocaChaves, fgtsAtivo]);
 
   async function copiarResumo() {
     try {
@@ -1230,7 +1330,7 @@ ${wa}`;
                   <SectionTitle icon={Banknote} title="Configurações da venda e contemplação" subtitle="Informe crédito, prazo, modalidade e condições de contemplação." />
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-4">
+                  <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:grid-cols-2 xl:grid-cols-4">
                     <div>
                       <Label>Valor do crédito</Label>
                       <MoneyInput value={credito || 0} onChange={setCredito} />
@@ -1269,10 +1369,10 @@ ${wa}`;
                     </div>
                   </div>
 
-                  <div className="border-t pt-4">
-                    <SectionTitle icon={TrendingUp} title="Contemplação e lance" subtitle="Selecione a modalidade e informe o lance para a simulação." />
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <SectionTitle icon={TrendingUp} title="Contemplação e lance" subtitle="Selecione a modalidade e componha o lance." />
                   </div>
-                  <div className="grid gap-4 md:grid-cols-3">
+                  <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 md:grid-cols-3">
                     {lanceModoParcela ? (
                       <>
                         <div>
@@ -1286,7 +1386,7 @@ ${wa}`;
                         </div>
                         <div>
                           <Label>Qtde parcelas — lance embutido</Label>
-                          <Input type="number" value={lanceEmbutParcelas} onChange={(e) => setLanceEmbutParcelas(Math.max(0, Number(e.target.value)))} />
+                          <Input type="number" value={trocaChaves ? 0 : lanceEmbutParcelas} disabled={trocaChaves} onChange={(e) => setLanceEmbutParcelas(Math.max(0, Number(e.target.value)))} />
                           <p className="mt-1 text-xs text-slate-500">Teto: {pctHuman(embutCapPct)} do {adminRules?.embut_base === "parcela_termo" ? "total de parcelas-termo" : "crédito"}.</p>
                         </div>
                       </>
@@ -1332,12 +1432,16 @@ ${wa}`;
                           <div>
                             <Label>Lance embutido (%)</Label>
                             <PercentInput
-                              valueDecimal={lanceEmbutPct}
+                              valueDecimal={trocaChaves ? 0 : lanceEmbutPct}
                               onChangeDecimal={(d) => setLanceEmbutPct(Math.min(d, embutCapPct))}
                               maxDecimal={embutCapPct}
+                              maxFractionDigits={4}
+                              disabled={trocaChaves}
                             />
                             <p className="mt-1 text-xs text-slate-500">
-                              Base: {adminRules?.lance_embut_base === "valor_categoria" ? "Categoria" : "Crédito"} • Teto {pctHuman(embutCapPct)}.
+                              {trocaChaves ? "Bloqueado pelo pagamento com Troca de Chaves." :
+                                "Base: " + (adminRules?.lance_embut_base === "valor_categoria" ? "Categoria" : "Crédito") +
+                                " • Teto " + pctHuman(embutCapPct) + " • Até 4 casas decimais."}
                             </p>
                           </div>
                         ) : (
@@ -1355,14 +1459,107 @@ ${wa}`;
                     </div>
                   </div>
 
-                  <div className="space-y-3 border-t pt-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="max-w-md text-xs text-slate-500">
-                        Cada clique em Calcular gera um novo código e grava a simulação no CRM antes de exibir os resultados.
-                      </p>
+                  {(!!tabelaSelecionada?.permite_troca_chaves || !!tabelaSelecionada?.permite_fgts) && (
+                    <div className="rounded-2xl border border-[#B5A573]/35 bg-gradient-to-r from-[#B5A573]/[0.09] via-white to-white p-4">
+                      <div className="mb-3">
+                        <h3 className="text-sm font-extrabold text-[#1E293F]">Pagamento do lance</h3>
+                        <p className="text-xs text-slate-500">Escolha a forma de pagamento habilitada nesta tabela.</p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {!!tabelaSelecionada?.permite_troca_chaves && (
+                          <label className={
+                            "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition " +
+                            (trocaChaves ? "border-[#A11C27] bg-[#A11C27]/[0.06]" : "border-slate-200 bg-white hover:border-[#A11C27]/30") +
+                            (!trocaChavesDisponivel ? " cursor-not-allowed opacity-50" : "")
+                          }>
+                            <input
+                              type="checkbox"
+                              className="mt-1 h-4 w-4 shrink-0 accent-[#A11C27]"
+                              checked={trocaChaves}
+                              disabled={!trocaChavesDisponivel}
+                              onChange={(e) => {
+                                const marcado = e.target.checked;
+                                setTrocaChaves(marcado);
+                                setValorAvaliacaoVeiculo(0);
+                                if (marcado) {
+                                  setFgtsAtivo(false);
+                                  setValorFgts(0);
+                                  setLanceEmbutPct(0);
+                                  setLanceEmbutParcelas(0);
+                                }
+                              }}
+                            />
+                            <span>
+                              <strong className="block text-sm text-[#1E293F]">Troca de Chaves</strong>
+                              <span className="block text-xs text-slate-500">Veículo como recurso de lance · até 50% do crédito.</span>
+                            </span>
+                          </label>
+                        )}
+                        {!!tabelaSelecionada?.permite_fgts && (
+                          <label className={
+                            "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition " +
+                            (fgtsAtivo ? "border-[#A11C27] bg-[#A11C27]/[0.06]" : "border-slate-200 bg-white hover:border-[#A11C27]/30") +
+                            (!fgtsDisponivel ? " cursor-not-allowed opacity-50" : "")
+                          }>
+                            <input
+                              type="checkbox"
+                              className="mt-1 h-4 w-4 shrink-0 accent-[#A11C27]"
+                              checked={fgtsAtivo}
+                              disabled={!fgtsDisponivel}
+                              onChange={(e) => {
+                                const marcado = e.target.checked;
+                                setFgtsAtivo(marcado);
+                                setValorFgts(0);
+                                if (marcado) {
+                                  setTrocaChaves(false);
+                                  setValorAvaliacaoVeiculo(0);
+                                }
+                              }}
+                            />
+                            <span>
+                              <strong className="block text-sm text-[#1E293F]">FGTS</strong>
+                              <span className="block text-xs text-slate-500">Pode compor o lance com o embutido permitido.</span>
+                            </span>
+                          </label>
+                        )}
+                      </div>
+                      {trocaChaves && (
+                        <div className="mt-3 rounded-xl border border-[#B5A573]/35 bg-white p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <Label className="font-semibold text-[#1E293F]">Valor da avaliação do veículo</Label>
+                            <span className="text-xs font-medium text-slate-500">Máximo: {brMoney(limiteTrocaChaves)}</span>
+                          </div>
+                          <MoneyInput
+                            value={valorAvaliacaoVeiculo}
+                            onChange={setValorAvaliacaoVeiculo}
+                            className="mt-2 h-11 rounded-xl"
+                            aria-label="Valor da avaliação do veículo"
+                          />
+                          <p className="mt-2 text-xs text-slate-500">Lance embutido zerado e bloqueado nesta modalidade.</p>
+                          {avisoTroca && <p role="alert" className="mt-2 text-xs font-semibold text-[#A11C27]">{avisoTroca}</p>}
+                        </div>
+                      )}
+                      {fgtsAtivo && (
+                        <div className="mt-3 rounded-xl border border-[#B5A573]/35 bg-white p-3">
+                          <Label className="font-semibold text-[#1E293F]">Valor do FGTS</Label>
+                          <MoneyInput
+                            value={valorFgts}
+                            onChange={setValorFgts}
+                            className="mt-2 h-11 rounded-xl"
+                            aria-label="Valor do FGTS"
+                          />
+                          <p className="mt-2 text-xs text-slate-500">O FGTS compõe o lance junto ao lance embutido permitido.</p>
+                          {avisoFgts && <p role="alert" className="mt-2 text-xs font-semibold text-[#A11C27]">{avisoFgts}</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="space-y-3 border-t border-slate-200 pt-4">
+                    <div className="flex justify-end">
                       <Button
                         type="button"
-                        className="h-11 min-w-[190px] rounded-xl bg-[#A11C27] font-bold text-white hover:bg-[#8c1822]"
+                        className="h-12 min-w-[210px] rounded-xl bg-[#A11C27] px-6 font-extrabold text-white shadow-[0_8px_20px_rgba(161,28,39,0.18)] hover:bg-[#8c1822]"
                         disabled={!leadId || !podeCalcular || salvando}
                         onClick={calcularESalvar}
                       >
@@ -1414,6 +1611,8 @@ ${wa}`;
                     <MetricCard title="Crédito líquido" value={brMoney(calc.novoCredito)} hint="Após embutido" />
                     <MetricCard title="Lance total" value={brMoney(calc.lanceOfertadoValor)} />
                     <MetricCard title="Lance próprio" value={brMoney(calc.lanceProprioValor)} />
+                    {trocaChaves && <MetricCard title="Troca de Chaves" value={brMoney(calc.trocaValor)} hint="Avaliação do veículo" />}
+                    {fgtsAtivo && <MetricCard title="FGTS no lance" value={brMoney(calc.recursoFgts)} />}
                     <MetricCard title="Parcela escolhida" value={brMoney(calc.parcelaEscolhida)} hint={calc.aplicouLimitador ? "Limitador aplicado" : "Sem limitador maior"} />
                     <MetricCard title="Novo prazo" value={`${calc.novoPrazo} meses`} />
                   </div>
@@ -1472,6 +1671,11 @@ ${wa}`;
                     <div>Antecipação Adm</div><div className="text-right">{pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x</div>
                     <div>Valor de categoria</div><div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
                     <div>Parcela termo</div><div className="text-right">{brMoney(calc.parcelaTermo)}</div>
+                    <div>Lance total</div><div className="text-right">{brMoney(calc.lanceOfertadoValor)}</div>
+                    <div>Lance embutido</div><div className="text-right">{brMoney(calc.lanceEmbutidoValor)}</div>
+                    {trocaChaves && <><div>Troca de Chaves</div><div className="text-right">{brMoney(calc.trocaValor)}</div></>}
+                    {fgtsAtivo && <><div>FGTS no lance</div><div className="text-right">{brMoney(calc.recursoFgts)}</div></>}
+                    {(trocaChaves || fgtsAtivo) && <><div>Complemento em dinheiro</div><div className="text-right">{brMoney(calc.lanceDinheiroValor)}</div></>}
                     <div className="font-semibold">Saldo devedor pós-contemplação</div>
                     <div className="text-right font-semibold">{brMoney(calc.saldoDevedorFinal)}</div>
                     <div className="col-span-2 text-xs text-slate-500">

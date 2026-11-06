@@ -24,6 +24,9 @@
     "api/marketing/creative-max.ts": {
       "maxDuration": 90
     },
+    "api/contempladas/max-consultor.ts": {
+      "maxDuration": 60
+    },
     "api/weekly-performance-feedback.ts": {
       "maxDuration": 300
     },

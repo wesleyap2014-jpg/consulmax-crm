@@ -81,7 +81,7 @@ function fallback(message: string): Interpretation {
     else if (/parcela|prestacao/.test(context)) patch.parcelaMax = n;
     else if (/entrada|recurso|possui|tem|tiver|aumentar/.test(context) && !/credito/.test(context)) patch.recursos = n;
     else if (/preco|custa|valor do carro|valor do veiculo/.test(context)) patch.preco = n;
-    else if (/credito|carta|procurando|precisa de|quero/.test(context)) patch.credito = n;
+    else if (/credito|carta|procurando|precisa de|quero|(?:imovel|carro|veiculo|moto|caminhao)\s+(?:de|por)$/.test(context)) patch.credito = n;
   }
   if (/menor parcela/.test(text)) patch.prioridade = "parcela";
   if (/menor saldo/.test(text)) patch.prioridade = "saldo";
@@ -234,9 +234,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const current = previous.success ? previous.data : {};
     const interpreted = await interpret(input.message!, current, messages);
     const criteria: MaxCriteria = criteriaSchema.parse({ ...current, ...interpreted.patch });
-    const live = await fetchStock(source);
+    const isCapabilitiesQuestion = /(?:como|em que|de que forma).*(?:pode|consegue).*(?:ajudar|fazer)|(?:o que|quais).*(?:voce|max).*(?:faz|consegue|ajuda)|(?:como funciona|suas funcionalidades)/.test(maxNorm(input.message));
+    const needsStock = !isCapabilitiesQuestion && interpreted.intent !== "comissao" && !!(criteria.credito || criteria.preco);
+    const live = needsStock ? await fetchStock(source) : { rows: [] as MaxStockRow[], errors: [] as string[], loaded: [] as string[] };
     let offers: MaxOffer[] = [], reply = "", note = "";
-    if (interpreted.intent === "comissao") {
+    if (isCapabilitiesQuestion) {
+      reply = "Eu ajudo você a encontrar cartas contempladas disponíveis nos estoques do CRM e de parceiros, combinar até cinco cotas compatíveis e comparar entrada, parcelas, saldo devedor e avaliação do bem. Também calculo o complemento necessário para comprar, identifico o que falta no orçamento, explico vantagens e limitações e preparo a mensagem comercial para WhatsApp. Me diga qual bem seu cliente procura e o crédito ou preço aproximado; se já souber, informe também a entrada disponível e a parcela desejada.";
+    } else if (interpreted.intent === "comissao") {
       reply = "A comissão é configurada somente pelo seletor existente na guia. Não vou alterar sua configuração pelo chat. Depois que você ajustar, posso recalcular a entrada e as combinações.";
     } else if (!live.loaded.length) {
       reply = "Não consegui consultar o estoque atual. Por segurança, nenhuma carta será recomendada até a integração voltar.";

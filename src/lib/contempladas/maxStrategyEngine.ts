@@ -236,93 +236,169 @@ export function maxEvaluateOffer(rows: MaxStockRow[], criteria: MaxCriteria, ven
   };
 }
 
-function maxCandidatePool(group: MaxStockRow[], target: number, maxCotas: number): MaxStockRow[] {
-  if (group.length <= 48) return group.sort((a, b) => a.codigo.localeCompare(b.codigo));
+
+/**
+ * Busca progressiva com largura de feixe variável.
+ * NÃO impõe quantidade máxima de cartas por proposta: o limite natural é o
+ * próprio estoque compatível e o valor do crédito. O orçamento computacional
+ * limita quantas COMBINAÇÕES serão analisadas, não quantas cartas podem compor
+ * uma alternativa. Quando a busca for parcial, o retorno indica isso.
+ */
+const MAX_SEARCH_EXPANSIONS = 240_000;
+const MAX_GROUP_EXPANSIONS = 120_000;
+const MAX_STOCK_SAMPLES = 180;
+
+function maxCandidatePool(group: MaxStockRow[], target: number): { rows: MaxStockRow[]; sampled: boolean } {
+  const ascending = [...group].sort((a, b) => a.credito - b.credito || a.codigo.localeCompare(b.codigo));
+  if (ascending.length <= MAX_STOCK_SAMPLES) return { rows: ascending, sampled: false };
   const picked = new Map<string, MaxStockRow>();
-  const add = (rows: MaxStockRow[], n: number) => rows.slice(0, n).forEach((r) => picked.set(r.id, r));
-  for (let n = 1; n <= maxCotas; n++) {
-    const t = target / n;
-    add([...group].sort((a, b) => Math.abs(a.credito - t) - Math.abs(b.credito - t)), 18);
+  const take = (rows: MaxStockRow[], n: number) => rows.slice(0, n).forEach((row) => picked.set(row.id, row));
+  const probes = new Set([1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 50, 64, 80, 100]);
+  const smallest = ascending[0]?.credito || 1;
+  const probable = Math.ceil(target / Math.max(smallest, 1));
+  probes.add(Math.max(1, probable));
+  probes.add(Math.max(1, Math.floor(probable / 2)));
+  for (const count of probes) {
+    const ideal = target / count;
+    take([...ascending].sort((a, b) => Math.abs(a.credito - ideal) - Math.abs(b.credito - ideal)), 8);
   }
-  add([...group].sort((a, b) => a.entradaBase - b.entradaBase), 20);
-  add([...group].sort((a, b) => a.valorParcela - b.valorParcela), 16);
-  add([...group].sort((a, b) => a.valorParcela * a.parcelas - b.valorParcela * b.parcelas), 16);
-  return [...picked.values()].slice(0, 80).sort((a, b) => a.codigo.localeCompare(b.codigo));
+  take(ascending, 34);
+  take([...ascending].sort((a, b) => a.entradaBase - b.entradaBase), 28);
+  take([...ascending].sort((a, b) => a.valorParcela - b.valorParcela), 22);
+  take([...ascending].sort((a, b) => a.valorParcela * a.parcelas - b.valorParcela * b.parcelas), 22);
+  const rows = [...picked.values()].sort((a, b) => a.credito - b.credito || a.codigo.localeCompare(b.codigo)).slice(0, MAX_STOCK_SAMPLES);
+  return { rows, sampled: rows.length < group.length };
 }
 
-function partialScore(credit: number, target: number, size: number, depth: number): number {
-  // Mantém também composições menores para permitir junções de 4-5 cotas.
-  const future = Math.max(1, 6 - depth);
-  const desired = target * Math.min(1, size / Math.max(1, depth));
-  return Math.abs(credit - desired) / Math.max(target, 1) + size * 0.001 + (depth >= 4 ? 0.005 : 0) * future;
-}
+type MaxSearchPartial = { items: MaxStockRow[]; last: number; credito: number; entrada: number; parcela: number };
+const partKey = (p: MaxSearchPartial) => p.items.map((x) => x.id).join("|");
+const sortPartial = (a: MaxSearchPartial, b: MaxSearchPartial) => a.last - b.last || a.credito - b.credito;
+const scorePartial = (p: MaxSearchPartial, target: number, expectedCount: number) =>
+  Math.abs(p.credito - target * Math.min(1, p.items.length / Math.max(1, expectedCount))) / Math.max(1, target);
 
 export function maxSearchStrategies(
   stock: MaxStockRow[], criteria: MaxCriteria, vendorPct: number, limit = 3
 ): { offers: MaxOffer[]; count: number; inspected: number; limited: boolean; reason: string } {
   if (!maxValidCommission(vendorPct)) throw new Error("Comissão inválida.");
   const target = Number(criteria.credito || criteria.preco || 0);
-  if (!Number.isFinite(target) || target <= 0) return { offers: [], count: 0, inspected: 0, limited: false, reason: "Informe o crédito ou preço aproximado do bem." };
-  const eligible = stock.filter((c) => c.status === "disponivel" && c.credito > 0 && c.parcelas > 0 && c.valorParcela > 0 && Number.isFinite(c.entradaBase) &&
-    (!criteria.segmento || c.segmento === criteria.segmento));
+  if (!Number.isFinite(target) || target <= 0) {
+    return { offers: [], count: 0, inspected: 0, limited: false, reason: "Informe o crédito ou preço aproximado do bem." };
+  }
+  const eligible = stock.filter((row) =>
+    row.status === "disponivel" && row.credito > 0 && row.parcelas > 0 &&
+    row.valorParcela > 0 && Number.isFinite(row.entradaBase) &&
+    (!criteria.segmento || row.segmento === criteria.segmento));
   const groupMap = new Map<string, MaxStockRow[]>();
   for (const row of eligible) {
     const key = [row.partnerId, row.adminId, row.segmento].join("|");
     groupMap.set(key, [...(groupMap.get(key) || []), row]);
   }
-  const maxCotas = Math.min(5, Math.max(1, Math.floor(criteria.maxCotas || 5)));
   const maxCredit = Math.max(target * 1.4, target + 50000);
-  const offers: MaxOffer[] = [];
-  let inspected = 0, limited = false;
+  const allOffers = new Map<string, MaxOffer>();
+  let inspected = 0;
+  let limited = false;
+  // maxCotas = 0 ou ausente: nenhuma restrição de quantidade; > 0: pedido explícito do vendedor.
+  const requestedMaximum = criteria.maxCotas && criteria.maxCotas > 0 ? Math.floor(criteria.maxCotas) : null;
   for (const group of groupMap.values()) {
-    const all = group.filter((x) => x.credito <= maxCredit);
-    const candidates = maxCandidatePool(all, target, maxCotas);
-    if (candidates.length < all.length) limited = true;
-    type Partial = { items: MaxStockRow[]; last: number; credito: number };
-    let beam: Partial[] = [{ items: [], last: -1, credito: 0 }];
-    for (let depth = 1; depth <= maxCotas; depth++) {
-      const expanded: Partial[] = [];
-      for (const partial of beam) for (let i = partial.last + 1; i < candidates.length; i++) {
-        const item = candidates[i];
-        const credit = partial.credito + item.credito;
-        if (credit > maxCredit) continue;
-        expanded.push({ items: [...partial.items, item], last: i, credito: credit });
+    if (inspected >= MAX_SEARCH_EXPANSIONS) { limited = true; break; }
+    const compatible = group.filter((row) => row.credito <= maxCredit);
+    const { rows: candidates, sampled } = maxCandidatePool(compatible, target);
+    if (!candidates.length) continue;
+    if (sampled) limited = true;
+    const smallest = candidates[0].credito;
+    const possibleByValue = Math.max(1, Math.floor((maxCredit + 0.005) / smallest));
+    const maxDepth = Math.min(candidates.length, possibleByValue, requestedMaximum ?? candidates.length);
+    const totalGroupBudget = Math.min(MAX_GROUP_EXPANSIONS, MAX_SEARCH_EXPANSIONS - inspected);
+    let groupChecked = 0;
+    const orderedCredit = candidates.map((row) => row.credito).sort((a, b) => a - b);
+    const median = orderedCredit[Math.floor(orderedCredit.length / 2)] || smallest;
+    const expectedCount = Math.max(1, Math.min(maxDepth, Math.round(target / median)));
+    let beam: MaxSearchPartial[] = [{ items: [], last: -1, credito: 0, entrada: 0, parcela: 0 }];
+    for (let depth = 1; depth <= maxDepth && beam.length; depth++) {
+      const expanded: MaxSearchPartial[] = [];
+      outer: for (const partial of beam) {
+        for (let idx = partial.last + 1; idx < candidates.length; idx++) {
+          if (groupChecked >= totalGroupBudget) { limited = true; break outer; }
+          const row = candidates[idx];
+          groupChecked++;
+          inspected++;
+          const credito = partial.credito + row.credito;
+          if (credito > maxCredit) continue;
+          const next = {
+            items: [...partial.items, row], last: idx, credito,
+            entrada: partial.entrada + maxEntrada(row, vendorPct),
+            parcela: partial.parcela + row.valorParcela
+          };
+          expanded.push(next);
+        }
       }
       if (!expanded.length) break;
-      for (const partial of expanded) {
-        inspected++;
-        if (partial.credito >= target * 0.55 && partial.credito <= maxCredit)
-          offers.push(maxEvaluateOffer(partial.items, criteria, vendorPct));
+      // Diversificação: composição próxima, parcelas leves, entrada baixa e
+      // avanço progressivo para possibilitar junções com muitas cartas.
+      const byCredit = [...expanded].sort((a, b) =>
+        Math.abs(a.credito - target) - Math.abs(b.credito - target) || sortPartial(a, b)).slice(0, 70);
+      const byProgress = [...expanded].sort((a, b) =>
+        scorePartial(a, target, expectedCount) - scorePartial(b, target, expectedCount) || sortPartial(a, b)).slice(0, 75);
+      const byEntrada = [...expanded].sort((a, b) => a.entrada - b.entrada || sortPartial(a, b)).slice(0, 48);
+      const byParcela = [...expanded].sort((a, b) => a.parcela - b.parcela || sortPartial(a, b)).slice(0, 48);
+      const byContinuity = [...expanded].sort(sortPartial).slice(0, 25);
+      const diverse = new Map<string, MaxSearchPartial>();
+      for (const item of [...byCredit, ...byProgress, ...byEntrada, ...byParcela, ...byContinuity]) diverse.set(partKey(item), item);
+      const promising = [...diverse.values()];
+      if (expanded.length > promising.length) limited = true;
+      for (const partial of promising) {
+        if (partial.credito < target * 0.55 || partial.credito > maxCredit) continue;
+        const evaluated = maxEvaluateOffer(partial.items, criteria, vendorPct);
+        allOffers.set(evaluated.id, evaluated);
       }
-      // O feixe mantém candidatos por distância ao objetivo e por custo inicial.
-      const byTarget = [...expanded].sort((a, b) => partialScore(a.credito, target, a.items.length, depth) - partialScore(b.credito, target, b.items.length, depth)).slice(0, 140);
-      const byEntrada = [...expanded].sort((a, b) => a.items.reduce((s, c) => s + maxEntrada(c, vendorPct), 0) - b.items.reduce((s, c) => s + maxEntrada(c, vendorPct), 0)).slice(0, 65);
-      const byParcela = [...expanded].sort((a, b) => a.items.reduce((s, c) => s + c.valorParcela, 0) - b.items.reduce((s, c) => s + c.valorParcela, 0)).slice(0, 65);
-      const unique = new Map<string, Partial>();
-      for (const item of [...byTarget, ...byEntrada, ...byParcela]) unique.set(item.items.map((r) => r.id).join("|"), item);
-      beam = [...unique.values()];
+      const beamWidth = depth < 8 ? 105 : depth < 18 ? 56 : depth < 40 ? 28 : 14;
+      // Mistura os melhores de cada prioridade sem consumir todo o feixe com uma só.
+      const nextBeam = new Map<string, MaxSearchPartial>();
+      const sources = [byCredit, byProgress, byEntrada, byParcela, byContinuity];
+      const perSource = Math.max(3, Math.ceil(beamWidth / sources.length));
+      for (const source of sources)
+        for (const item of source.slice(0, perSource)) nextBeam.set(partKey(item), item);
+      for (const item of promising) {
+        if (nextBeam.size >= beamWidth) break;
+        nextBeam.set(partKey(item), item);
+      }
+      beam = [...nextBeam.values()].sort(sortPartial);
       if (expanded.length > beam.length) limited = true;
+      if (groupChecked >= totalGroupBudget) break;
+      // Uma vez que nenhuma combinação pode receber outra carta sem ultrapassar
+      // o crédito tolerado, a profundidade se esgotou naturalmente.
     }
   }
-  if (!offers.length) return { offers: [], count: eligible.length, inspected, limited, reason: eligible.length ? "Não foram encontradas composições próximas ao objetivo no estoque atual." : "Não há cotas disponíveis para os critérios informados." };
+  const offers = [...allOffers.values()];
+  if (!offers.length) {
+    return { offers: [], count: eligible.length, inspected, limited,
+      reason: eligible.length ? "Não foram encontradas composições próximas ao objetivo no estoque atual." :
+        "Não há cotas disponíveis para os critérios informados." };
+  }
   offers.sort((a, b) => a.pontuacao - b.pontuacao || a.qtdCotas - b.qtdCotas || a.id.localeCompare(b.id));
   const selected: MaxOffer[] = [];
-  const take = (offer: MaxOffer | undefined, title: string) => { if (offer && !selected.some((s) => s.id === offer.id)) selected.push({ ...offer, titulo: title }); };
+  const take = (offer: MaxOffer | undefined, title: string) => {
+    if (offer && !selected.some((s) => s.id === offer.id)) selected.push({ ...offer, titulo: title });
+  };
   take(offers[0], "Melhor estratégia geral");
-  const alternatives = offers.filter((o) => !selected.some((v) => v.id === o.id));
+  const remaining = () => offers.filter((offer) => !selected.some((s) => s.id === offer.id));
+  const alternatives = remaining();
   if (alternatives.length) {
-    const viable = alternatives.filter((x) => x.viavelNosCriterios);
+    const viable = alternatives.filter((offer) => offer.viavelNosCriterios);
     const pool = viable.length ? viable : alternatives;
     take([...pool].sort((a, b) => a.desembolsoInicial - b.desembolsoInicial || a.pontuacao - b.pontuacao)[0], "Menor desembolso inicial");
   }
   if (selected.length < limit) {
-    const remaining = offers.filter((o) => !selected.some((v) => v.id === o.id));
-    const preferred = criteria.prioridade === "saldo" ?
-      [...remaining].sort((a, b) => a.saldo - b.saldo || a.pontuacao - b.pontuacao) :
-      [...remaining].sort((a, b) => a.parcelaInicial - b.parcelaInicial || a.pontuacao - b.pontuacao);
-    take(preferred[0], criteria.prioridade === "saldo" ? "Menor saldo nominal" : "Menor parcela inicial");
+    const rest = remaining();
+    const byPriority = criteria.prioridade === "saldo" ?
+      [...rest].sort((a, b) => a.saldo - b.saldo || a.pontuacao - b.pontuacao) :
+      [...rest].sort((a, b) => a.parcelaInicial - b.parcelaInicial || a.pontuacao - b.pontuacao);
+    take(byPriority[0], criteria.prioridade === "saldo" ? "Menor saldo nominal" : "Menor parcela inicial");
   }
-  return { offers: selected.slice(0, limit), count: eligible.length, inspected, limited, reason: selected[0]?.viavelNosCriterios ? "Alternativas encontradas; aprovação, disponibilidade e avaliação final dependem da administradora." : "Nenhuma alternativa avaliada atende a todos os limites informados; veja as restrições em cada cartão." };
+  return { offers: selected.slice(0, limit), count: eligible.length, inspected, limited,
+    reason: selected[0]?.viavelNosCriterios ?
+      "Alternativas encontradas; aprovação, disponibilidade e avaliação final dependem da administradora." :
+      "Nenhuma alternativa avaliada atende a todos os limites informados; veja as restrições em cada cartão." };
 }
 
 export function maxCommercialText(offer: MaxOffer): string {

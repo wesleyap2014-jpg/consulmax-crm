@@ -402,7 +402,9 @@ export type CalcInput = {
   lanceOfertParcelas?: number;
   lanceEmbutParcelas?: number;
   lanceOfertPct?: number;
-  lanceEmbutPct?: number;
+  lanceEmbutPct?: number; // compatibilidade com regra legada
+  lanceEmbutidoValorInformado?: number;
+  embutidoAtivo?: boolean;
   trocaChavesAtivo?: boolean;
   valorAvaliacaoVeiculo?: number;
   fgtsAtivo?: boolean;
@@ -437,6 +439,8 @@ function calcularSimulacao(i: CalcInput) {
     lanceEmbutParcelas = 0,
     lanceOfertPct = 0,
     lanceEmbutPct = 0,
+    lanceEmbutidoValorInformado = 0,
+    embutidoAtivo = false,
     trocaChavesAtivo = false,
     valorAvaliacaoVeiculo = 0,
     fgtsAtivo = false,
@@ -497,16 +501,16 @@ function calcularSimulacao(i: CalcInput) {
     lanceEmbutidoValor = Math.min(baseEmbut * embutPct, embutValorMaximo);
   }
 
-  // As modalidades especiais compõem o lance, sem duplicar valores já ofertados.
-  // Troca de Chaves substitui totalmente o lance embutido.
+  // O lance ofertado é fixado pela modalidade; os recursos apenas compõem esse total.
+  // Nunca elevar automaticamente o lance para acomodar embutido, FGTS ou Troca de Chaves.
+  lanceEmbutidoValor = embutidoAtivo && !trocaChavesAtivo
+    ? Math.max(0, Number(lanceEmbutidoValorInformado)) : 0;
   const trocaValor = trocaChavesAtivo ? Math.max(0, Number(valorAvaliacaoVeiculo)) : 0;
   const recursoFgts = fgtsAtivo ? Math.max(0, Number(fgtsValor)) : 0;
-  if (trocaChavesAtivo) lanceEmbutidoValor = 0;
   const recursosOfertados = trocaValor + recursoFgts + lanceEmbutidoValor;
-  lanceOfertadoValor = Math.max(lanceOfertadoValor, recursosOfertados);
-  const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
-  const lanceDinheiroValor = Math.max(0, lanceProprioValor - trocaValor - recursoFgts);
-  const novoCredito = Math.max(0, C - lanceEmbutidoValor);
+  const lanceProprioValor = Math.max(0, lanceOfertadoValor - recursosOfertados);
+  const lanceDinheiroValor = lanceProprioValor;
+  const novoCredito = Math.max(0, C - recursosOfertados);
   const saldoDevedorFinal = Math.max(0, valorCategoria - totalPagoSemSeguro - lanceOfertadoValor);
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
   const parcelaLimitante = limitEnabled ? valorCategoria * limitadorPct : 0;
@@ -708,14 +712,14 @@ export default function EmbraconPage() {
   const [seguroPrest, setSeguroPrest] = useState(false);
   const [lanceTipo, setLanceTipo] = useState<LanceTipo>("livre");
   const [lanceOfertPct, setLanceOfertPct] = useState(0);
-  const [lanceEmbutPct, setLanceEmbutPct] = useState(0);
+  const [embutidoAtivo, setEmbutidoAtivo] = useState(false);
+  const [valorEmbutido, setValorEmbutido] = useState(0);
   const [trocaChaves, setTrocaChaves] = useState(false);
   const [valorAvaliacaoVeiculo, setValorAvaliacaoVeiculo] = useState(0);
   const [fgtsAtivo, setFgtsAtivo] = useState(false);
   const [valorFgts, setValorFgts] = useState(0);
   const [prazoOriginalGrupo, setPrazoOriginalGrupo] = useState(0);
   const [lanceOfertParcelas, setLanceOfertParcelas] = useState(0);
-  const [lanceEmbutParcelas, setLanceEmbutParcelas] = useState(0);
   const [parcContemplacao, setParcContemplacao] = useState(1);
   const [simulacaoSalva, setSimulacaoSalva] = useState<{
     assinatura: string;
@@ -821,9 +825,8 @@ export default function EmbraconPage() {
   const tiposLancePermitidos = useMemo(() => allowedLanceTipos(tabelaSelecionada), [tabelaSelecionada]);
   const permiteEmbutido = !!tabelaSelecionada?.permite_lance_embutido;
 
-  useEffect(() => {
-    if (lanceEmbutPct > embutCapPct) setLanceEmbutPct(embutCapPct);
-  }, [lanceEmbutPct, embutCapPct]);
+  // Os valores monetários são verificados antes do cálculo e nunca reduzidos em silêncio.
+  const limiteEmbutidoValor = credito > 0 ? credito * embutCapPct : 0;
 
   useEffect(() => {
     if (!tabelaSelecionada) return;
@@ -833,8 +836,9 @@ export default function EmbraconPage() {
 
     if (nextTipo !== lanceTipo) setLanceTipo(nextTipo);
 
-    if ((!tabelaSelecionada.permite_lance_embutido || trocaChaves) && lanceEmbutPct !== 0) {
-      setLanceEmbutPct(0);
+    if ((!tabelaSelecionada.permite_lance_embutido || trocaChaves || lanceTipo === "sorteio") && embutidoAtivo) {
+      setEmbutidoAtivo(false);
+      setValorEmbutido(0);
     }
     if ((!tabelaSelecionada.permite_troca_chaves || lanceTipo === "sorteio") && trocaChaves) {
       setTrocaChaves(false);
@@ -844,12 +848,13 @@ export default function EmbraconPage() {
       setFgtsAtivo(false);
       setValorFgts(0);
     }
-  }, [tabelaSelecionada, lanceTipo, lanceEmbutPct, trocaChaves, fgtsAtivo]);
+  }, [tabelaSelecionada, lanceTipo, embutidoAtivo, trocaChaves, fgtsAtivo]);
 
   useEffect(() => {
     if (lanceTipo === "sorteio") {
       setLanceOfertPct(0);
-      setLanceEmbutPct(0);
+      setEmbutidoAtivo(false);
+      setValorEmbutido(0);
     } else if (lanceTipo === "fixo_50" || lanceTipo === "fixo_25") {
       setLanceOfertPct(lancePctFromTipo(lanceTipo));
     }
@@ -869,26 +874,48 @@ export default function EmbraconPage() {
   const limiteTrocaChaves = credito > 0 ? credito * 0.5 : 0;
   const trocaChavesDisponivel = !!tabelaSelecionada?.permite_troca_chaves && lanceTipo !== "sorteio";
   const fgtsDisponivel = !!tabelaSelecionada?.permite_fgts && lanceTipo !== "sorteio";
+  const embutidoDisponivel = permiteEmbutido && lanceTipo !== "sorteio";
+  const valorEmbutidoValido = !embutidoAtivo || (
+    embutidoDisponivel && !trocaChaves && Number.isFinite(valorEmbutido)
+    && valorEmbutido > 0 && valorEmbutido <= limiteEmbutidoValor + 0.005
+  );
   const valorTrocaValido = !trocaChaves || (
-    trocaChavesDisponivel && !fgtsAtivo && Number.isFinite(valorAvaliacaoVeiculo)
-    && valorAvaliacaoVeiculo > 0 && valorAvaliacaoVeiculo <= limiteTrocaChaves
-    && lanceEmbutPct === 0 && lanceEmbutParcelas === 0
+    trocaChavesDisponivel && !embutidoAtivo && !fgtsAtivo
+    && Number.isFinite(valorAvaliacaoVeiculo)
+    && valorAvaliacaoVeiculo > 0 && valorAvaliacaoVeiculo <= limiteTrocaChaves + 0.005
   );
   const valorFgtsValido = !fgtsAtivo || (
     fgtsDisponivel && !trocaChaves && Number.isFinite(valorFgts) && valorFgts > 0
   );
-  const recursosEspeciaisValidos = valorTrocaValido && valorFgtsValido;
+  const recursoEmbutido = embutidoAtivo ? valorEmbutido : 0;
+  const recursoTroca = trocaChaves ? valorAvaliacaoVeiculo : 0;
+  const recursoFGTS = fgtsAtivo ? valorFgts : 0;
+  const recursosTotais = recursoEmbutido + recursoTroca + recursoFGTS;
+  // Usa a mesma função do cálculo definitivo para validar a composição, sem exibir o resultado.
+  const lanceTotalPrevisto = tabelaSelecionada && credito > 0 && prazoVenda > 0
+    ? calcularResultado(tabelaSelecionada).lanceOfertadoValor : 0;
+  const composicaoValida = Number.isFinite(lanceTotalPrevisto) && Number.isFinite(recursosTotais)
+    && recursosTotais <= lanceTotalPrevisto + 0.005 && recursosTotais <= credito + 0.005;
+  const recursosEspeciaisValidos = valorEmbutidoValido && valorTrocaValido && valorFgtsValido && composicaoValida;
   const avisoTroca = trocaChaves && (!Number.isFinite(valorAvaliacaoVeiculo)
     || valorAvaliacaoVeiculo <= 0 || valorAvaliacaoVeiculo > limiteTrocaChaves)
-    ? "A avaliação do veículo deve ser maior que zero e de até " + brMoney(limiteTrocaChaves) + " (50% do crédito)."
+    ? "A avaliação deve ser maior que zero e de até " + brMoney(limiteTrocaChaves) + " (50% do crédito)."
     : null;
+  const avisoEmbutido = embutidoAtivo && (!Number.isFinite(valorEmbutido)
+    || valorEmbutido <= 0 || valorEmbutido > limiteEmbutidoValor)
+    ? "Informe um lance embutido de até " + brMoney(limiteEmbutidoValor) + "." : null;
   const avisoFgts = fgtsAtivo && (!Number.isFinite(valorFgts) || valorFgts <= 0)
     ? "Informe um valor válido de FGTS para compor o lance." : null;
+  const avisoComposicao = !composicaoValida && recursosTotais > 0
+    ? recursosTotais > credito + 0.005
+      ? "A soma dos recursos de pagamento não pode ultrapassar o crédito contratado de "
+        + brMoney(credito) + "."
+      : "Os recursos selecionados (" + brMoney(recursosTotais) + ") superam o lance total de "
+        + brMoney(lanceTotalPrevisto) + ". Ajuste os valores para calcular."
+    : null;
   const podeCalcular = prazoValido && Number.isFinite(credito) && credito > 0
     && Number.isInteger(prazoVenda) && Number.isInteger(parcContemplacao)
-    && parcContemplacao > 0 && parcContemplacao < prazoVenda && recursosEspeciaisValidos
-    // Enquanto não houver exemplo homologado da Embracon, não gerar propostas com fórmulas presumidas.
-    && !trocaChaves && !fgtsAtivo;
+    && parcContemplacao > 0 && parcContemplacao < prazoVenda && recursosEspeciaisValidos;
 
 
   // O resultado só existe depois que esta configuração exata for salva no banco.
@@ -906,7 +933,8 @@ export default function EmbraconPage() {
     seguroPrest,
     lanceTipo,
     lanceOfertPct,
-    lanceEmbutPct,
+    embutidoAtivo,
+    valorEmbutido,
     trocaChaves,
     valorAvaliacaoVeiculo,
     fgtsAtivo,
@@ -949,10 +977,13 @@ export default function EmbraconPage() {
         redutorPreEnabled: adminRules?.redutor_pre_contemplacao_enabled === true,
         redutorBase: (adminRules?.redutor_base ?? "valor_categoria") as any,
         parcContemplacao,
-        lanceOfertParcelas,
-        lanceOfertPct,
-        lanceEmbutPct: trocaChaves ? 0 : lanceEmbutPct,
-        lanceEmbutParcelas: trocaChaves ? 0 : lanceEmbutParcelas,
+        lanceOfertParcelas: lanceTipo === "sorteio" ? 0 : lanceOfertParcelas,
+        lanceOfertPct: lanceTipo === "sorteio" ? 0
+          : lanceTipo === "livre" ? lanceOfertPct : lancePctFromTipo(lanceTipo),
+        lanceEmbutPct: 0,
+        lanceEmbutParcelas: 0,
+        embutidoAtivo,
+        lanceEmbutidoValorInformado: embutidoAtivo ? valorEmbutido : 0,
         trocaChavesAtivo: trocaChaves,
         valorAvaliacaoVeiculo: trocaChaves ? valorAvaliacaoVeiculo : 0,
         fgtsAtivo,
@@ -972,17 +1003,22 @@ export default function EmbraconPage() {
 
     try {
       const resultado = calcularResultado(tabelaSelecionada);
-      if ((lanceTipo === "fixo_25" || lanceTipo === "fixo_50") && (trocaChaves || fgtsAtivo)) {
-        const baseLanceFixo = adminRules?.lance_ofert_base === "valor_categoria" ? resultado.valorCategoria : credito;
-        if (resultado.lanceOfertadoValor > baseLanceFixo * lancePctFromTipo(lanceTipo) + 0.01) {
-          throw new Error("A soma dos recursos supera o valor permitido para o lance fixo selecionado. Ajuste os valores ou escolha Lance Livre.");
-        }
+      if (resultado.lanceOfertadoValor + 0.005 < resultado.lanceEmbutidoValor
+        + resultado.trocaValor + resultado.recursoFgts) {
+        throw new Error("A soma dos recursos de pagamento supera o lance total ofertado.");
       }
-      if ((trocaChaves || fgtsAtivo) && resultado.lanceOfertadoValor > resultado.valorCategoria + 0.01) {
+      if (resultado.lanceEmbutidoValor > limiteEmbutidoValor + 0.005) {
+        throw new Error("O lance embutido excede o limite de " + brMoney(limiteEmbutidoValor) + ".");
+      }
+      if (resultado.trocaValor > credito * 0.50 + 0.005) {
+        throw new Error("Troca de Chaves excede 50% do crédito contratado.");
+      }
+      if (resultado.lanceOfertadoValor > resultado.valorCategoria + 0.01) {
         throw new Error("O lance total não pode ultrapassar o valor da categoria nesta simulação.");
       }
       if (![resultado.parcelaAte, resultado.parcelaDemais, resultado.valorCategoria,
-        resultado.saldoDevedorFinal, resultado.novoCredito, resultado.parcelaEscolhida]
+        resultado.saldoDevedorFinal, resultado.novoCredito, resultado.parcelaEscolhida,
+        resultado.lanceProprioValor, resultado.lanceOfertadoValor]
         .every(Number.isFinite)) {
         throw new Error("Os valores calculados são inválidos. Confira os parâmetros antes de tentar novamente.");
       }
@@ -1002,17 +1038,17 @@ export default function EmbraconPage() {
       seguro_prestamista: seguroPrest,
       lance_modelo: adminRules?.modelo_lance ?? "percentual",
       lance_base: adminRules?.modelo_lance_base ?? (adminRules?.modelo_lance === "parcela" ? "parcela_termo" : "credito"),
-      modelo_lance: trocaChaves ? "Troca de Chaves" : fgtsAtivo ? "FGTS + Embutido" : lanceModoParcela ? "parcela" : lanceTipoLabel(lanceTipo),
+      modelo_lance: lanceModoParcela ? "parcela" : lanceTipoLabel(lanceTipo),
       prazo_original_grupo: prazoOriginalGrupo || null,
       lance_ofertado_pct: resultado.lanceOfertadoValor / Math.max(1,
         adminRules?.lance_ofert_base === "valor_categoria" ? resultado.valorCategoria : credito),
-      lance_embutido_pct: trocaChaves ? 0 : Math.min(lanceEmbutPct, embutCapPct),
+      lance_embutido_pct: credito > 0 ? resultado.lanceEmbutidoValor / credito : 0,
       troca_chaves_ativo: trocaChaves,
       troca_chaves_valor_avaliacao: trocaChaves ? valorAvaliacaoVeiculo : null,
       fgts_ativo: fgtsAtivo,
       fgts_valor: fgtsAtivo ? valorFgts : null,
       lance_ofertado_parcelas: lanceOfertParcelas,
-      lance_embutido_parcelas: trocaChaves ? 0 : lanceEmbutParcelas,
+      lance_embutido_parcelas: 0,
       parcela_contemplacao: parcContemplacao,
       antecip_parcelas: tabelaSelecionada.antecip_parcelas,
       valor_categoria: resultado.valorCategoria,
@@ -1086,11 +1122,11 @@ export default function EmbraconPage() {
       antecipParcelas: tabelaSelecionada.antecip_parcelas,
       parcContemplacao,
     });
-    const detalheLanceEspecial = trocaChaves
-      ? "\n🚘 Troca de Chaves: " + brMoney(calc.trocaValor)
-      : fgtsAtivo
-        ? "\n🏠 FGTS no lance: " + brMoney(calc.recursoFgts)
-        : "";
+    const detalheLanceEspecial = [
+      embutidoAtivo ? "💳 Lance embutido: " + brMoney(calc.lanceEmbutidoValor) : "",
+      trocaChaves ? "🚘 Troca de Chaves: " + brMoney(calc.trocaValor) : "",
+      fgtsAtivo ? "🏠 FGTS no lance: " + brMoney(calc.recursoFgts) : "",
+    ].filter(Boolean).join("\n");
 
     return `🎯 *Simulação Embracon ${segmentoLabel}${grupoInfo}*
 
@@ -1099,7 +1135,8 @@ export default function EmbraconPage() {
 ${parcelasAteContemplacaoTexto}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
-🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}${detalheLanceEspecial}
+🏁 Lance total: ${brMoney(calc.lanceOfertadoValor)}
+${detalheLanceEspecial ? detalheLanceEspecial + "\n" : ""}🏦 Lance próprio (dinheiro): ${brMoney(calc.lanceProprioValor)}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
 
@@ -1109,7 +1146,7 @@ ${parcelasRestantesTexto}
 
 Me chama aqui e eu te mostro o melhor caminho 👇
 ${wa}`;
-  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone, grupo, trocaChaves, fgtsAtivo]);
+  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone, grupo, trocaChaves, fgtsAtivo, embutidoAtivo]);
 
   async function copiarResumo() {
     try {
@@ -1386,10 +1423,8 @@ ${wa}`;
                           <Label>Qtde parcelas — lance ofertado</Label>
                           <Input type="number" value={lanceOfertParcelas} onChange={(e) => setLanceOfertParcelas(Math.max(0, Number(e.target.value)))} />
                         </div>
-                        <div>
-                          <Label>Qtde parcelas — lance embutido</Label>
-                          <Input type="number" value={trocaChaves ? 0 : lanceEmbutParcelas} disabled={trocaChaves} onChange={(e) => setLanceEmbutParcelas(Math.max(0, Number(e.target.value)))} />
-                          <p className="mt-1 text-xs text-slate-500">Teto: {pctHuman(embutCapPct)} do {adminRules?.embut_base === "parcela_termo" ? "total de parcelas-termo" : "crédito"}.</p>
+                        <div className="flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                          O valor do embutido é informado em reais, na seção Pagamento do lance.
                         </div>
                       </>
                     ) : (
@@ -1430,27 +1465,6 @@ ${wa}`;
                           </div>
                         )}
 
-                        {permiteEmbutido && lanceTipo !== "sorteio" ? (
-                          <div>
-                            <Label>Lance embutido (%)</Label>
-                            <PercentInput
-                              valueDecimal={trocaChaves ? 0 : lanceEmbutPct}
-                              onChangeDecimal={(d) => setLanceEmbutPct(Math.min(d, embutCapPct))}
-                              maxDecimal={embutCapPct}
-                              maxFractionDigits={4}
-                              disabled={trocaChaves}
-                            />
-                            <p className="mt-1 text-xs text-slate-500">
-                              {trocaChaves ? "Bloqueado pelo pagamento com Troca de Chaves." :
-                                "Base: " + (adminRules?.lance_embut_base === "valor_categoria" ? "Categoria" : "Crédito") +
-                                " • Teto " + pctHuman(embutCapPct) + " • Até 4 casas decimais."}
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-500">
-                            {lanceTipo === "sorteio" ? "Sorteio não utiliza lance embutido." : "Esta tabela não permite lance embutido."}
-                          </div>
-                        )}
                       </>
                     )}
 
@@ -1461,13 +1475,40 @@ ${wa}`;
                     </div>
                   </div>
 
-                  {(!!tabelaSelecionada?.permite_troca_chaves || !!tabelaSelecionada?.permite_fgts) && (
+                  {(!!tabelaSelecionada?.permite_lance_embutido || !!tabelaSelecionada?.permite_troca_chaves || !!tabelaSelecionada?.permite_fgts) && (
                     <div className="rounded-2xl border border-[#B5A573]/35 bg-gradient-to-r from-[#B5A573]/[0.09] via-white to-white p-4">
                       <div className="mb-3">
                         <h3 className="text-sm font-extrabold text-[#1E293F]">Pagamento do lance</h3>
-                        <p className="text-xs text-slate-500">Escolha a forma de pagamento habilitada nesta tabela.</p>
+                        <p className="text-xs text-slate-500">Lance embutido ou Troca de Chaves. O FGTS pode ser combinado com o embutido.</p>
                       </div>
-                      <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {!!tabelaSelecionada?.permite_lance_embutido && (
+                          <label className={
+                            "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition " +
+                            (embutidoAtivo ? "border-[#A11C27] bg-[#A11C27]/[0.06]" : "border-slate-200 bg-white hover:border-[#A11C27]/30") +
+                            (!embutidoDisponivel ? " cursor-not-allowed opacity-50" : "")
+                          }>
+                            <input
+                              type="checkbox"
+                              className="mt-1 h-4 w-4 shrink-0 accent-[#A11C27]"
+                              checked={embutidoAtivo}
+                              disabled={!embutidoDisponivel}
+                              onChange={(e) => {
+                                const selecionado = e.target.checked;
+                                setEmbutidoAtivo(selecionado);
+                                setValorEmbutido(0);
+                                if (selecionado) {
+                                  setTrocaChaves(false);
+                                  setValorAvaliacaoVeiculo(0);
+                                }
+                              }}
+                            />
+                            <span>
+                              <strong className="block text-sm text-[#1E293F]">Lance Embutido</strong>
+                              <span className="block text-xs text-slate-500">Valor descontado da carta · até {pctHuman(embutCapPct)} do crédito.</span>
+                            </span>
+                          </label>
+                        )}
                         {!!tabelaSelecionada?.permite_troca_chaves && (
                           <label className={
                             "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition " +
@@ -1486,8 +1527,8 @@ ${wa}`;
                                 if (marcado) {
                                   setFgtsAtivo(false);
                                   setValorFgts(0);
-                                  setLanceEmbutPct(0);
-                                  setLanceEmbutParcelas(0);
+                                  setEmbutidoAtivo(false);
+                                  setValorEmbutido(0);
                                 }
                               }}
                             />
@@ -1525,6 +1566,26 @@ ${wa}`;
                           </label>
                         )}
                       </div>
+                      {embutidoAtivo && (
+                        <div className="mt-3 rounded-xl border border-[#B5A573]/35 bg-white p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <Label className="font-semibold text-[#1E293F]">Valor do lance embutido</Label>
+                            <span className="text-xs font-medium text-slate-500">Máximo: {brMoney(limiteEmbutidoValor)}</span>
+                          </div>
+                          <MoneyInput
+                            value={valorEmbutido}
+                            onChange={setValorEmbutido}
+                            className="mt-2 h-11 rounded-xl"
+                            aria-label="Valor do lance embutido em reais"
+                          />
+                          <p className="mt-2 text-xs text-slate-500">
+                            Equivalente a {credito > 0
+                              ? (100 * valorEmbutido / credito).toFixed(4).replace(".", ",") + "%"
+                              : "0,0000%"} do crédito contratado.
+                          </p>
+                          {avisoEmbutido && <p role="alert" className="mt-2 text-xs font-semibold text-[#A11C27]">{avisoEmbutido}</p>}
+                        </div>
+                      )}
                       {trocaChaves && (
                         <div className="mt-3 rounded-xl border border-[#B5A573]/35 bg-white p-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1541,10 +1602,9 @@ ${wa}`;
                           {avisoTroca && <p role="alert" className="mt-2 text-xs font-semibold text-[#A11C27]">{avisoTroca}</p>}
                         </div>
                       )}
-                      {(trocaChaves || fgtsAtivo) && (
+                      {avisoComposicao && (
                         <p role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-900">
-                          Cálculo temporariamente bloqueado nesta modalidade até a validação da fórmula comercial da Embracon.
-                          Os campos e os limites já podem ser conferidos.
+                          {avisoComposicao}
                         </p>
                       )}
                       {fgtsAtivo && (
@@ -1616,9 +1676,10 @@ ${wa}`;
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <MetricCard title="Crédito contratado" value={brMoney(credito)} />
-                    <MetricCard title="Crédito líquido" value={brMoney(calc.novoCredito)} hint="Após embutido" />
+                    <MetricCard title="Crédito líquido" value={brMoney(calc.novoCredito)} hint="Após recursos do lance" />
                     <MetricCard title="Lance total" value={brMoney(calc.lanceOfertadoValor)} />
-                    <MetricCard title="Lance próprio" value={brMoney(calc.lanceProprioValor)} />
+                    <MetricCard title="Lance próprio" value={brMoney(calc.lanceProprioValor)} hint="Em dinheiro" />
+                    {embutidoAtivo && <MetricCard title="Lance embutido" value={brMoney(calc.lanceEmbutidoValor)} />}
                     {trocaChaves && <MetricCard title="Troca de Chaves" value={brMoney(calc.trocaValor)} hint="Avaliação do veículo" />}
                     {fgtsAtivo && <MetricCard title="FGTS no lance" value={brMoney(calc.recursoFgts)} />}
                     <MetricCard title="Parcela escolhida" value={brMoney(calc.parcelaEscolhida)} hint={calc.aplicouLimitador ? "Limitador aplicado" : "Sem limitador maior"} />
@@ -1683,11 +1744,11 @@ ${wa}`;
                     <div>Lance embutido</div><div className="text-right">{brMoney(calc.lanceEmbutidoValor)}</div>
                     {trocaChaves && <><div>Troca de Chaves</div><div className="text-right">{brMoney(calc.trocaValor)}</div></>}
                     {fgtsAtivo && <><div>FGTS no lance</div><div className="text-right">{brMoney(calc.recursoFgts)}</div></>}
-                    {(trocaChaves || fgtsAtivo) && <><div>Complemento em dinheiro</div><div className="text-right">{brMoney(calc.lanceDinheiroValor)}</div></>}
+                    {(trocaChaves || fgtsAtivo || embutidoAtivo) && <><div>Lance próprio em dinheiro</div><div className="text-right">{brMoney(calc.lanceProprioValor)}</div></>}
                     <div className="font-semibold">Saldo devedor pós-contemplação</div>
                     <div className="text-right font-semibold">{brMoney(calc.saldoDevedorFinal)}</div>
                     <div className="col-span-2 text-xs text-slate-500">
-                      Valor da categoria menos parcelas pagas (sem seguro) e lance ofertado (próprio + embutido).
+                      Valor da categoria menos parcelas pagas (sem seguro) e lance total ofertado. Recursos do lance não são descontados duas vezes.
                     </div>
                   </div>
                 </>

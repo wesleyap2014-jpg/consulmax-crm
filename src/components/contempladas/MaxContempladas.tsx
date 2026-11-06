@@ -256,80 +256,105 @@ export default function MaxContempladas({
   return (
     <div className={(suspended ? "hidden " : "") + "pointer-events-none fixed inset-0 z-[70]"} aria-label="MAX 2.0 — consultor de cartas contempladas">
       {open ? (
-        <section role="dialog" aria-modal="false" aria-label="MAX 2.0 — negociação consultiva" className="pointer-events-auto absolute bottom-[82px] right-2 flex h-[min(720px,calc(100dvh-95px))] w-[min(1060px,calc(100vw-16px))] flex-col overflow-hidden rounded-2xl border border-[#B5A573]/30 bg-white shadow-2xl sm:right-5">
-          <header className="flex shrink-0 items-center justify-between gap-2 bg-[#1E293F] px-3 py-3 text-white sm:px-5">
+        <section role="dialog" aria-modal="false" aria-label="MAX 2.0 — negociação consultiva" className="pointer-events-auto absolute bottom-[82px] right-2 flex h-[min(740px,calc(100dvh-95px))] w-[min(1080px,calc(100vw-16px))] flex-col overflow-hidden rounded-2xl border border-[#B5A573]/40 bg-white shadow-[0_24px_75px_rgba(15,23,42,0.25)] sm:right-5 sm:rounded-3xl">
+          <header className="flex shrink-0 items-center justify-between gap-2 border-b border-[#E0CE8C]/20 bg-gradient-to-r from-[#142238] via-[#1E293F] to-[#681B2B] px-3 py-3.5 text-white sm:px-5">
             <div className="flex min-w-0 items-center gap-3">
-              <Avatar size={48}/>
+              <div className="rounded-full border-2 border-[#E0CE8C] bg-[#1E293F] p-0.5 shadow-lg"><Avatar size={48}/></div>
               <div className="min-w-0">
-                <strong className="block text-base font-extrabold tracking-wide">MAX <span className="text-xs text-[#E0CE8C]">2.0</span></strong>
-                <p className="truncate text-[11px] text-slate-300">Seu consultor comercial de contempladas</p>
+                <strong className="block text-base font-extrabold tracking-wide">MAX <span className="rounded-full border border-[#E0CE8C]/40 bg-[#E0CE8C]/15 px-2 py-0.5 text-[10px] font-bold text-[#E0CE8C]">2.0</span></strong>
+                <p className="truncate text-[11px] text-slate-200">Especialista em cartas contempladas</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button type="button" title="Nova negociação" onClick={newNegotiation} className="rounded-lg p-2 hover:bg-white/15"><Plus className="h-4 w-4"/></button>
-              <button type="button" title="Histórico" onClick={() => setViewHistory((v) => !v)} className="rounded-lg p-2 hover:bg-white/15"><History className="h-4 w-4"/></button>
+              <button type="button" title="Nova negociação" onClick={newNegotiation} className="rounded-xl border border-white/15 p-2.5 hover:bg-white/15"><Plus className="h-4 w-4"/></button>
+              <button type="button" aria-pressed={viewHistory} title="Mostrar ou ocultar negociações" onClick={() => setViewHistory((v) => !v)} className={"rounded-xl border border-white/15 p-2.5 hover:bg-white/15 " + (viewHistory ? "bg-white/20" : "")}><History className="h-4 w-4"/></button>
               <button type="button" aria-label="Minimizar MAX" onClick={() => setOpen(false)} className="rounded-lg p-2 hover:bg-white/15"><ChevronDown className="h-4 w-4"/></button>
               <button type="button" aria-label="Fechar MAX" onClick={() => setOpen(false)} className="hidden rounded-lg p-2 hover:bg-white/15 sm:block"><X className="h-4 w-4"/></button>
             </div>
           </header>
           <div className="flex min-h-0 flex-1">
-            <aside className={(viewHistory ? "flex " : "hidden ") + "w-full shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50 md:flex md:w-[240px]"}>
+            <aside className={(viewHistory ? "flex " : "hidden ") + "w-full shrink-0 flex-col overflow-hidden border-r border-[#E6EAF0] bg-[#F7F8FB] md:w-[255px]"}>
               <div className="border-b border-slate-200 p-3">
                 <div className="flex items-center justify-between gap-1">
-                  <strong className="text-xs text-[#1E293F]">Minhas negociações</strong>
+                  <strong className="text-sm font-extrabold text-[#1E293F]">Minhas negociações</strong>
                   <button type="button" onClick={() => setViewHistory(false)} className="rounded-md p-1 text-slate-500 md:hidden"><ChevronLeft className="h-4 w-4"/></button>
                 </div>
-                <div className="relative mt-2">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400"/>
-                  <input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Pesquisar..." className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-7 pr-2 text-xs"/>
+                <button type="button" onClick={newNegotiation} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[#1E293F] px-3 py-2.5 text-xs font-bold text-white transition hover:bg-[#2B405E]">
+                  <Plus className="h-3.5 w-3.5"/> Nova negociação
+                </button>
+                <div className="relative mt-3">
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400"/>
+                  <input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Localizar negociação..." className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-2 text-xs outline-none focus:border-[#B5A573]"/>
                 </div>
               </div>
-              <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
                 {historyLoading ? <p className="p-2 text-xs text-slate-500">Carregando...</p> : null}
                 {historyError ? <p role="status" className="p-2 text-xs text-amber-700">{historyError}</p> : null}
                 {!historyLoading && items.length === 0 ? <p className="p-2 text-xs text-slate-500">Suas negociações aparecerão aqui.</p> : null}
                 {items.map((item) => (
-                  <button key={item.id} type="button" onClick={() => resume(item)} className={"w-full rounded-lg border p-2.5 text-left transition hover:bg-white " + (negotiationId === item.id ? "border-[#B5A573] bg-white" : "border-transparent")}>
-                    <strong className="block truncate text-xs text-[#1E293F]">{item.title}</strong>
-                    <span className="mt-1 block text-[10px] text-slate-500">{new Date(item.updated_at).toLocaleDateString("pt-BR")}</span>
+                  <button key={item.id} type="button" onClick={() => resume(item)} className={"w-full rounded-xl border p-3 text-left transition hover:bg-white hover:shadow-sm " + (negotiationId === item.id ? "border-[#B5A573] bg-white shadow-sm" : "border-transparent bg-white/40")}>
+                    <strong className="block truncate text-xs font-bold text-[#1E293F]">{item.title}</strong>
+                    <span className="mt-2 flex items-center gap-1 text-[10px] text-slate-500"><Clock3 className="h-3 w-3"/>{new Date(item.updated_at).toLocaleDateString("pt-BR")}</span>
                   </button>
                 ))}
-                {legacy.length ? <div className="mt-3 border-t border-slate-200 pt-3">
-                  <p className="px-2 pb-2 text-[10px] font-bold uppercase text-slate-400">Buscas anteriores</p>
+                {legacy.length ? <details className="mt-3 rounded-xl border border-slate-200 bg-white/70 p-2">
+                  <summary className="cursor-pointer px-2 py-2 text-[11px] font-bold text-slate-600">Buscas anteriores · {legacy.length}</summary>
                   {legacy.slice(0, 12).map((search) => (
                     <button key={search.id} type="button" onClick={() => {
                       newNegotiation();
                       void sendMessage("Procure cartas de " + search.segmento + " com crédito próximo de " + maxMoney(search.credito_solicitado) + " no estoque atual.", true);
-                    }} className="w-full rounded-lg p-2 text-left text-xs text-slate-600 hover:bg-white">
-                      {search.segmento} · {maxMoney(search.credito_solicitado)}
+                    }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-left text-xs text-slate-600 transition hover:bg-[#F8FAFC]">
+                      <RefreshCcw className="h-3.5 w-3.5 shrink-0 text-[#B5A573]"/>
+                      <span className="min-w-0 truncate">{search.segmento} · {maxMoney(search.credito_solicitado)}</span>
                     </button>
                   ))}
-                </div> : null}
+                </details> : null}
               </div>
               <p className="border-t border-slate-200 px-3 py-2 text-[10px] text-slate-500">Histórico privado por vendedor</p>
             </aside>
             <div className={(viewHistory ? "hidden md:flex " : "flex ") + "min-w-0 flex-1 flex-col"}>
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-[#F8FAFC] px-3 py-2 sm:px-4">
-                <div className="flex items-center gap-2 text-xs text-[#1E293F]"><Sparkles className="h-4 w-4 text-[#A11C27]"/><span className="font-semibold">Inteligência comercial</span></div>
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-white px-3 py-3 sm:px-5">
+                <div className="flex items-center gap-2 text-xs text-[#1E293F]"><span className="rounded-lg bg-[#FCEDEE] p-2 text-[#A11C27]"><Sparkles className="h-4 w-4"/></span><span className="font-extrabold">Consultoria comercial</span><span className="hidden rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 sm:inline">Pronto para ajudar</span></div>
                 <label className="flex items-center gap-2 text-xs text-slate-600">Consultar
                   <select aria-label="Origem do estoque para o MAX" value={source} onChange={(e) => {
                     if (messages.length > 1) newNegotiation();
                     setSource(e.target.value as MaxOrigin);
-                  }} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 font-semibold">
+                  }} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-semibold text-[#1E293F] outline-none focus:border-[#B5A573]">
                     <option value="ambos">Todos os estoques</option>
                     <option value="externo">Estoque externo</option>
                     <option value="crm">Estoque CRM</option>
                   </select>
                 </label>
               </div>
-              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-white p-3 sm:p-4" aria-live="polite">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-[#F8F9FC] p-3 sm:p-5" aria-live="polite">
+                {messages.length === 1 && !busy ? <div className="ml-9 rounded-2xl border border-[#E0CE8C]/50 bg-white p-3.5 shadow-sm sm:p-4">
+                  <p className="mb-2 text-xs font-bold text-[#1E293F]">Por onde começamos?</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      "Preciso de uma carta de imóvel de R$ 500 mil",
+                      "Monte uma combinação de cartas para um carro de R$ 150 mil",
+                      "Como você pode me ajudar?"
+                    ].map((suggestion) => <button key={suggestion} type="button" onClick={() => { setInput(suggestion); textInput.current?.focus(); }}
+                      className="rounded-xl border border-slate-200 bg-[#F8FAFC] px-3 py-2 text-left text-[11px] font-medium text-[#1E293F] transition hover:border-[#B5A573] hover:bg-[#FAF7F0]">
+                      {suggestion}
+                    </button>)}
+                  </div>
+                </div> : null}
+                {Object.keys(criteria).some((key) => key !== "maxCotas" && (criteria as any)[key] != null) ? <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 text-[11px] shadow-sm">
+                  <span className="font-bold text-slate-500">NEGOCIAÇÃO</span>
+                  {criteria.segmento ? <span className="rounded-full bg-[#1E293F] px-2.5 py-1 text-white">{criteria.segmento}</span> : null}
+                  {criteria.credito ? <span className="rounded-full bg-[#F5F0E7] px-2.5 py-1 font-semibold text-[#6F5C37]">Crédito {maxMoney(criteria.credito)}</span> : null}
+                  {criteria.recursos !== undefined ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-[#1E293F]">Recursos {maxMoney(criteria.recursos)}</span> : null}
+                  {criteria.parcelaMax ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-[#1E293F]">Parcela até {maxMoney(criteria.parcelaMax)}</span> : null}
+                  {criteria.maxCotas ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-[#1E293F]">Até {criteria.maxCotas} cotas (pedido)</span> : null}
+                </div> : null}
                 {messages.map((message) => (
                   <div key={message.id} className={"flex items-start gap-2 " + (message.role === "user" ? "justify-end" : "")}>
                     {message.role === "assistant" ? <Avatar size={30}/> : null}
                     <div className={message.offers?.length ? "w-full min-w-0" : "max-w-[88%]"}>
-                      <div className={"whitespace-pre-wrap rounded-xl px-3 py-2.5 text-sm leading-relaxed " + (message.role === "user" ? "ml-auto bg-[#A11C27] text-white" : "bg-[#F1F5F9] text-[#1E293F]")}>{message.text}</div>
+                      <div className={"w-fit max-w-full whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm " + (message.role === "user" ? "ml-auto rounded-br-md bg-[#A11C27] text-white" : "rounded-bl-md border border-slate-200 bg-white text-[#1E293F]")}>{message.text}</div>
                       {message.role === "assistant" && message.offers?.length ? (
-                        <div className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-3">
+                        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                           {message.offers.map((o, i) => <OfferCard key={o.id + i} number={i + 1} offer={o} busy={validationBusy} onOpen={openOffer} onCopy={copyOffer}/>)}
                         </div>
                       ) : null}
@@ -341,15 +366,15 @@ export default function MaxContempladas({
                 <div ref={logEnd}/>
               </div>
               {notice ? <p role="status" className="border-t border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-800">{notice}</p> : null}
-              <div className="border-t border-slate-100 bg-slate-50 px-3 pt-2 text-[10px] text-slate-500 sm:px-4">
+              <div className="border-t border-slate-100 bg-white px-3 pt-2 text-[10px] text-slate-500 sm:px-5">
                 Resultados e saldo nominal estimados. Disponibilidade, garantia e condições dependem de confirmação.
               </div>
-              <form onSubmit={(e) => { e.preventDefault(); void sendMessage(input); }} className="flex shrink-0 items-end gap-2 bg-white p-3 sm:p-4">
+              <form onSubmit={(e) => { e.preventDefault(); void sendMessage(input); }} className="flex shrink-0 items-end gap-2 bg-white px-3 pb-3 pt-2 sm:px-5 sm:pb-4">
                 <textarea ref={textInput} value={input} rows={2} onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(input); } }}
                   aria-label="Converse com o MAX" placeholder="Ex.: Meu cliente quer um carro de R$ 130 mil, tem R$ 45 mil e quer parcela até R$ 2 mil..."
-                  disabled={busy} className="min-h-[46px] max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none focus:border-[#A11C27]"/>
-                <button disabled={busy || !input.trim()} type="submit" aria-label="Enviar ao MAX" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#A11C27] text-white disabled:opacity-40">
+                  disabled={busy} className="min-h-[54px] max-h-32 min-w-0 flex-1 resize-none rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-sm shadow-inner outline-none focus:border-[#B5A573] focus:ring-2 focus:ring-[#B5A573]/10"/>
+                <button disabled={busy || !input.trim()} type="submit" aria-label="Enviar ao MAX" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#A11C27] text-white shadow-md transition hover:bg-[#8C1721] disabled:opacity-40">
                   {busy ? <Loader2 className="h-4 w-4 animate-spin"/> : <Send className="h-4 w-4"/>}
                 </button>
               </form>

@@ -93,7 +93,7 @@ export function ContempladasDock({ cotas, onClear, onResumo, onGerarCard, onProp
   const data = useMemo(() => resumirOferta(cotas), [cotas]);
   if (!cotas.length) return null;
   return (
-    <div className="pointer-events-none fixed bottom-3 left-3 right-3 z-[60] sm:left-6 sm:right-24">
+    <div className="pointer-events-none fixed bottom-3 left-3 right-3 z-[40] sm:left-6 sm:right-24">
       <div className="pointer-events-auto mx-auto max-w-[1320px] rounded-2xl border border-[#B5A573]/40 bg-[#111b30] p-3 text-white shadow-2xl sm:p-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-[90px]"><span className="block text-[10px] uppercase tracking-wide text-[#E0CE8C]">{cotas.length} {cotas.length === 1 ? "cota" : "cotas"}</span><strong className="text-sm">Sua combinação</strong></div>

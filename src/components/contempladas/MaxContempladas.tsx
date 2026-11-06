@@ -218,11 +218,12 @@ function timeLabel(date: string): string {
 
 const OPENING: Message = { id: 1, speaker: "bot", text: "Olá! Sou o MAX. Selecione um segmento e me diga qual crédito você procura." };
 
-export default function MaxContempladas({ cotas, sourceMode, onOpenCombination, openSignal = 0 }: {
+export default function MaxContempladas({ cotas, sourceMode, onOpenCombination, openSignal = 0, suspended = false }: {
   cotas: MaxCota[];
   sourceMode: "externo" | "crm";
   onOpenCombination: (ids: string[]) => void;
   openSignal?: number;
+  suspended?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { if (openSignal > 0) setOpen(true); }, [openSignal]);
@@ -370,7 +371,7 @@ export default function MaxContempladas({ cotas, sourceMode, onOpenCombination, 
   });
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[70]" aria-label="Assistente MAX para contempladas">
+    <div className={(suspended ? "hidden " : "") + "pointer-events-none fixed inset-0 z-[70]"} aria-label="Assistente MAX para contempladas">
       {open ? (
         <section role="dialog" aria-label="MAX — busca de contempladas" className="pointer-events-auto absolute bottom-[86px] right-3 flex h-[min(590px,calc(100dvh-115px))] w-[min(940px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:right-5">
           <header className="flex shrink-0 items-center justify-between gap-3 px-4 py-3 text-white" style={{ background: "linear-gradient(108deg,#1E293F,#A11C27)" }}>

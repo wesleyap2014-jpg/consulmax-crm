@@ -531,13 +531,10 @@ export default function EstoqueContempladas() {
 
   async function saveCommissionSetting(pct: number) {
     const value = clampPct(pct);
-    setCommissionPct(value);
-
-    if (!me?.id) return;
-
+    if (!me?.id) { setCommissionPct(value); return; }
     const { error } = await supabase.from("stock_vendor_settings").upsert({ user_id: me.id, commission_pct: value });
-
     if (error) notifyError("Erro ao salvar comissão do vendedor", error);
+    else setCommissionPct(value); // Reflete no MAX após persistência para evitar consulta com percentual antigo.
   }
 
   async function loadExternalCotas() {
@@ -1321,24 +1318,54 @@ export default function EstoqueContempladas() {
     }
   }
 
+  async function openMaxComposition(ids: string[]) {
+    if (!ids.length || ids.length > 5) return;
+    const external = ids.every((id) => id.startsWith("external-"));
+    const internal = ids.every((id) => !id.startsWith("external-"));
+    if (!external && !internal) {
+      showToast("Uma composição não pode misturar origens diferentes.");
+      return;
+    }
+    const targetSource: SourceMode = external ? "externo" : "crm";
+    try {
+      let latest: CotaRow[] = [];
+      if (external) {
+        const response = await fetch(EXTERNAL_STOCK_URL, { method: "GET", cache: "no-store", headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("Estoque externo indisponível.");
+        const data = await response.json();
+        if (!Array.isArray(data)) throw new Error("Estoque externo retornou dados inválidos.");
+        latest = data.map(mapExternalToCotaRow);
+      } else {
+        const { data, error } = await supabase.from("stock_cotas")
+          .select("id,codigo,segmento,numero_proposta,credito_contratado,credito_disponivel,prazo_restante,valor_parcela,comissao_corretora,valor_pago_ao_cliente,status,comprador_nome,comprador_cpf,sinal_comprovante_path,vendedor_id,vendedor_pct,reservado_em,partner:stock_partners(id,nome,logo_path),admin:stock_admins(id,nome,logo_path)")
+          .eq("status", "disponivel");
+        if (error) throw error;
+        latest = (data || []) as any;
+      }
+      const selected = latest.filter((row) => ids.includes(row.id) && row.status === "disponivel");
+      if (selected.length !== ids.length || !selected.every((row) => matchesRule(row, getRuleFromRow(selected[0])))) {
+        showToast("Uma ou mais cotas mudaram de disponibilidade. Atualize o MAX e refaça a análise.");
+        return;
+      }
+      setCotas(latest);
+      setSourceMode(targetSource);
+      setSelectedIds(ids);
+      setAnchorRule(getRuleFromRow(selected[0]));
+      setOpenSum(true);
+    } catch (error: any) {
+      notifyError("Não foi possível validar a composição", error);
+    }
+  }
+
   return (
     <div className={"relative mx-auto w-full max-w-[1700px] space-y-4 p-3 sm:p-5 " + (selectedIds.length ? "pb-56 sm:pb-40" : "")}>
       <MaxContempladas
-        key={sourceMode}
         openSignal={maxOpenSignal}
         suspended={openCard || openProposta || openSum || openCreate || openReserve.open || openVendorReserve.open || openManage.open}
         cotas={maxRows}
         sourceMode={sourceMode}
-        onOpenCombination={(ids) => {
-          const selected = maxRows.filter((c) => ids.includes(c.id) && c.status === "disponivel");
-          if (selected.length !== ids.length || !selected.every((c) => matchesRule(c, getRuleFromRow(selected[0])))) {
-            showToast("Essa composição não está mais disponível. Atualize o estoque e tente novamente.");
-            return;
-          }
-          setSelectedIds(ids);
-          setAnchorRule(getRuleFromRow(selected[0]));
-          setOpenSum(true);
-        }}
+        commissionPct={commissionPct}
+        onOpenCombination={(ids) => { void openMaxComposition(ids); }}
       />
       {toast ? <div className="fixed top-4 right-4 z-50 rounded-lg border bg-background/95 px-4 py-2 text-sm shadow-md">{toast}</div> : null}
 

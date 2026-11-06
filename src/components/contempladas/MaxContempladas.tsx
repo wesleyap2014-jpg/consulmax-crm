@@ -371,7 +371,7 @@ export default function MaxContempladas({ cotas, sourceMode, onOpenCombination, 
         <section role="dialog" aria-label="MAX — busca de contempladas" className="pointer-events-auto absolute bottom-[86px] right-3 flex h-[min(590px,calc(100dvh-115px))] w-[min(940px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:right-5">
           <header className="flex shrink-0 items-center justify-between gap-3 px-4 py-3 text-white" style={{ background: "linear-gradient(108deg,#1E293F,#A11C27)" }}>
             <div className="flex items-center gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white"><MaxDog size={39}/></span>
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#E0CE8C] bg-[#1E293F]"><MaxDog size={44}/></span>
               <div><p className="text-base font-extrabold tracking-wide">MAX</p><p className="text-[11px] text-white/85">Seu parceiro na busca por contempladas</p></div>
             </div>
             <div className="flex items-center gap-2">
@@ -421,7 +421,7 @@ export default function MaxContempladas({ cotas, sourceMode, onOpenCombination, 
               <div ref={scrollArea} className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-white p-4" aria-live="polite">
                 {messages.map((message) => (
                   <div key={message.id} className={"flex gap-2 " + (message.speaker === "user" ? "justify-end" : "justify-start")}>
-                    {message.speaker === "bot" ? <span className="mt-1 h-7 w-7 shrink-0 rounded-full border border-slate-200 bg-white"><MaxDog size={26}/></span> : null}
+                    {message.speaker === "bot" ? <span className="mt-1 h-8 w-8 shrink-0 overflow-hidden rounded-full border border-[#B5A573] bg-[#1E293F]"><MaxDog size={30}/></span> : null}
                     <div className={message.alternatives ? "w-full min-w-0" : "max-w-[85%]"}>
                       <div className={"w-fit max-w-full rounded-2xl px-3 py-2 text-sm leading-relaxed " + (message.speaker === "user" ? "ml-auto rounded-br-md bg-[#A11C27] text-white" : "rounded-bl-md bg-slate-100 text-slate-700")}>{message.text}</div>
                       {message.alternatives && message.alternatives.length ? (

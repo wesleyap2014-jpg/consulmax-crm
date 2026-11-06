@@ -163,7 +163,7 @@ export default function MaxContempladas({
     setNotice("Histórico retomado. Valores e disponibilidade serão consultados novamente ao refinar ou selecionar uma carta.");
     setViewHistory(false);
   }
-  async function sendMessage(message: string) {
+  async function sendMessage(message: string, startNew = false) {
     const text = message.trim();
     if (!text || requestLock.current) return;
     requestLock.current = true;
@@ -171,7 +171,7 @@ export default function MaxContempladas({
     const pending: ChatMessage = { id: crypto.randomUUID(), role: "user", text, at: new Date().toISOString() };
     setMessages((old) => [...old, pending]);
     try {
-      const result = await api({ action: "chat", message: text, sourceMode: source, negotiationId: negotiationId || undefined });
+      const result = await api({ action: "chat", message: text, sourceMode: startNew ? "ambos" : source, negotiationId: startNew ? undefined : (negotiationId || undefined) });
       setNegotiationId(result.negotiationId);
       setCriteria(result.criteria || {});
       setMessages((old) => [...old, result.message as ChatMessage]);
@@ -263,7 +263,7 @@ export default function MaxContempladas({
                   {legacy.slice(0, 12).map((search) => (
                     <button key={search.id} type="button" onClick={() => {
                       newNegotiation();
-                      void sendMessage("Procure cartas de " + search.segmento + " com crédito próximo de " + maxMoney(search.credito_solicitado) + " no estoque atual.");
+                      void sendMessage("Procure cartas de " + search.segmento + " com crédito próximo de " + maxMoney(search.credito_solicitado) + " no estoque atual.", true);
                     }} className="w-full rounded-lg p-2 text-left text-xs text-slate-600 hover:bg-white">
                       {search.segmento} · {maxMoney(search.credito_solicitado)}
                     </button>

@@ -1669,35 +1669,110 @@ function LeadAndGroupBlock({
 }
 
 function TablePersonalityCard({ tabela, adminRules }: { tabela: SimTable; adminRules: any }) {
-  return (
-    <div className="rounded-3xl border bg-slate-50/80 p-4 text-sm text-slate-600">
-      <div className="mb-3 flex items-center gap-2 font-black" style={{ color: C.navy }}>
-        <Settings className="h-4 w-4" /> Personalidade da tabela selecionada
-      </div>
-      <div className="grid gap-2 md:grid-cols-2">
-        <div>Taxa Adm: <strong>{pctHuman(tabela.taxa_adm_pct)}</strong></div>
-        <div>Fundo Reserva: <strong>{pctHuman(tabela.fundo_reserva_pct)}</strong></div>
-        <div>Antecipação: <strong>{pctHuman(tabela.antecip_pct)}</strong> • {tabela.antecip_parcelas}x</div>
-        <div>Limitador: <strong>{pctHuman(tabela.limitador_parcela_pct)}</strong></div>
-        <div>Seguro: <strong>{pctHuman(tabela.seguro_prest_pct)}</strong></div>
-        <div>Índice: <strong>{(tabela.indice_correcao || []).join(", ") || "—"}</strong></div>
-        <div>Reajusta a cada: <strong>{tabela.reajusta_cada_meses ? String(tabela.reajusta_cada_meses) + " meses" : "Não configurado"}</strong></div>
-        <div>Base ofertado: <strong>{adminRules?.lance_ofert_base === "valor_categoria" ? "Crédito + taxas" : "Crédito"}</strong></div>
-        <div>Base embutido: <strong>{adminRules?.lance_embut_base === "valor_categoria" ? "Crédito + taxas" : "Crédito"}</strong></div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2 text-xs">
-        {tabela.contrata_parcela_cheia && <span className="rounded-full bg-white px-3 py-1">Parcela Cheia</span>}
-        {tabela.contrata_reduzida_25 && <span className="rounded-full bg-white px-3 py-1">Reduzida 25%</span>}
-        {tabela.contrata_reduzida_50 && <span className="rounded-full bg-white px-3 py-1">Reduzida 50%</span>}
-        {tabela.permite_sorteio !== false && <span className="rounded-full bg-white px-3 py-1">Sorteio</span>}
-        {tabela.permite_lance_embutido && <span className="rounded-full bg-white px-3 py-1">Embutido (25%)</span>}
-        {tabela.permite_troca_chaves && <span className="rounded-full bg-white px-3 py-1">Troca de Chaves</span>}
-        {tabela.permite_fgts && <span className="rounded-full bg-white px-3 py-1">FGTS</span>}
-        {tabela.permite_lance_livre && <span className="rounded-full bg-white px-3 py-1">Livre</span>}
-        {tabela.permite_lance_fixo_25 && <span className="rounded-full bg-white px-3 py-1">Fixo 25%</span>}
-        {tabela.permite_lance_fixo_50 && <span className="rounded-full bg-white px-3 py-1">Fixo 50%</span>}
-      </div>
+  const embutidoMaxPct = Math.min(Math.max(Number(adminRules?.embut_cap_adm_pct ?? 0.25), 0), 0.25);
+  const chip = (label: string, enabled: boolean) => enabled ? (
+    <div key={label} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-[#1E293F]">
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+      <span>{label}</span>
     </div>
+  ) : null;
+  const labelResumo = (valor: string, detalhe: string) => (
+    <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 py-1.5 last:border-b-0">
+      <span className="text-xs text-slate-500">{valor}</span>
+      <strong className="text-right text-xs font-bold text-[#1E293F]">{detalhe}</strong>
+    </div>
+  );
+  const temLances = !!(tabela.permite_lance_livre || tabela.permite_lance_fixo_50 || tabela.permite_lance_fixo_25);
+  const temPagamento = !!(tabela.permite_lance_embutido || tabela.permite_troca_chaves || tabela.permite_fgts);
+  const temParcelas = !!(tabela.contrata_parcela_cheia || tabela.contrata_reduzida_25 || tabela.contrata_reduzida_50);
+  const baseCalculo = adminRules?.lance_ofert_base === "valor_categoria" ? "Crédito + taxas" : "Crédito";
+  const baseEmbutido = adminRules?.lance_embut_base === "valor_categoria" ? "Crédito + taxas" : "Crédito";
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white shadow-sm" aria-label="Personalidade da tabela selecionada">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#1E293F]/10 text-[#1E293F]">
+            <Settings className="h-4 w-4" />
+          </span>
+          <div>
+            <h3 className="text-sm font-extrabold text-[#1E293F]">Personalidade da tabela selecionada</h3>
+            <p className="text-[11px] text-slate-500">Condições específicas da faixa de {tabela.prazo_limite} meses</p>
+          </div>
+        </div>
+        <span className="rounded-full border border-[#B5A573]/40 bg-[#B5A573]/10 px-3 py-1 text-[11px] font-bold text-[#1E293F]">
+          {tabela.nome_tabela}
+        </span>
+      </div>
+
+      <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mb-2 flex items-center gap-2 border-b border-slate-100 pb-2 text-[#A11C27]">
+            <Banknote className="h-4 w-4 shrink-0" />
+            <h4 className="text-[11px] font-black uppercase tracking-wide">Taxas</h4>
+          </div>
+          {labelResumo("Taxa Adm.", pctHuman(tabela.taxa_adm_pct))}
+          {labelResumo("Fundo Reserva", pctHuman(tabela.fundo_reserva_pct))}
+          {labelResumo("Antecipação", pctHuman(tabela.antecip_pct) + " em " + (tabela.antecip_parcelas || 0) + "x")}
+          {labelResumo("Seguro", pctHuman(tabela.seguro_prest_pct))}
+        </div>
+
+        <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mb-2 flex items-center gap-2 border-b border-slate-100 pb-2 text-[#A11C27]">
+            <ShieldCheck className="h-4 w-4 shrink-0" />
+            <h4 className="text-[11px] font-black uppercase tracking-wide">Lances permitidos</h4>
+          </div>
+          <div className="space-y-1.5">
+            {chip("Lance Livre", tabela.permite_lance_livre)}
+            {chip("Lance Fixo 50%", tabela.permite_lance_fixo_50)}
+            {chip("Lance Fixo 25%", tabela.permite_lance_fixo_25)}
+            {!temLances && <p className="text-xs text-slate-500">Nenhum lance habilitado.</p>}
+            {tabela.permite_sorteio !== false && (
+              <div className="mt-2 border-t border-slate-100 pt-2 text-[11px] font-semibold text-slate-600">
+                <span aria-hidden="true" className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-[#B5A573]" />
+                Sorteio disponível
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mb-2 flex items-center gap-2 border-b border-slate-100 pb-2 text-[#A11C27]">
+            <TrendingUp className="h-4 w-4 shrink-0" />
+            <h4 className="text-[11px] font-black uppercase tracking-wide">Pgto. do lance</h4>
+          </div>
+          <div className="space-y-1.5">
+            {chip("Lance Embutido até " + pctHuman(embutidoMaxPct), tabela.permite_lance_embutido)}
+            {chip("Troca de Chaves", !!tabela.permite_troca_chaves)}
+            {chip("FGTS", !!tabela.permite_fgts)}
+            {!temPagamento && <p className="text-xs text-slate-500">Nenhuma opção habilitada.</p>}
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mb-2 flex items-center gap-2 border-b border-slate-100 pb-2 text-[#A11C27]">
+            <FileText className="h-4 w-4 shrink-0" />
+            <h4 className="text-[11px] font-black uppercase tracking-wide">Parcelas</h4>
+          </div>
+          <div className="space-y-1.5">
+            {chip("Parcela Cheia", tabela.contrata_parcela_cheia)}
+            {chip("Reduzida 25%", tabela.contrata_reduzida_25)}
+            {chip("Reduzida 50%", tabela.contrata_reduzida_50)}
+            {!temParcelas && <p className="text-xs text-slate-500">Nenhuma modalidade habilitada.</p>}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200 bg-[#1E293F]/[0.04] px-4 py-3 text-xs text-slate-600">
+        <span><strong className="text-[#1E293F]">Base de cálculo:</strong> {baseCalculo}</span>
+        {tabela.permite_lance_embutido && baseEmbutido !== baseCalculo && (
+          <span><strong className="text-[#1E293F]">Base do embutido:</strong> {baseEmbutido}</span>
+        )}
+        <span><strong className="text-[#1E293F]">Correção:</strong> {(tabela.indice_correcao || []).join(", ") || "Não configurado"}</span>
+        <span><strong className="text-[#1E293F]">Limitador de parcela:</strong> {pctHuman(tabela.limitador_parcela_pct)}</span>
+        <span><strong className="text-[#1E293F]">Reajusta a cada:</strong> {tabela.reajusta_cada_meses ? tabela.reajusta_cada_meses + " meses" : "Não configurado"}</span>
+      </div>
+    </section>
   );
 }
 

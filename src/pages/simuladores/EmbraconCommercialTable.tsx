@@ -42,8 +42,8 @@ export default function EmbraconCommercialTable({
   rules: Rules;
   onClose: () => void;
 }) {
-  const [comSeguro, setComSeguro] = useState(true);
-  const prazos = useMemo(() => [...variantes].sort((a, b) => a.prazo_limite - b.prazo_limite), [variantes]);
+  const [comSeguro, setComSeguro] = useState(false);
+  const prazos = useMemo(() => [...variantes].sort((a, b) => b.prazo_limite - a.prazo_limite), [variantes]);
   const creditos = useMemo(
     () => Array.from(new Set(prazos.flatMap((t) => (t.faixas_credito || []).map(Number))))
       .filter((c) => Number.isFinite(c) && c > 0).sort((a, b) => a - b),

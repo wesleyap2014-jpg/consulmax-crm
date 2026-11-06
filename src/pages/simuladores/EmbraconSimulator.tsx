@@ -713,6 +713,8 @@ export default function EmbraconPage() {
   const [lanceTipo, setLanceTipo] = useState<LanceTipo>("livre");
   const [lanceOfertPct, setLanceOfertPct] = useState(0);
   const [embutidoAtivo, setEmbutidoAtivo] = useState(false);
+  const [modoEmbutido, setModoEmbutido] = useState<"percentual" | "valor">("percentual");
+  const [percentualEmbutido, setPercentualEmbutido] = useState(0);
   const [valorEmbutido, setValorEmbutido] = useState(0);
   const [trocaChaves, setTrocaChaves] = useState(false);
   const [valorAvaliacaoVeiculo, setValorAvaliacaoVeiculo] = useState(0);
@@ -795,7 +797,7 @@ export default function EmbraconPage() {
     [adminTables, segmento]
   );
   const variantesDaTabela = useMemo(
-    () => adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela).sort((a, b) => a.prazo_limite - b.prazo_limite),
+    () => adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela).sort((a, b) => b.prazo_limite - a.prazo_limite),
     [adminTables, segmento, nomeTabela]
   );
   const tabelaSelecionada = useMemo(() => tables.find((t) => t.id === tabelaId) || null, [tables, tabelaId]);
@@ -827,6 +829,10 @@ export default function EmbraconPage() {
 
   // Os valores monetários são verificados antes do cálculo e nunca reduzidos em silêncio.
   const limiteEmbutidoValor = credito > 0 ? credito * embutCapPct : 0;
+  // O modo em % acompanha automaticamente o crédito digitado; o modo em R$ mantém o valor fixo.
+  const valorEmbutidoEfetivo = modoEmbutido === "percentual"
+    ? Math.round(Math.max(0, credito) * percentualEmbutido * 100) / 100
+    : valorEmbutido;
 
   useEffect(() => {
     if (!tabelaSelecionada) return;
@@ -839,6 +845,7 @@ export default function EmbraconPage() {
     if ((!tabelaSelecionada.permite_lance_embutido || trocaChaves || lanceTipo === "sorteio") && embutidoAtivo) {
       setEmbutidoAtivo(false);
       setValorEmbutido(0);
+      setPercentualEmbutido(0);
     }
     if ((!tabelaSelecionada.permite_troca_chaves || lanceTipo === "sorteio") && trocaChaves) {
       setTrocaChaves(false);
@@ -855,6 +862,7 @@ export default function EmbraconPage() {
       setLanceOfertPct(0);
       setEmbutidoAtivo(false);
       setValorEmbutido(0);
+      setPercentualEmbutido(0);
     } else if (lanceTipo === "fixo_50" || lanceTipo === "fixo_25") {
       setLanceOfertPct(lancePctFromTipo(lanceTipo));
     }
@@ -876,8 +884,9 @@ export default function EmbraconPage() {
   const fgtsDisponivel = !!tabelaSelecionada?.permite_fgts && lanceTipo !== "sorteio";
   const embutidoDisponivel = permiteEmbutido && lanceTipo !== "sorteio";
   const valorEmbutidoValido = !embutidoAtivo || (
-    embutidoDisponivel && !trocaChaves && Number.isFinite(valorEmbutido)
-    && valorEmbutido > 0 && valorEmbutido <= limiteEmbutidoValor + 0.005
+    embutidoDisponivel && !trocaChaves && Number.isFinite(valorEmbutidoEfetivo)
+    && valorEmbutidoEfetivo > 0 && valorEmbutidoEfetivo <= limiteEmbutidoValor + 0.005
+    && (modoEmbutido !== "percentual" || percentualEmbutido <= embutCapPct + 0.00000001)
   );
   const valorTrocaValido = !trocaChaves || (
     trocaChavesDisponivel && !embutidoAtivo && !fgtsAtivo
@@ -887,7 +896,7 @@ export default function EmbraconPage() {
   const valorFgtsValido = !fgtsAtivo || (
     fgtsDisponivel && !trocaChaves && Number.isFinite(valorFgts) && valorFgts > 0
   );
-  const recursoEmbutido = embutidoAtivo ? valorEmbutido : 0;
+  const recursoEmbutido = embutidoAtivo ? valorEmbutidoEfetivo : 0;
   const recursoTroca = trocaChaves ? valorAvaliacaoVeiculo : 0;
   const recursoFGTS = fgtsAtivo ? valorFgts : 0;
   const recursosTotais = recursoEmbutido + recursoTroca + recursoFGTS;
@@ -901,8 +910,9 @@ export default function EmbraconPage() {
     || valorAvaliacaoVeiculo <= 0 || valorAvaliacaoVeiculo > limiteTrocaChaves)
     ? "A avaliação deve ser maior que zero e de até " + brMoney(limiteTrocaChaves) + " (50% do crédito)."
     : null;
-  const avisoEmbutido = embutidoAtivo && (!Number.isFinite(valorEmbutido)
-    || valorEmbutido <= 0 || valorEmbutido > limiteEmbutidoValor)
+  const avisoEmbutido = embutidoAtivo && (!Number.isFinite(valorEmbutidoEfetivo)
+    || valorEmbutidoEfetivo <= 0 || valorEmbutidoEfetivo > limiteEmbutidoValor
+    || (modoEmbutido === "percentual" && percentualEmbutido > embutCapPct))
     ? "Informe um lance embutido de até " + brMoney(limiteEmbutidoValor) + "." : null;
   const avisoFgts = fgtsAtivo && (!Number.isFinite(valorFgts) || valorFgts <= 0)
     ? "Informe um valor válido de FGTS para compor o lance." : null;
@@ -934,7 +944,9 @@ export default function EmbraconPage() {
     lanceTipo,
     lanceOfertPct,
     embutidoAtivo,
-    valorEmbutido,
+    modoEmbutido,
+    percentualEmbutido,
+    valorEmbutido: valorEmbutidoEfetivo,
     trocaChaves,
     valorAvaliacaoVeiculo,
     fgtsAtivo,
@@ -982,7 +994,7 @@ export default function EmbraconPage() {
         lanceEmbutPct: 0,
         lanceEmbutParcelas: 0,
         embutidoAtivo,
-        lanceEmbutidoValorInformado: embutidoAtivo ? valorEmbutido : 0,
+        lanceEmbutidoValorInformado: embutidoAtivo ? valorEmbutidoEfetivo : 0,
         trocaChavesAtivo: trocaChaves,
         valorAvaliacaoVeiculo: trocaChaves ? valorAvaliacaoVeiculo : 0,
         fgtsAtivo,
@@ -1496,6 +1508,8 @@ ${wa}`;
                                 const selecionado = e.target.checked;
                                 setEmbutidoAtivo(selecionado);
                                 setValorEmbutido(0);
+                                setPercentualEmbutido(0);
+                                setModoEmbutido("percentual");
                                 if (selecionado) {
                                   setTrocaChaves(false);
                                   setValorAvaliacaoVeiculo(0);
@@ -1528,6 +1542,7 @@ ${wa}`;
                                   setValorFgts(0);
                                   setEmbutidoAtivo(false);
                                   setValorEmbutido(0);
+                                  setPercentualEmbutido(0);
                                 }
                               }}
                             />
@@ -1566,21 +1581,67 @@ ${wa}`;
                         )}
                       </div>
                       {embutidoAtivo && (
-                        <div className="mt-3 rounded-xl border border-[#B5A573]/35 bg-white p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <Label className="font-semibold text-[#1E293F]">Valor do lance embutido</Label>
-                            <span className="text-xs font-medium text-slate-500">Máximo: {brMoney(limiteEmbutidoValor)}</span>
+                        <div className="mt-3 rounded-xl border border-[#B5A573]/35 bg-white p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <Label className="font-semibold text-[#1E293F]">Lance embutido</Label>
+                            <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Formato do lance embutido">
+                              <button
+                                type="button"
+                                aria-pressed={modoEmbutido === "percentual"}
+                                className={"rounded-lg px-3 py-1.5 text-xs font-bold transition " +
+                                  (modoEmbutido === "percentual" ? "bg-[#A11C27] text-white shadow-sm" : "text-slate-600 hover:bg-white")}
+                                onClick={() => {
+                                  if (modoEmbutido === "percentual") return;
+                                  const proporcao = credito > 0 ? valorEmbutido / credito : 0;
+                                  setPercentualEmbutido(Math.round(proporcao * 1000000) / 1000000);
+                                  setModoEmbutido("percentual");
+                                }}
+                              >%</button>
+                              <button
+                                type="button"
+                                aria-pressed={modoEmbutido === "valor"}
+                                className={"rounded-lg px-3 py-1.5 text-xs font-bold transition " +
+                                  (modoEmbutido === "valor" ? "bg-[#A11C27] text-white shadow-sm" : "text-slate-600 hover:bg-white")}
+                                onClick={() => {
+                                  if (modoEmbutido === "valor") return;
+                                  setValorEmbutido(valorEmbutidoEfetivo);
+                                  setModoEmbutido("valor");
+                                }}
+                              >R$</button>
+                            </div>
                           </div>
-                          <MoneyInput
-                            value={valorEmbutido}
-                            onChange={setValorEmbutido}
-                            className="mt-2 h-11 rounded-xl"
-                            aria-label="Valor do lance embutido em reais"
-                          />
+                          <div className="mt-3 max-w-md">
+                            {modoEmbutido === "percentual" ? (
+                              <div>
+                                <Label>Lance embutido (%)</Label>
+                                <div className="mt-1">
+                                  <PercentInput
+                                    valueDecimal={percentualEmbutido}
+                                    onChangeDecimal={setPercentualEmbutido}
+                                    maxDecimal={embutCapPct}
+                                    maxFractionDigits={4}
+                                  />
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <Label>Valor do lance embutido (R$)</Label>
+                                <MoneyInput
+                                  value={valorEmbutido}
+                                  onChange={setValorEmbutido}
+                                  className="mt-1 h-11 rounded-xl"
+                                  aria-label="Valor do lance embutido em reais"
+                                />
+                              </div>
+                            )}
+                          </div>
                           <p className="mt-2 text-xs text-slate-500">
-                            Equivalente a {credito > 0
-                              ? (100 * valorEmbutido / credito).toFixed(4).replace(".", ",") + "%"
-                              : "0,0000%"} do crédito contratado.
+                            {modoEmbutido === "percentual"
+                              ? "Valor correspondente: " + brMoney(valorEmbutidoEfetivo)
+                              : "Percentual equivalente: " + (credito > 0
+                                  ? (100 * valorEmbutidoEfetivo / credito).toFixed(4).replace(".", ",") + "%"
+                                  : "—")}
+                            {" · "}Limite: {pctHuman(embutCapPct)} ({brMoney(limiteEmbutidoValor)}).
                           </p>
                           {avisoEmbutido && <p role="alert" className="mt-2 text-xs font-semibold text-[#A11C27]">{avisoEmbutido}</p>}
                         </div>

@@ -1535,12 +1535,12 @@ export default function EstoqueContempladas() {
             <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-white/15 pt-3">
               <div className="flex min-w-[150px] items-center gap-2 text-xs">
                 <span className="font-medium text-white/70">Origem</span>
-                <Select value={sourceMode} onValueChange={(value: SourceMode) => {
+                <Select value={sourceMode} onValueChange={(value) => {
                   setSelectedIds([]);
                   setAnchorRule(null);
                   setCotas([]);
                   setAdminFilter("all");
-                  setSourceMode(value);
+                  setSourceMode(value as SourceMode);
                 }}>
                   <SelectTrigger aria-label="Origem do estoque" className="h-9 min-w-[132px] rounded-lg border-white/25 bg-white/10 text-xs font-semibold text-white focus:ring-[#E0CE8C]">
                     <SelectValue/>

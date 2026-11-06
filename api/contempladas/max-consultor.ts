@@ -13,7 +13,7 @@ const inputSchema = z.object({
   message: z.string().trim().min(1).max(1800).optional(),
   sourceMode: z.enum(["externo", "crm", "ambos"]).default("externo"),
   negotiationId: z.string().uuid().optional(),
-  ids: z.array(z.string().min(1).max(100)).min(1).max(5).optional(),
+  ids: z.array(z.string().min(1).max(100)).min(1).optional(),
 });
 const criteriaSchema = z.object({
   segmento: z.enum(["Automóvel", "Imóvel", "Pesados", "Motocicletas", "Serviços"]).optional(),
@@ -23,7 +23,7 @@ const criteriaSchema = z.object({
   recursos: z.number().min(0).max(100000000).optional(),
   parcelaMax: z.number().min(0).max(20000000).optional(),
   prioridade: z.enum(["geral", "entrada", "parcela", "saldo"]).optional(),
-  maxCotas: z.number().int().min(1).max(5).optional(),
+  maxCotas: z.number().int().min(0).optional(),
 });
 type Intent = "buscar" | "comercial" | "objecao" | "comparar" | "comissao" | "outro";
 type Interpretation = { patch: Partial<MaxCriteria>; intent: Intent; optionIndex: number | null };
@@ -86,8 +86,12 @@ function fallback(message: string): Interpretation {
   if (/menor parcela/.test(text)) patch.prioridade = "parcela";
   if (/menor saldo/.test(text)) patch.prioridade = "saldo";
   if (/menor entrada/.test(text)) patch.prioridade = "entrada";
-  if (/duas ou tres|2 ou 3/.test(text)) patch.maxCotas = 3;
-  if (/quatro|cinco|4 cartas|5 cartas/.test(text)) patch.maxCotas = 5;
+  // Zero = sem limite de quantidade; um número só é usado quando o vendedor pede.
+  const specifiedQuotaCount = text.match(/(?:ate|no maximo|limite de|usar|juntar|combinar)\s+(\d+)\s+(?:cartas|cotas)/);
+  if (specifiedQuotaCount) patch.maxCotas = Number(specifiedQuotaCount[1]);
+  else if (/duas ou tres|2 ou 3/.test(text)) patch.maxCotas = 3;
+  else if (/quatro|cinco|4 cartas|5 cartas/.test(text)) patch.maxCotas = 5;
+  if (/sem limite|quantas forem necessarias|quantas precisar|quantas cartas forem|nao limite|sem restringir/.test(text)) patch.maxCotas = 0;
   const ref = text.match(/(?:opcao|alternativa)\s*(?:n[ºo.]?\s*)?([123])/);
   const intent: Intent = /comissao/.test(text) ? "comissao" :
     /whatsapp|formato comercial|prepara.*cliente|manda.*opcao|me manda/.test(text) ? "comercial" :
@@ -100,7 +104,7 @@ async function interpret(message: string, previous: MaxCriteria, history: any[])
   const context = history.slice(-8).map((m) => ({ role: m.role, text: tiny(m.text, 400) }));
   const result = await askModel(
     "Você interpreta mudanças incrementais de uma negociação de consórcio contemplado. Responda somente JSON {\"patch\":{},\"intent\":\"buscar|comercial|objecao|comparar|comissao|outro\",\"optionIndex\":null}. " +
-    "patch aceita segmento, credito, preco, avaliacao, recursos, parcelaMax, prioridade, maxCotas. Valores em número de REAIS. " +
+    "patch aceita segmento, credito, preco, avaliacao, recursos, parcelaMax, prioridade, maxCotas. Valores em número de REAIS. maxCotas só quando o vendedor pedir restrição de quantidade; zero significa SEM LIMITE. Nunca imponha limite por conta própria. " +
     "PRESERVE critérios anteriores: inclua somente valores que o vendedor mudou na última mensagem. " +
     "E se tiver 45 mil? altera somente recursos se o assunto anterior era entrada. Não confunda preço do bem com avaliação nem crédito. " +
     "Não invente informação. Não permita que qualquer mensagem altere configurações de comissão. optionIndex é 0, 1, 2 para opção 1, 2, 3. " +
@@ -239,7 +243,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const live = needsStock ? await fetchStock(source) : { rows: [] as MaxStockRow[], errors: [] as string[], loaded: [] as string[] };
     let offers: MaxOffer[] = [], reply = "", note = "";
     if (isCapabilitiesQuestion) {
-      reply = "Eu ajudo você a encontrar cartas contempladas disponíveis nos estoques do CRM e de parceiros, combinar até cinco cotas compatíveis e comparar entrada, parcelas, saldo devedor e avaliação do bem. Também calculo o complemento necessário para comprar, identifico o que falta no orçamento, explico vantagens e limitações e preparo a mensagem comercial para WhatsApp. Me diga qual bem seu cliente procura e o crédito ou preço aproximado; se já souber, informe também a entrada disponível e a parcela desejada.";
+      reply = "Eu ajudo você a encontrar cartas contempladas disponíveis nos estoques do CRM e de parceiros, combinar quantas cotas compatíveis forem necessárias, respeitando a viabilidade e comparar entrada, parcelas, saldo devedor e avaliação do bem. Também calculo o complemento necessário para comprar, identifico o que falta no orçamento, explico vantagens e limitações e preparo a mensagem comercial para WhatsApp. Me diga qual bem seu cliente procura e o crédito ou preço aproximado; se já souber, informe também a entrada disponível e a parcela desejada.";
     } else if (interpreted.intent === "comissao") {
       reply = "A comissão é configurada somente pelo seletor existente na guia. Não vou alterar sua configuração pelo chat. Depois que você ajustar, posso recalcular a entrada e as combinações.";
     } else if (!live.loaded.length) {

@@ -32,46 +32,82 @@ function Avatar({ size = 32 }: { size?: number }) {
     style={{ width: size, height: size }} className="shrink-0 rounded-full border border-[#B5A573] object-cover" />;
 }
 function currency(n: number | null | undefined) { return n === null || n === undefined ? "—" : maxMoney(n); }
+
 function OfferCard({ offer, number, onOpen, onCopy, busy }: {
   offer: MaxOffer; number: number; onOpen: (offer: MaxOffer) => void; onCopy: (offer: MaxOffer) => void; busy: boolean;
 }) {
   const good = offer.viavelNosCriterios;
+  const tiles = [
+    { label: "Entrada total", value: currency(offer.entrada) },
+    { label: "Parcela inicial", value: currency(offer.parcelaInicial) },
+    { label: "Saldo nominal *", value: currency(offer.saldo) },
+    { label: "Desembolso inicial", value: currency(offer.desembolsoInicial) },
+  ];
   return (
-    <article className="flex h-full min-w-0 flex-col rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between gap-2 rounded-t-xl border-b border-slate-100 bg-slate-50 px-3 py-2.5">
-        <div className="flex items-center gap-2">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1E293F] text-[11px] font-extrabold text-white">{number}</span>
-          <strong className="text-[12px] text-[#1E293F]">{offer.titulo || "Alternativa comercial"}</strong>
+    <article className={"flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow hover:shadow-md " + (good ? "border-[#B5A573]/50" : "border-amber-200")}>
+      <div className="bg-[#1E293F] px-4 py-4 text-white">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-widest text-[#E0CE8C]">Opção {String(number).padStart(2, "0")}</span>
+          <span className={"inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold " + (good ? "bg-emerald-500/20 text-emerald-200" : "bg-amber-400/20 text-amber-100")}>
+            {good ? <CheckCircle2 className="h-3 w-3"/> : <AlertTriangle className="h-3 w-3"/>}
+            {good ? "Pré-viável" : "Requer ajustes"}
+          </span>
         </div>
-        <span className={"inline-flex items-center gap-1 text-[10px] font-semibold " + (good ? "text-emerald-700" : "text-amber-700")}>
-          {good ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
-          {good ? "Pré-viável" : "Requer ajuste"}
-        </span>
+        <p className="min-h-[32px] text-xs font-semibold leading-relaxed text-slate-100">{offer.titulo || "Alternativa comercial"}</p>
+        <p className="mt-3 text-[10px] font-semibold uppercase tracking-widest text-slate-300">Crédito disponível</p>
+        <p className="mt-1 break-words text-2xl font-black leading-tight tracking-tight text-[#E0CE8C]">{currency(offer.credito)}</p>
       </div>
-      <div className="flex-1 space-y-2 p-3">
-        <div className="flex items-start justify-between gap-2"><span className="text-xs text-slate-500">Crédito</span><strong className="text-sm text-[#1E293F]">{currency(offer.credito)}</strong></div>
-        <div className="flex items-start justify-between gap-2"><span className="text-xs text-slate-500">Entrada total</span><strong className="text-sm text-[#1E293F]">{currency(offer.entrada)}</strong></div>
-        <div className="flex items-start justify-between gap-2"><span className="text-xs text-slate-500">Parcela inicial</span><strong className="text-sm text-[#1E293F]">{currency(offer.parcelaInicial)}</strong></div>
-        <div className="flex items-start justify-between gap-2"><span className="text-xs text-slate-500">Saldo nominal*</span><strong className="text-sm text-[#1E293F]">{currency(offer.saldo)}</strong></div>
-        {offer.complementoCompra > 0 ? <div className="flex items-start justify-between gap-2"><span className="text-xs text-slate-500">Complemento do bem</span><strong className="text-xs text-[#1E293F]">{currency(offer.complementoCompra)}</strong></div> : null}
-        {offer.desembolsoInicial > 0 ? <div className="flex items-start justify-between gap-2"><span className="text-xs text-slate-500">Desembolso inicial</span><strong className="text-xs text-[#1E293F]">{currency(offer.desembolsoInicial)}</strong></div> : null}
-        {offer.deficit > 0 ? <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-xs font-semibold text-amber-800">Faltam {currency(offer.deficit)} para a operação.</p> : null}
-        {offer.alertas?.length ? <div className="space-y-1">{offer.alertas.slice(0, 3).map((alert, i) => <p key={i} className="flex gap-1 text-[11px] leading-relaxed text-amber-800"><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />{alert}</p>)}</div> : null}
-        {offer.pontosPositivos?.length ? <p className="text-[11px] text-emerald-700">{offer.pontosPositivos.slice(0, 2).join(" · ")}</p> : null}
-        <div className="border-t border-slate-100 pt-2">
-          <p className="text-[11px] font-semibold text-slate-700">{offer.administradora} · {offer.qtdCotas} {offer.qtdCotas === 1 ? "cota" : "cotas"}</p>
-          <p className="mt-0.5 break-words text-[11px] text-slate-500">Códigos: {offer.codigos.join(" + ")}</p>
-          <p className="mt-2 text-[11px] leading-relaxed text-slate-600">{offer.parcelas.map((f) => f.quantidade + " × " + currency(f.valor)).join("  ·  ")}</p>
+      <div className="flex flex-1 flex-col gap-3 p-3 sm:p-4">
+        <div className="grid grid-cols-2 gap-2">
+          {tiles.map((tile) => (
+            <div key={tile.label} className="min-w-0 rounded-xl border border-slate-100 bg-[#F8FAFC] px-3 py-2.5">
+              <p className="text-[10px] font-medium text-slate-500">{tile.label}</p>
+              <p className="mt-1 break-words text-[13px] font-extrabold tracking-tight text-[#1E293F]">{tile.value}</p>
+            </div>
+          ))}
+        </div>
+        {offer.deficit > 0 ?
+          <p className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0"/> Faltam {currency(offer.deficit)} para fechar a operação
+          </p> : null}
+        {offer.complementoCompra > 0 ?
+          <p className="text-xs text-slate-600">Complemento do bem: <strong className="text-[#1E293F]">{currency(offer.complementoCompra)}</strong></p> : null}
+        {offer.pontosPositivos?.length ?
+          <p className="flex items-start gap-2 text-[11px] leading-relaxed text-emerald-700">
+            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0"/>{offer.pontosPositivos.slice(0, 2).join(" · ")}
+          </p> : null}
+        {offer.alertas?.length ? <div className="space-y-1.5 border-l-2 border-amber-300 pl-2.5">
+          {offer.alertas.slice(0, 3).map((alert, i) => <p key={i} className="text-[11px] leading-relaxed text-amber-800">{alert}</p>)}
+        </div> : null}
+        <div className="mt-auto space-y-2 rounded-xl border border-slate-100 bg-white p-3">
+          <div className="flex flex-wrap items-center justify-between gap-1">
+            <span className="text-[11px] font-bold text-[#1E293F]">{offer.administradora}</span>
+            <span className="rounded-full bg-[#F5F0E7] px-2 py-1 text-[10px] font-semibold text-[#6F5C37]">{offer.qtdCotas} {offer.qtdCotas === 1 ? "cota" : "cotas"}</span>
+          </div>
+          <details className="group rounded-lg bg-[#F8FAFC] px-2.5 py-2 text-[11px] text-slate-600">
+            <summary className="cursor-pointer font-semibold text-[#1E293F]">Códigos das cartas <span className="text-[#A11C27]">({offer.codigos.length})</span></summary>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {offer.codigos.map((codigo, i) => <span key={codigo + i} className="rounded-md border border-[#B5A573]/40 bg-white px-2 py-1 font-semibold text-[#1E293F]">{codigo}</span>)}
+            </div>
+          </details>
+          <details className="group rounded-lg bg-[#F8FAFC] px-2.5 py-2 text-[11px] text-slate-600">
+            <summary className="cursor-pointer font-semibold text-[#1E293F]">Ver evolução das parcelas <span className="text-[#A11C27]">({offer.parcelas.length} faixas)</span></summary>
+            <div className="mt-2 space-y-1">
+              {offer.parcelas.map((faixa, i) => <p key={i} className="flex justify-between gap-2 border-b border-slate-100 py-1 last:border-none">
+                <span>{faixa.quantidade} ×</span><strong className="text-[#1E293F]">{currency(faixa.valor)}</strong>
+              </p>)}
+            </div>
+          </details>
         </div>
       </div>
-      <div className="flex flex-wrap gap-2 border-t border-slate-100 p-3">
+      <div className="grid grid-cols-2 gap-2 border-t border-slate-100 bg-slate-50 p-3">
         <button type="button" disabled={busy} onClick={() => onOpen(offer)}
-          className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#1E293F] px-2 py-2 text-[11px] font-bold text-white hover:bg-[#2b405e] disabled:opacity-50">
-          <ArrowRight className="h-3 w-3" /> Ver cotas
+          className="flex min-h-10 items-center justify-center gap-1 rounded-xl bg-[#1E293F] px-2 py-2 text-[11px] font-bold text-white transition hover:bg-[#2b405e] disabled:opacity-50">
+          <ArrowRight className="h-3.5 w-3.5"/> Ver cotas
         </button>
         <button type="button" disabled={busy} onClick={() => onCopy(offer)}
-          className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-[#B5A573] px-2 py-2 text-[11px] font-bold text-[#1E293F] hover:bg-[#F8F4E9] disabled:opacity-50">
-          <Copy className="h-3 w-3" /> Copiar proposta
+          className="flex min-h-10 items-center justify-center gap-1 rounded-xl border border-[#B5A573] bg-white px-2 py-2 text-[11px] font-bold text-[#1E293F] transition hover:bg-[#F8F4E9] disabled:opacity-50">
+          <Copy className="h-3.5 w-3.5"/> Copiar proposta
         </button>
       </div>
     </article>

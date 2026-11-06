@@ -1621,8 +1621,15 @@ export default function EstoqueContempladas() {
                         <td className="p-3 text-right">
                           {c.status === "disponivel" ? (
                             <div className="flex items-center justify-end gap-2">
-                              <Button variant="outline" size="icon" onClick={() => copyRowResumo(c)} title="Resumo">
+                              <Button variant="outline" size="icon" onClick={() => copyRowResumo(c)} title="Copiar resumo">
                                 <Copy className="h-4 w-4" />
+                              </Button>
+                              <Button variant="outline" size="icon" onClick={() => {
+                                setSelectedIds([c.id]);
+                                setAnchorRule(getRuleFromRow(c));
+                                setOpenCard(true);
+                              }} title="Gerar anúncio desta cota" aria-label="Gerar anúncio desta cota">
+                                <Palette className="h-4 w-4 text-[#A11C27]" />
                               </Button>
 
                               {isAdmin && !external ? (
@@ -1652,8 +1659,13 @@ export default function EstoqueContempladas() {
               </tbody>
             </table>
           </div>
+          <p className="text-[11px] text-slate-500">* Saldo nominal estimado pela soma das parcelas a vencer, sujeito a reajustes, seguros e demais encargos. A disponibilidade das cotas deve ser confirmada.</p>
         </CardContent>
       </Card>
+
+      <ContempladasDock cotas={selectedRows} onClear={() => { setSelectedIds([]); setAnchorRule(null); }} onResumo={() => setOpenSum(true)} onGerarCard={() => setOpenCard(true)} onProposta={() => setOpenProposta(true)} />
+      <ContempladasCardDialog open={openCard} onOpenChange={setOpenCard} cotas={selectedRows} />
+      <ContempladasPropostaDialog open={openProposta} onOpenChange={setOpenProposta} cotas={selectedRows} />
 
       <Dialog open={openSum} onOpenChange={setOpenSum}>
         <DialogContent className="max-w-3xl w-[calc(100vw-1rem)] sm:w-full max-h-[92vh] overflow-y-auto p-3 sm:p-6">

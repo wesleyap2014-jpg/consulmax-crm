@@ -144,14 +144,14 @@ export function ContempladasCardDialog({ open, onOpenChange, cotas }: {
   const variants = categories(segment);
   const chosenCategory = variants.includes(category) ? category : variants[0];
   const dim = formats[format];
-  const displayWidth = 300;
+  const displayWidth = 265;
   const previewScale = displayWidth / 540;
   const baseHeight = 540 * dim.height / dim.width;
   const isLight = theme === "padrao";
   const bg = theme === "premium" ? "linear-gradient(152deg,#1E293F 0%,#121a2c 68%,#5d1524 100%)" : theme === "promocional" ? "linear-gradient(150deg,#A11C27 0%,#55111c 65%,#1E293F 100%)" : "linear-gradient(152deg,#ffffff 0%,#f5f5f5 70%,#e5e7eb 100%)";
   const textColor = isLight ? "#1E293F" : "#ffffff";
   const goldColor = theme === "premium" ? "#E0CE8C" : theme === "promocional" ? "#ffffff" : "#A11C27";
-  const shareText = "🚘 CARTA CONTEMPLADA | " + chosenCategory + "\n💰 Crédito: " + brl(data.credito) + "\n💵 Entrada: " + brl(data.entrada) + "\n📅 Parcelas:\n" + data.faixas.map((f) => f.parcelas + " × " + brl(f.valor)).join("\n") + "\n📌 Sujeito à disponibilidade e à análise da administradora.\nConsulmax • Maximize as suas conquistas.";
+  const shareText = (segment === "Imóvel" ? "🏠" : segment === "Pesados" ? "🚜" : segment === "Motocicletas" ? "🏍️" : "🚘") + " CARTA CONTEMPLADA | " + chosenCategory + "\n💰 Crédito: " + brl(data.credito) + "\n💵 Entrada: " + brl(data.entrada) + "\n📅 Parcelas:\n" + data.faixas.map((f) => f.parcelas + " × " + brl(f.valor)).join("\n") + "\n📌 Sujeito à disponibilidade e à análise da administradora.\nConsulmax • Maximize as suas conquistas.";
   async function makePng() {
     if (!art.current) throw new Error("Prévia ainda indisponível.");
     return toPng(art.current, { cacheBust: true, pixelRatio: dim.width / 540, backgroundColor: isLight ? "#ffffff" : "#1E293F", width: 540, height: baseHeight });

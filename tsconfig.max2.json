@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "types": ["node", "vite/client"] },
+  "compilerOptions": { "types": ["node"] },
   "include": [
     "api/_supabase.ts",
     "api/contempladas/max-consultor.ts",

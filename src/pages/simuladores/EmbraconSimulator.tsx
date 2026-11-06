@@ -941,7 +941,6 @@ export default function EmbraconPage() {
     valorFgts,
     prazoOriginalGrupo,
     lanceOfertParcelas,
-    lanceEmbutParcelas,
     parcContemplacao,
     regras: adminRules,
     embutCapPct,

@@ -302,6 +302,30 @@ export function maxSearchStrategies(
   for (const group of groupMap.values()) {
     if (inspected >= MAX_SEARCH_EXPANSIONS) { limited = true; break; }
     const compatible = group.filter((row) => row.credito <= maxCredit);
+    // Rotas gulosas usam o grupo COMPLETO, não a amostra da busca por feixe.
+    // Assim, mesmo 200+ cartas podem compor uma junção quando o valor exigir.
+    const greedyOrders = [
+      [...compatible].sort((a, b) => b.credito - a.credito),
+      [...compatible].sort((a, b) => a.credito - b.credito),
+      [...compatible].sort((a, b) => a.entradaBase / a.credito - b.entradaBase / b.credito),
+      [...compatible].sort((a, b) => a.valorParcela / a.credito - b.valorParcela / b.credito),
+      [...compatible].sort((a, b) => (a.valorParcela * a.parcelas) / a.credito - (b.valorParcela * b.parcelas) / b.credito),
+    ];
+    for (const sorted of greedyOrders) {
+      const chosen: MaxStockRow[] = [];
+      let creditSum = 0;
+      for (const row of sorted) {
+        if (requestedMaximum && chosen.length >= requestedMaximum) break;
+        if (creditSum + row.credito > maxCredit) continue;
+        chosen.push(row);
+        creditSum += row.credito;
+        if (creditSum >= target) break;
+      }
+      if (chosen.length && creditSum >= target * 0.55) {
+        const offer = maxEvaluateOffer(chosen, criteria, vendorPct);
+        allOffers.set(offer.id, offer);
+      }
+    }
     const { rows: candidates, sampled } = maxCandidatePool(compatible, target);
     if (!candidates.length) continue;
     if (sampled) limited = true;

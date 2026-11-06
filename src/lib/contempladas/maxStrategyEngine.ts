@@ -351,7 +351,10 @@ export function maxSearchStrategies(
         const evaluated = maxEvaluateOffer(partial.items, criteria, vendorPct);
         allOffers.set(evaluated.id, evaluated);
       }
-      const beamWidth = depth < 8 ? 105 : depth < 18 ? 56 : depth < 40 ? 28 : 14;
+      // Ajuste pela profundidade natural: buscar muitas cotas não pode consumir
+      // todo o processamento nas primeiras iterações.
+      const adaptiveBeam = Math.max(5, Math.floor(totalGroupBudget / Math.max(1, candidates.length * maxDepth)));
+      const beamWidth = Math.min(depth < 8 ? 105 : depth < 18 ? 56 : depth < 40 ? 28 : 14, adaptiveBeam);
       // Mistura os melhores de cada prioridade sem consumir todo o feixe com uma só.
       const nextBeam = new Map<string, MaxSearchPartial>();
       const sources = [byCredit, byProgress, byEntrada, byParcela, byContinuity];

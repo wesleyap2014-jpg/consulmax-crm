@@ -91,6 +91,56 @@ equal(maxSearchStrategies([a], {}, 0.025).offers.length, 0, "Critério incomplet
 const external = maxExternalRow({ id: 15420, categoria: "Veículo", valor_credito: "R$ 100.000,00", entrada: "R$ 50.000,00", parcelas: 40, valor_parcela: "R$ 1.000,00", administradora: "HS", reserva: "Reservado" });
 equal(external.status, "reservada");
 moneyNear(external.entradaBase, 45000);
+// Regressões extraídas de diálogos reais: a IA não decide o tipo de carta.
+const { maxExplicitSegment, maxResolveSegment, maxExplicitCommercialRequest, maxExternalSegment } = engine;
+const segmentCases = [
+  ["Max quero automóvel de 120 mil", "Automóvel"],
+  ["Eu pedi automóvel e você me deu imóvel", "Automóvel"],
+  ["preciso de cartas de 120 mil veiculos", "Automóvel"],
+  ["cartas contempladas de 120 mil automoveis", "Automóvel"],
+  ["veiculos carro", "Automóvel"],
+  ["carro veiculo 80 mil", "Automóvel"],
+  ["meu cliente quer um veiculo de 120 mil, parcelas de 1200, tem 30 mil de entrada", "Automóvel"],
+  ["preciso de uma carta contemplada de 50 mil de automovel", "Automóvel"],
+  ["não quero imóvel, quero automóvel", "Automóvel"],
+  ["quero imóvel, não automóvel", "Imóvel"],
+  ["MAX, imóvel de 2 milhões", "Imóvel"],
+  ["casa de 700 mil", "Imóvel"],
+  ["máquina agrícola para o produtor", "Pesados"],
+  ["caminhão de 500 mil", "Pesados"],
+  ["moto de 25 mil", "Motocicletas"],
+  ["consórcio de serviços", "Serviços"],
+  ["trocar de imóvel para automóvel", "Automóvel"],
+];
+for (const [phrase, expected] of segmentCases) equal(maxExplicitSegment(phrase), expected, "Segmento do vendedor: " + phrase);
+equal(maxExplicitSegment("automóvel e imóvel"), null, "Intenção de dois segmentos é ambígua.");
+equal(maxExplicitSegment("120 mil"), null, "Valor sozinho não identifica o segmento.");
+equal(maxResolveSegment("cartas contempladas", ["preciso de cartas de 120 mil veiculos"]), "Automóvel", "Continuar no segmento solicitado.");
+equal(maxResolveSegment("125 mil", ["veiculo 120 mil"]), "Automóvel", "Alterar somente o valor.");
+equal(maxResolveSegment("Eu pedi automóvel e você me deu imóvel", ["imóvel de 120 mil"]), "Automóvel", "Correção do vendedor prevalece.");
+equal(maxResolveSegment("imóvel de 2 milhões", ["carro de 50 mil"]), "Imóvel", "Mudança explícita de segmento.");
+equal(maxResolveSegment("cartas contempladas", []), null, "Sem segmento explícito, pedir categoria.");
+equal(maxResolveSegment("carro e imóvel", ["carro de 50 mil"]), null, "Nova mensagem ambígua não deve manter tipo silenciosamente.");
+equal(maxExplicitCommercialRequest("meu cliente quer um veículo de 120 mil, parcela de 1200"), false, "Pedir veículo não significa enviar proposta.");
+equal(maxExplicitCommercialRequest("125 mil"), false, "Número solto não significa copiar proposta.");
+equal(maxExplicitCommercialRequest("cartas contempladas"), false, "Busca não é texto comercial.");
+equal(maxExplicitCommercialRequest("Me manda essa opção em formato comercial para WhatsApp"), true, "Pedido explícito de texto comercial.");
+equal(maxExplicitCommercialRequest("Copiar proposta"), true, "Copiar é um pedido comercial.");
+equal(maxExternalSegment("Veículo"), "Automóvel", "Feed externo do veículo.");
+equal(maxExternalSegment("Imóvel"), "Imóvel", "Feed externo de imóvel.");
+equal(maxExternalSegment("não informado"), null, "Não inventar categoria externa desconhecida.");
+equal(maxExternalRow({id:999,valor_credito:50000,entrada:19000,parcelas:40,valor_parcela:300,categoria:"não informado"}), null, "Recusar cota externa de segmento indefinido.");
+assert.throws(() => maxEvaluateOffer([a], { segmento: "Imóvel", credito: 60000 }, 0.025), /segmento/i); assertions++;
+const mixedStocks = [
+ sample(730, 119000, 45000, 60, 750),
+ { ...sample(731, 120000, 20000, 60, 600), id: "external-property-731", segmento: "Imóvel" },
+];
+const vehicleOnly = maxSearchStrategies(mixedStocks, { segmento: "Automóvel", credito: 120000 }, 0.025);
+truthy(vehicleOnly.offers.length > 0, "Busca filtrada encontra automóveis.");
+truthy(vehicleOnly.offers.every((offer) => offer.segmento === "Automóvel"), "Nunca retornar imóvel na busca de automóveis.");
+const propertyOnly = maxSearchStrategies(mixedStocks, { segmento: "Imóvel", credito: 120000 }, 0.025);
+truthy(propertyOnly.offers.every((offer) => offer.segmento === "Imóvel"), "Nunca retornar automóvel na busca de imóveis.");
+
 const noFeeClaim = maxCommercialText(combo);
 truthy(!/comiss[aã]o/i.test(noFeeClaim), "Não expor comissão ao cliente.");
 truthy(!/sem taxa de transfer[eê]ncia/i.test(noFeeClaim), "Não prometer isenção sem confirmação.");
@@ -103,4 +153,4 @@ moneyNear(requested.entrada, 38700);
 moneyNear(requested.complementoCompra, 3100);
 moneyNear(requested.deficit, 1800);
 moneyNear(requested.recursosRestantes, -1800);
-console.log("[max2] OK — " + assertions + " afirmações: individual, 2/3/4/5/6/8/12/20/205 cotas, faixas, comissão, recurso, avaliação, indisponibilidade, agrupamento, WhatsApp e cenário de R$ 1.800.");
+console.log("[max2] OK — " + assertions + " afirmações: motor financeiro, 1-205 cotas, comissão, segmentos das conversas reais, correções, cotas externas, WhatsApp e bloqueio de combinações erradas.");

@@ -87,13 +87,86 @@ export function maxNorm(text: unknown): string {
   return String(text ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
-export function maxExternalSegment(category: unknown): MaxSegment {
+/**
+ * Segmento sempre determinado por expressões explícitas do VENDEDOR.
+ * A IA pode entender intenção/valores, mas não escolhe nem troca o produto.
+ * Em correções ("pedi automóvel e você me deu imóvel"), a menção ao
+ * segmento errado é descartada. Menções contraditórias permanecem ambíguas.
+ */
+export function maxExplicitSegment(message: string): MaxSegment | null {
+  const normalized = maxNorm(message).replace(/[^a-z0-9\s]/g, " ");
+  const patterns: { segment: MaxSegment; pattern: RegExp }[] = [
+    { segment: "Motocicletas", pattern: /\b(?:motos?|motocicletas?)\b/g },
+    { segment: "Pesados", pattern: /\b(?:caminhoes?|caminhao|tratores?|onibus|colheitadeiras?|pesados?|maquinas?\s+(?:agricolas?|pesadas?))\b/g },
+    { segment: "Imóvel", pattern: /\b(?:imoveis?|imovel|casas?|apartamentos?|terrenos?|lotes?|sitios?|fazendas?)\b/g },
+    { segment: "Automóvel", pattern: /\b(?:automoveis?|automovel|veiculos?|carros?|picapes?|caminhonetes?|suvs?|sedans?)\b/g },
+    { segment: "Serviços", pattern: /\b(?:servicos?)\b/g },
+  ];
+  const matches: { segment: MaxSegment; index: number; excluded: boolean }[] = [];
+  for (const { segment, pattern } of patterns) {
+    for (const found of normalized.matchAll(pattern)) {
+      const index = found.index ?? 0;
+      const before = normalized.slice(Math.max(0, index - 55), index);
+      const excluded = /(?:\bnao\s+(?:quero|queria|preciso|desejo|busco|e|de|do|da|um|uma)|\bnem|\bem\s+vez\s+de|\bao\s+inves\s+de|\b(?:me\s+)?(?:deu|mostrou|recomendou|indicou|apresentou|sugeriu|ofereceu|retornou|mandou))\s*(?:(?:um|uma|de|do|da|o|a)\s*)?$/.test(before);
+      matches.push({ segment, index, excluded });
+    }
+  }
+  const positive = matches.filter((item) => !item.excluded).sort((a, b) => a.index - b.index);
+  const segments = [...new Set(positive.map((item) => item.segment))];
+  if (segments.length === 1) return segments[0];
+  if (segments.length > 1) {
+    // "mudar de imóvel para automóvel": o segmento DE DESTINO é o solicitado.
+    const transfer = normalized.match(/\b(?:mudar|trocar|alterar)\s+(?:de\s+)?[\w\s]{1,45}\bpara\s+([\w\s]{1,30})/);
+    if (transfer) {
+      const destination = maxExplicitSegment(transfer[1]);
+      if (destination) return destination;
+    }
+  }
+  return null;
+}
+
+/** Histórico serve só para recuperar a escolha explícita do vendedor, nunca da IA. */
+export function maxResolveSegment(
+  latestUserMessage: string,
+  priorUserMessages: string[],
+): MaxSegment | null {
+  const newest = maxExplicitSegment(latestUserMessage);
+  if (newest) return newest;
+  // Quando o usuário menciona dois tipos sem distinguir qual quer, peça clareza.
+  const mentionCount = [
+    /\b(?:imoveis?|imovel|casa|apartamento)\b/,
+    /\b(?:automoveis?|automovel|veiculos?|carros?)\b/,
+    /\b(?:motos?|motocicletas?)\b/,
+    /\b(?:caminhao|caminhoes|tratores?|pesados?)\b/,
+    /\bservicos?\b/,
+  ].filter((re) => re.test(maxNorm(latestUserMessage))).length;
+  if (mentionCount > 1) return null;
+  for (let i = priorUserMessages.length - 1; i >= 0; i--) {
+    const historical = maxExplicitSegment(priorUserMessages[i]);
+    if (historical) return historical;
+  }
+  return null;
+}
+
+/**
+ * Gerar texto de WhatsApp é uma ação EXPLÍCITA; não pode ser inferida
+ * livremente pelo classificador (ex.: "meu cliente quer um veículo").
+ */
+export function maxExplicitCommercialRequest(message: string): boolean {
+  const text = maxNorm(message);
+  return /\b(?:whatsapp|copiar|copie|copia|formato\s+comercial|texto\s+comercial|mensagem\s+comercial|gerar\s+proposta|criar\s+proposta|prepara(?:r)?\s+(?:essa|esta|a|uma)\s+(?:opcao|alternativa|carta|proposta)|(?:manda|envia|enviar|envie|mandar|mande)\s+(?:essa|esta|a|uma|aquela|minha)\s+(?:opcao|alternativa|carta|proposta|mensagem))\b/.test(text);
+}
+
+export function maxExternalSegment(category: unknown): MaxSegment | null {
   const value = maxNorm(category);
-  if (value.includes("imovel")) return "Imóvel";
-  if (value.includes("moto")) return "Motocicletas";
-  if (["caminhao", "pesado", "trator", "maquina", "onibus", "agricol", "implemento"].some((v) => value.includes(v))) return "Pesados";
-  if (value.includes("servico")) return "Serviços";
-  return "Automóvel";
+  if (!value) return null;
+  // Não inventar "Automóvel" para categorias externas desconhecidas.
+  if (/moto(?:ciclet)?/.test(value)) return "Motocicletas";
+  if (/(?:caminhao|caminhoes|pesad|trator|maquina|onibus|agricol|implemento)/.test(value)) return "Pesados";
+  if (/(?:imovel|imoveis|terreno|apartamento|casa|lote)/.test(value)) return "Imóvel";
+  if (/(?:servico|servicos)/.test(value)) return "Serviços";
+  if (/(?:automovel|automoveis|veiculo|veiculos|carro|auto)/.test(value)) return "Automóvel";
+  return null;
 }
 
 export function maxValidCommission(pct: number): boolean {
@@ -111,14 +184,15 @@ export function maxExternalRow(raw: Record<string, unknown>): MaxStockRow | null
   const semComissao = maxNumber(raw.entrada_sem_comissao);
   const entradaBase = semComissao > 0 ? semComissao : Math.max(0, entrada - credito * MAX_EXTERNAL_BASE_COMMISSION);
   const codigo = String(raw.id ?? "").trim();
-  if (!codigo || !credito) return null;
+  const segmento = maxExternalSegment(raw.categoria);
+  if (!codigo || !credito || !segmento) return null;
   const reserva = maxNorm(raw.reserva);
   const status = reserva.includes("reservad") || reserva.includes("vendid") || reserva.includes("transferid") || reserva.includes("indispon") ? "reservada" : "disponivel";
   const administrador = String(raw.administradora || "Administradora não informada").slice(0, 120);
   return {
     id: "external-" + codigo,
     codigo,
-    segmento: maxExternalSegment(raw.categoria),
+    segmento,
     status,
     partnerId: "external",
     adminId: "external-admin-" + maxNorm(administrador).replace(/\s+/g, "-"),
@@ -169,6 +243,9 @@ export function maxEvaluateOffer(rows: MaxStockRow[], criteria: MaxCriteria, ven
   const admin = rows[0];
   if (!rows.every((r) => r.status === "disponivel" && r.partnerId === admin.partnerId && r.adminId === admin.adminId && r.segmento === admin.segmento)) {
     throw new Error("A combinação não respeita as restrições de administradora, parceiro, segmento ou disponibilidade.");
+  }
+  if (criteria.segmento && rows.some((r) => r.segmento !== criteria.segmento)) {
+    throw new Error("A composição pertence a um segmento diferente daquele solicitado pelo vendedor.");
   }
   const credito = roundBRL(rows.reduce((a, c) => a + c.credito, 0));
   const entrada = roundBRL(rows.reduce((a, c) => a + maxEntrada(c, vendorPct), 0));

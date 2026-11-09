@@ -354,9 +354,21 @@ export default function MaxContempladas({
                     <div className={message.offers?.length ? "w-full min-w-0" : "max-w-[88%]"}>
                       <div className={"w-fit max-w-full whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm " + (message.role === "user" ? "ml-auto rounded-br-md bg-[#A11C27] text-white" : "rounded-bl-md border border-slate-200 bg-white text-[#1E293F]")}>{message.text}</div>
                       {message.role === "assistant" && message.offers?.length ? (
-                        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-                          {message.offers.map((o, i) => <OfferCard key={o.id + i} number={i + 1} offer={o} busy={validationBusy} onOpen={openOffer} onCopy={copyOffer}/>)}
-                        </div>
+                        <>
+                          {message.offers.some((offer) => offer.segmento !== criteria.segmento) ? (
+                            <p role="status" className="mt-2 flex items-start gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-relaxed text-amber-800">
+                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0"/>
+                              Análise anterior desconsiderada: continha cartas de um segmento diferente do solicitado. Peça uma nova análise ao MAX.
+                            </p>
+                          ) : null}
+                          {message.offers.some((offer) => offer.segmento === criteria.segmento) ? (
+                            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                              {message.offers.filter((offer) => offer.segmento === criteria.segmento).map((offer, i) => (
+                                <OfferCard key={offer.id + i} number={i + 1} offer={offer} busy={validationBusy} onOpen={openOffer} onCopy={copyOffer}/>
+                              ))}
+                            </div>
+                          ) : null}
+                        </>
                       ) : null}
                       {message.note ? <p className="mt-2 flex gap-1 text-[11px] leading-relaxed text-slate-500"><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>{message.note}</p> : null}
                     </div>

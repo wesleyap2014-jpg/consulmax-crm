@@ -4,7 +4,7 @@ import { getAuthUser, json, supabaseAdmin, unauthorized } from "../_supabase.js"
 import {
   maxSearchStrategies, maxEvaluateOffer, maxExternalRow, maxInternalRow,
   maxCommercialText, maxMoney, maxNorm, maxValidCommission,
-  maxResolveSegment, maxExplicitCommercialRequest, maxExplicitSegment,
+  maxResolveSegment, maxExplicitCommercialRequest, maxExplicitSegment, maxApplySellerCriteria,
   MAX_DEFAULT_VENDOR_COMMISSION,
   type MaxStockRow, type MaxCriteria, type MaxOffer, type MaxOrigin,
 } from "../../src/lib/contempladas/maxStrategyEngine.js";
@@ -254,12 +254,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // O segmento é uma exigência do vendedor, não uma decisão do LLM.
     // Recuperamos menções apenas das mensagens do usuário; jamais das respostas da IA.
     const userHistory = messages.filter((m) => m?.role === "user").map((m) => String(m.text || ""));
-    const requestedSegment = maxResolveSegment(input.message!, userHistory);
     const sanitizedPatch: Partial<MaxCriteria> = { ...interpreted.patch };
     delete sanitizedPatch.segmento;
-    const criteria: MaxCriteria = criteriaSchema.parse({ ...current, ...sanitizedPatch });
-    if (requestedSegment) criteria.segmento = requestedSegment;
-    else delete criteria.segmento; // Não pesquisar tipos misturados quando a categoria está indefinida.
+    const criteria: MaxCriteria = criteriaSchema.parse(maxApplySellerCriteria(
+      current, interpreted.patch, input.message!, userHistory
+    ));
 
     const explicitCommercial = maxExplicitCommercialRequest(input.message!);
     const changedCriteria = Object.keys(sanitizedPatch).some((key) =>

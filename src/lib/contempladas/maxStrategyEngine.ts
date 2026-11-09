@@ -107,7 +107,7 @@ export function maxExplicitSegment(message: string): MaxSegment | null {
     for (const found of normalized.matchAll(pattern)) {
       const index = found.index ?? 0;
       const before = normalized.slice(Math.max(0, index - 55), index);
-      const excluded = /(?:\bnao\s+(?:quero|queria|preciso|desejo|busco|e|de|do|da|um|uma)|\bnem|\bem\s+vez\s+de|\bao\s+inves\s+de|\b(?:me\s+)?(?:deu|mostrou|recomendou|indicou|apresentou|sugeriu|ofereceu|retornou|mandou))\s*(?:(?:um|uma|de|do|da|o|a)\s*)?$/.test(before);
+      const excluded = /(?:\bnao\s+(?:(?:quero|queria|preciso|desejo|busco|era|de|do|da|um|uma)\s*)?|\bnem|\bem\s+vez\s+de|\bao\s+inves\s+de|\b(?:me\s+)?(?:deu|mostrou|recomendou|indicou|apresentou|sugeriu|ofereceu|retornou|mandou))\s*(?:(?:um|uma|de|do|da|o|a)\s*)?$/.test(before);
       matches.push({ segment, index, excluded });
     }
   }

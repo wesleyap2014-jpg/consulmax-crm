@@ -113,6 +113,12 @@ const segmentCases = [
   ["trocar de imóvel para automóvel", "Automóvel"],
 ];
 for (const [phrase, expected] of segmentCases) equal(maxExplicitSegment(phrase), expected, "Segmento do vendedor: " + phrase);
+const { maxApplySellerCriteria } = engine;
+equal(maxApplySellerCriteria({}, { segmento: "Imóvel", preco: 120000 }, "Max quero automóvel de 120 mil", {}).segmento, "Automóvel", "O texto do vendedor prevalece sobre categoria inventada pelo modelo.");
+equal(maxApplySellerCriteria({ segmento: "Imóvel", preco: 120000 }, { segmento: "Imóvel" }, "Eu pedi automóvel e você me deu imóvel", ["Max quero automóvel de 120 mil"]).segmento, "Automóvel", "Corrigir categoria antiga contaminada pela IA.");
+equal(maxApplySellerCriteria({ segmento: "Imóvel", credito: 120000 }, { credito: 120000 }, "cartas contempladas", ["cartas contempladas de 120 mil veiculos"]).segmento, "Automóvel", "Recuperar segmento exclusivamente do histórico do vendedor.");
+equal(maxApplySellerCriteria({ credito: 50000 }, { segmento: "Imóvel" }, "50 mil", {}).segmento, undefined, "Nunca inventar segmento quando não foi informado.");
+equal(maxApplySellerCriteria({ segmento: "Automóvel", credito: 50000 }, { segmento: "Imóvel", recursos: 30000 }, "agora com 30 mil de entrada", ["carta de automóvel 50 mil"]), { segmento: "Automóvel", credito: 50000, recursos: 30000 }, "Refinar orçamento sem trocar categoria.");
 equal(maxExplicitSegment("automóvel e imóvel"), null, "Intenção de dois segmentos é ambígua.");
 equal(maxExplicitSegment("120 mil"), null, "Valor sozinho não identifica o segmento.");
 equal(maxResolveSegment("cartas contempladas", ["preciso de cartas de 120 mil veiculos"]), "Automóvel", "Continuar no segmento solicitado.");

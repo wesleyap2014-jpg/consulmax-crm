@@ -149,6 +149,25 @@ export function maxResolveSegment(
 }
 
 /**
+ * Única via autorizada para consolidar critérios depois da interpretação de IA.
+ * A IA pode interpretar valores, mas jamais definir o segmento do vendedor.
+ * Negociações antigas com segmento incorreto são corrigidas ao continuar o chat.
+ */
+export function maxApplySellerCriteria(
+  previous: MaxCriteria,
+  aiPatch: Partial<MaxCriteria>,
+  latestUserMessage: string,
+  userHistory: string[],
+): MaxCriteria {
+  const { segmento: _modelSegment, ...safePatch } = aiPatch;
+  const criteria: MaxCriteria = { ...previous, ...safePatch };
+  const requested = maxResolveSegment(latestUserMessage, userHistory);
+  if (requested) criteria.segmento = requested;
+  else delete criteria.segmento;
+  return criteria;
+}
+
+/**
  * Gerar texto de WhatsApp é uma ação EXPLÍCITA; não pode ser inferida
  * livremente pelo classificador (ex.: "meu cliente quer um veículo").
  */

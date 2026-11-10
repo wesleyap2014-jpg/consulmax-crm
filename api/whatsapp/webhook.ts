@@ -93,6 +93,37 @@ function extractMessageBody(message: any) {
   );
 }
 
+
+/** Resumo legível para a lista de conversas, inclusive eventos sem texto (ex.: contatos). */
+function extractConversationPreview(message: any, body: string, mediaId: string | null) {
+  if (body?.trim()) return body;
+  const type = String(message?.type || "text").toLowerCase();
+
+  if (type === "contacts" || type === "contact") {
+    const contacts = Array.isArray(message?.contacts) ? message.contacts : [];
+    const names = contacts.slice(0, 2).map((contact: any) =>
+      String(contact?.name?.formatted_name || contact?.name?.first_name || contact?.phones?.[0]?.phone || "Contato")
+    );
+    return "Contato compartilhado" + (names.length ? ": " + names.join(", ") : "") + (contacts.length > 2 ? " e outros" : "");
+  }
+  if (type === "location" || type === "live_location")
+    return "Localização compartilhada" + (message?.location?.name ? ": " + message.location.name : "");
+  if (type === "reaction")
+    return message?.reaction?.emoji ? "Reagiu com " + message.reaction.emoji : "Reação removida";
+  if (type === "image") return "Imagem recebida";
+  if (type === "video") return "Vídeo recebido";
+  if (type === "audio" || type === "voice") return "Áudio recebido";
+  if (type === "document") return "Documento recebido";
+  if (type === "sticker") return "Figurinha recebida";
+  if (type === "button") return "Botão selecionado";
+  if (type === "interactive") return "Resposta interativa";
+  if (type === "order") return "Pedido compartilhado";
+  if (type === "call") return "Ligação do WhatsApp";
+  if (type === "system") return "Aviso do WhatsApp";
+  if (type === "unsupported") return "Mensagem não suportada pela API do WhatsApp";
+  return mediaId ? "Mídia recebida" : "Mensagem do WhatsApp (" + type + ")";
+}
+
 function extractMediaId(message: any) {
   return (
     message?.image?.id ||
@@ -633,6 +664,7 @@ async function handleSingleInboundMessage(
   const isRating = isRatingResponse(body);
   const mediaId = extractMediaId(message);
   const mediaMimeType = extractMimeType(message);
+  const conversationPreview = extractConversationPreview(message, body, mediaId);
   const optOut = isOptOutMessage(body);
   const optIn = isOptInMessage(body);
 
@@ -698,7 +730,7 @@ async function handleSingleInboundMessage(
           status: "bot",
           stage: "com_novo",
           queue: "com_novo",
-          last_message: body || (mediaId ? `${messageType} recebido` : body),
+          last_message: conversationPreview,
           last_message_at: inboundAt,
           unread_count: 1,
         })
@@ -726,7 +758,7 @@ async function handleSingleInboundMessage(
           updated_at: inboundAt,
         }
       : {
-          last_message: body || (mediaId ? `${messageType} recebido` : body),
+          last_message: conversationPreview,
           last_message_at: inboundAt,
           unread_count:
             optOut || optIn

@@ -116,6 +116,17 @@ function getOriginalText(message: WhatsAppMessage): string {
   );
 }
 
+/**
+ * Texto apresentado nas mensagens e anexos.
+ * A correção precisa existir no código-fonte: o patch de build v52
+ * o referencia mesmo quando sua substituição opcional não é aplicada.
+ */
+function messageDisplayBody(message: WhatsAppMessage): string {
+  const direct = getOriginalText(message);
+  if (direct) return direct;
+  return String(message.raw_payload?.template_rendered_body || "").trim();
+}
+
 function sharedContactName(contact: any): string {
   return String(
     contact?.name?.formatted_name ||
@@ -128,7 +139,7 @@ function sharedContactName(contact: any): string {
 
 /** Também serve para prévias e respostas: o body pode estar vazio em eventos válidos da Meta. */
 export function messageDisplayText(message: WhatsAppMessage): string {
-  const originalText = getOriginalText(message);
+  const originalText = messageDisplayBody(message);
   if (originalText) return originalText;
 
   const type = String(message.message_type || "text").toLowerCase();

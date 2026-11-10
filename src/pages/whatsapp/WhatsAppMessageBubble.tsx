@@ -8,6 +8,12 @@ import {
   Mic,
   RefreshCw,
   Video,
+  ContactRound,
+  MapPin,
+  Smile,
+  ShoppingBag,
+  Phone,
+  ExternalLink,
 } from "lucide-react";
 
 export type WhatsAppMessage = {
@@ -73,17 +79,109 @@ export function getReplyMetaMessageId(message: WhatsAppMessage) {
     message.raw_payload?._reply_to?.meta_message_id ||
     message.raw_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.context
       ?.id ||
+    message.raw_payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.reaction
+      ?.message_id ||
     null
   );
 }
 
+
+function getRawWhatsAppMessage(message: WhatsAppMessage): Record<string, any> {
+  const payload = message.raw_payload || {};
+  return (
+    payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] ||
+    payload?.messages?.[0] ||
+    payload?.message ||
+    payload
+  );
+}
+
+function getSharedContacts(message: WhatsAppMessage): any[] {
+  const event = getRawWhatsAppMessage(message);
+  return Array.isArray(event?.contacts) ? event.contacts : [];
+}
+
+function getOriginalText(message: WhatsAppMessage): string {
+  if (String(message.body || "").trim()) return String(message.body);
+  const event = getRawWhatsAppMessage(message);
+  return String(
+    event?.text?.body ||
+    event?.button?.text ||
+    event?.interactive?.button_reply?.title ||
+    event?.interactive?.list_reply?.title ||
+    event?.image?.caption ||
+    event?.document?.caption ||
+    event?.video?.caption ||
+    ""
+  );
+}
+
+function sharedContactName(contact: any): string {
+  return String(
+    contact?.name?.formatted_name ||
+    contact?.name?.first_name ||
+    contact?.name?.last_name ||
+    contact?.phones?.[0]?.phone ||
+    "Contato sem nome"
+  );
+}
+
+/** Também serve para prévias e respostas: o body pode estar vazio em eventos válidos da Meta. */
+export function messageDisplayText(message: WhatsAppMessage): string {
+  const originalText = getOriginalText(message);
+  if (originalText) return originalText;
+
+  const type = String(message.message_type || "text").toLowerCase();
+  const event = getRawWhatsAppMessage(message);
+  if (type === "contacts" || type === "contact") {
+    const contacts = getSharedContacts(message);
+    if (!contacts.length) return "Contato compartilhado";
+    const names = contacts.slice(0, 2).map(sharedContactName).join(", ");
+    return "Contato compartilhado: " + names + (contacts.length > 2 ? " e outros" : "");
+  }
+  if (type === "location" || type === "live_location") {
+    return "Localização compartilhada" + (event?.location?.name ? ": " + event.location.name : "");
+  }
+  if (type === "reaction") {
+    return event?.reaction?.emoji
+      ? "Reagiu com " + event.reaction.emoji
+      : "Reação removida";
+  }
+  if (type === "image") return "Imagem";
+  if (type === "video") return "Vídeo";
+  if (type === "audio" || type === "voice") return "Áudio";
+  if (type === "document") return "Documento";
+  if (type === "sticker") return "Figurinha";
+  if (type === "template") return "Modelo enviado";
+  if (type === "button") return "Botão selecionado";
+  if (type === "interactive") return "Resposta interativa";
+  if (type === "order") return "Pedido compartilhado";
+  if (type === "call") return "Ligação do WhatsApp";
+  if (type === "system") return "Aviso do WhatsApp";
+  if (type === "unsupported") return "Mensagem não suportada pela API do WhatsApp";
+  return "Mensagem do WhatsApp (" + type + ")";
+}
+
 export function messageSearchText(message: WhatsAppMessage) {
   const media = getStoredMedia(message);
+  const event = getRawWhatsAppMessage(message);
+  const contacts = getSharedContacts(message);
   return [
-    message.body,
+    messageDisplayText(message),
     message.message_type,
     message.media_mime_type,
     media?.original_file_name,
+    ...contacts.flatMap((contact: any) => [
+      sharedContactName(contact),
+      ...(Array.isArray(contact?.phones)
+        ? contact.phones.flatMap((phone: any) => [phone?.phone, phone?.wa_id])
+        : []),
+      ...(Array.isArray(contact?.emails)
+        ? contact.emails.map((email: any) => email?.email)
+        : []),
+    ]),
+    event?.location?.name,
+    event?.location?.address,
   ]
     .filter(Boolean)
     .join(" ")
@@ -91,17 +189,7 @@ export function messageSearchText(message: WhatsAppMessage) {
 }
 
 function messageFallback(message: WhatsAppMessage) {
-  const type = String(message.message_type || "text").toLowerCase();
-
-  if (message.body) return message.body;
-  if (type === "image") return "Imagem";
-  if (type === "video") return "Vídeo";
-  if (type === "audio" || type === "voice") return "Áudio";
-  if (type === "document") return "Documento";
-  if (type === "sticker") return "Figurinha";
-  if (type === "template") return "Modelo enviado";
-
-  return "Mensagem sem texto";
+  return messageDisplayText(message);
 }
 
 function MediaIcon({ type }: { type?: string | null }) {
@@ -170,6 +258,104 @@ function MessageContent({
     ["audio", "voice", "image", "video", "document", "sticker"].includes(
       type,
     ) || !!storedMedia?.storage_path;
+  const event = getRawWhatsAppMessage(message);
+
+  if (type === "contacts" || type === "contact") {
+    const contacts = getSharedContacts(message);
+    return (
+      <div className="min-w-[235px] max-w-[390px] space-y-2">
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+          <ContactRound className="h-4 w-4" />
+          {contacts.length > 1 ? "Contatos compartilhados" : "Contato compartilhado"}
+        </div>
+        {contacts.length ? contacts.map((contact: any, index: number) => {
+          const name = sharedContactName(contact);
+          const phones: any[] = Array.isArray(contact?.phones) ? contact.phones : [];
+          const emails: any[] = Array.isArray(contact?.emails) ? contact.emails : [];
+          return (
+            <div key={index} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1E293F] text-white">
+                  <ContactRound className="h-5 w-5" />
+                </span>
+                <span className="min-w-0 break-words font-bold">{name}</span>
+              </div>
+              {phones.map((phone: any, phoneIndex: number) => {
+                const value = String(phone?.phone || phone?.wa_id || "").trim();
+                const digits = String(phone?.wa_id || value).replace(/\D/g, "");
+                if (!value) return null;
+                return (
+                  <div key={phoneIndex} className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="break-all text-slate-600">{value}</span>
+                    <div className="flex items-center gap-3">
+                      {digits && <a href={"tel:+" + digits} className="inline-flex items-center gap-1 font-semibold text-[#1E293F]" title="Ligar"><Phone className="h-3.5 w-3.5" />Ligar</a>}
+                      {digits.length >= 10 && digits.length <= 15 && <a href={"https://wa.me/" + digits} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-[#A11C27]">WhatsApp <ExternalLink className="h-3 w-3" /></a>}
+                    </div>
+                  </div>
+                );
+              })}
+              {emails.map((email: any, emailIndex: number) => email?.email ? (
+                <a key={emailIndex} href={"mailto:" + email.email} className="mt-2 block break-all text-xs text-[#1E293F] underline">
+                  {email.email}
+                </a>
+              ) : null)}
+            </div>
+          );
+        }) : <p className="text-sm text-slate-500">Os dados deste contato não vieram na mensagem.</p>}
+      </div>
+    );
+  }
+
+  if (type === "location" || type === "live_location") {
+    const location = event?.location || {};
+    const latitude = Number(location?.latitude);
+    const longitude = Number(location?.longitude);
+    const valid = Number.isFinite(latitude) && Number.isFinite(longitude)
+      && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
+      && location?.latitude != null && location?.longitude != null;
+    const mapLink = valid
+      ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(latitude + "," + longitude)
+      : null;
+    return (
+      <div className="min-w-[220px] max-w-[340px] space-y-2">
+        <div className="flex items-center gap-2 font-semibold"><MapPin className="h-5 w-5 text-[#A11C27]" /> Localização compartilhada</div>
+        {location?.name && <p className="break-words font-medium">{location.name}</p>}
+        {location?.address && <p className="break-words text-xs text-slate-600">{location.address}</p>}
+        {valid && <p className="text-xs text-slate-500">{latitude}, {longitude}</p>}
+        {mapLink && <a href={mapLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg bg-[#1E293F] px-3 py-2 text-xs font-bold text-white"><MapPin className="h-4 w-4" /> Abrir no mapa <ExternalLink className="h-3 w-3" /></a>}
+      </div>
+    );
+  }
+
+  if (type === "reaction") {
+    return (
+      <div className="flex items-center gap-2">
+        <Smile className="h-4 w-4 text-slate-500" />
+        <span className="text-lg">{event?.reaction?.emoji || "↩️"}</span>
+        <span className="text-xs text-slate-600">{event?.reaction?.emoji ? "Reação à mensagem" : "Reação removida"}</span>
+      </div>
+    );
+  }
+
+  if (type === "order") {
+    const items: any[] = Array.isArray(event?.order?.product_items) ? event.order.product_items : [];
+    return <div className="min-w-[220px] space-y-2">
+      <div className="flex items-center gap-2 font-semibold"><ShoppingBag className="h-4 w-4" /> Pedido compartilhado</div>
+      {items.map((item: any, index: number) => (
+        <p key={index} className="text-xs text-slate-600">{item?.quantity || 1} × {item?.product_retailer_id || "Produto"}</p>
+      ))}
+      {!items.length && <p className="text-xs text-slate-500">Detalhes do pedido indisponíveis.</p>}
+    </div>;
+  }
+
+  if (type === "unsupported") {
+    return <div className="flex items-start gap-2 text-slate-600">
+      <FileText className="mt-0.5 h-4 w-4 shrink-0" />
+      <div><p className="font-semibold">Formato não disponibilizado pelo WhatsApp</p>
+        <p className="mt-1 text-xs">A API oficial informou que não consegue fornecer o conteúdo desta mensagem.</p>
+      </div>
+    </div>;
+  }
 
   if ((type === "audio" || type === "voice") && mediaUrl) {
     return (

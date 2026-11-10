@@ -309,6 +309,43 @@ const QUICK_REPLIES = [
 ];
 const MESSAGE_SELECT =
   "id,conversation_id,direction,body,message_type,created_at,raw_payload,media_id,media_mime_type,meta_message_id";
+
+const WHATSAPP_DATE_TIME_ZONE = "America/Porto_Velho";
+const whatsappDateParts = new Intl.DateTimeFormat("en-US", {
+  timeZone: WHATSAPP_DATE_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const whatsappLongDate = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: WHATSAPP_DATE_TIME_ZONE,
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+function whatsappDayKey(value: string | Date): string | null {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = whatsappDateParts.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+function whatsappDayLabel(
+  timestamp: string,
+  dayKey: string,
+  todayKey: string | null,
+  yesterdayKey: string | null,
+): string {
+  if (dayKey === "unknown") return "Data indisponível";
+  if (dayKey === todayKey) return "Hoje";
+  if (dayKey === yesterdayKey) return "Ontem";
+  return whatsappLongDate.format(new Date(timestamp));
+}
+
 const onlyDigits = (v?: string | null) => String(v || "").replace(/\D/g, "");
 const normalizeQueue = (v?: string | null) =>
   LEGACY_MAP[String(v || "com_novo").toLowerCase()] ||
@@ -993,6 +1030,28 @@ export default function WhatsAppAtendimento() {
       ? msgs.filter((message) => messageSearchText(message).includes(query))
       : msgs;
   }, [msgs, chatSearch]);
+  const visibleDayGroups = useMemo(() => {
+    const now = new Date();
+    const todayKey = whatsappDayKey(now);
+    const yesterdayKey = whatsappDayKey(new Date(now.getTime() - 86_400_000));
+    const groups: { key: string; label: string; messages: Msg[] }[] = [];
+
+    for (const message of visibleMsgs) {
+      const dayKey = whatsappDayKey(message.created_at) || "unknown";
+      let group = groups[groups.length - 1];
+      if (!group || group.key !== dayKey) {
+        group = {
+          key: dayKey,
+          label: whatsappDayLabel(message.created_at, dayKey, todayKey, yesterdayKey),
+          messages: [],
+        };
+        groups.push(group);
+      }
+      group.messages.push(message);
+    }
+
+    return groups;
+  }, [visibleMsgs]);
   const messagesByMetaId = useMemo(
     () =>
       new Map(
@@ -1587,33 +1646,42 @@ export default function WhatsAppAtendimento() {
               Nenhuma mensagem encontrada para “{chatSearch}”.
             </div>
           )}
-          {visibleMsgs.map((message) => {
-            const replyMetaMessageId = getReplyMetaMessageId(message);
-            const storedReply = message.raw_payload?._reply_to;
-            const repliedMessage =
-              (replyMetaMessageId
-                ? messagesByMetaId.get(replyMetaMessageId)
-                : null) ||
-              (storedReply?.message_id
-                ? messagesById.get(storedReply.message_id)
-                : null);
+          {visibleDayGroups.map((group) => (
+            <div key={group.key} className="relative space-y-2">
+              <div className="pointer-events-none sticky top-2 z-10 flex justify-center py-2">
+                <span className="rounded-lg border border-slate-200/80 bg-white/95 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm backdrop-blur-sm">
+                  {group.label}
+                </span>
+              </div>
+              {group.messages.map((message) => {
+                const replyMetaMessageId = getReplyMetaMessageId(message);
+                const storedReply = message.raw_payload?._reply_to;
+                const repliedMessage =
+                  (replyMetaMessageId
+                    ? messagesByMetaId.get(replyMetaMessageId)
+                    : null) ||
+                  (storedReply?.message_id
+                    ? messagesById.get(storedReply.message_id)
+                    : null);
 
-            return (
-              <WhatsAppMessageBubble
-                key={message.id}
-                message={message}
-                mediaUrl={
-                  mediaUrls[message.id] ||
-                  getStoredMedia(message)?.link ||
-                  undefined
-                }
-                repliedMessage={repliedMessage}
-                onReply={setReplyTo}
-                onRetry={retryMessage}
-                retrying={retryingId === message.id}
-              />
-            );
-          })}
+                return (
+                  <WhatsAppMessageBubble
+                    key={message.id}
+                    message={message}
+                    mediaUrl={
+                      mediaUrls[message.id] ||
+                      getStoredMedia(message)?.link ||
+                      undefined
+                    }
+                    repliedMessage={repliedMessage}
+                    onReply={setReplyTo}
+                    onRetry={retryMessage}
+                    retrying={retryingId === message.id}
+                  />
+                );
+              })}
+            </div>
+          ))}
           <div ref={endRef} />
         </div>
         {outside && (

@@ -265,6 +265,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
     vendedor_id: "", ano: currentYear, m: Array(12).fill(0)
   });
   const [savingMeta, setSavingMeta] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
   const [monthlyInputs, setMonthlyInputs] = useState<string[]>(Array(12).fill("0,00"));
   const [formError, setFormError] = useState("");
   const latestRequestId = useRef(0);
@@ -328,22 +329,25 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
   useEffect(() => { void loadMetrics(); }, [loadMetrics]);
 
   useEffect(() => {
-    if (!metaOverlay.open || !metaForm.vendedor_id) return;
-    if (!isAdmin) return;
+    if (!metaOverlay.open || !metaForm.vendedor_id || !isAdmin) return;
     const requestId = ++latestFormRequestId.current;
+    setFormLoading(true);
     const sellerId = metaForm.vendedor_id;
     const year = metaForm.ano;
     (async () => {
       const { data, error } = await supabase.from("metas_vendedores")
         .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
         .eq("vendedor_id", sellerId).eq("ano", year).maybeSingle();
-      if (requestId !== latestFormRequestId.current || error) {
-        if (error && requestId === latestFormRequestId.current) setFormError(error.message);
+      if (requestId !== latestFormRequestId.current) return;
+      if (error) {
+        setFormError(error.message);
+        setFormLoading(false);
         return;
       }
       const values = Array.from({ length: 12 }, (_, i) => Number((data as any)?.[`m${String(i + 1).padStart(2, "0")}`] || 0));
       setMetaForm((prev) => prev.vendedor_id === sellerId && prev.ano === year ? { ...prev, m: values } : prev);
       setMonthlyInputs(values.map(formatNumberBR));
+      setFormLoading(false);
     })();
   }, [metaOverlay.open, metaForm.vendedor_id, metaForm.ano, isAdmin]);
 
@@ -375,11 +379,12 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
     setSuccessMessage("");
     setMetaForm({ vendedor_id: selectedSeller || "", ano: selectedYear, m: Array(12).fill(0) });
     setMonthlyInputs(Array(12).fill("0,00"));
+    setFormLoading(Boolean(selectedSeller));
     setMetaOverlay({ open: true });
   };
 
   const saveMeta = async () => {
-    if (!isAdmin || savingMeta) return;
+    if (!isAdmin || savingMeta || formLoading || formError) return;
     setFormError("");
     if (!metaForm.vendedor_id) { setFormError("Selecione um vendedor."); return; }
     const authId = getAuthByUserId(metaForm.vendedor_id);
@@ -598,6 +603,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                   onChange={(e) => {
                     const id = e.target.value;
                     setFormError("");
+                    setFormLoading(Boolean(id));
                     setMetaForm((p) => ({ ...p, vendedor_id: id, m: Array(12).fill(0) }));
                     setMonthlyInputs(Array(12).fill("0,00"));
                   }}
@@ -620,6 +626,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                   onChange={(e) => {
                     const newYear = Number(e.target.value);
                     setFormError("");
+                    setFormLoading(Boolean(metaForm.vendedor_id));
                     setMetaForm((p) => ({ ...p, ano: newYear, m: Array(12).fill(0) }));
                     setMonthlyInputs(Array(12).fill("0,00"));
                   }}
@@ -646,6 +653,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                     inputMode="decimal"
                     aria-label={`Meta de ${m} de ${metaForm.ano}`}
                     value={monthlyInputs[i] || ""}
+                    disabled={formLoading || savingMeta}
                     onChange={(e) => {
                       const raw = e.target.value;
                       setMonthlyInputs((prev) => prev.map((v, j) => j === i ? raw : v));
@@ -667,13 +675,14 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
               ))}
             </div>
 
+            {formLoading && <div role="status" className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Carregando as metas existentes deste vendedor e ano...</div>}
             {formError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{formError}</div>}
             <div className="flex items-center justify-end gap-3">
               <button className="px-4 py-2 rounded-xl border" onClick={() => setMetaOverlay({ open: false })}>
                 Cancelar
               </button>
-              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={saveMeta} disabled={savingMeta}>
-                {savingMeta ? "Salvando..." : "Salvar"}
+              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={saveMeta} disabled={savingMeta || formLoading || Boolean(formError)}>
+                {savingMeta ? "Salvando..." : formLoading ? "Carregando..." : "Salvar"}
               </button>
             </div>
           </div>

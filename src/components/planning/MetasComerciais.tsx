@@ -266,6 +266,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
   });
   const [savingMeta, setSavingMeta] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
+  const [formLoadFailed, setFormLoadFailed] = useState(false);
   const [monthlyInputs, setMonthlyInputs] = useState<string[]>(Array(12).fill("0,00"));
   const [formError, setFormError] = useState("");
   const latestRequestId = useRef(0);
@@ -332,6 +333,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
     if (!metaOverlay.open || !metaForm.vendedor_id || !isAdmin) return;
     const requestId = ++latestFormRequestId.current;
     setFormLoading(true);
+    setFormLoadFailed(false);
     const sellerId = metaForm.vendedor_id;
     const year = metaForm.ano;
     (async () => {
@@ -341,6 +343,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
       if (requestId !== latestFormRequestId.current) return;
       if (error) {
         setFormError(error.message);
+        setFormLoadFailed(true);
         setFormLoading(false);
         return;
       }
@@ -376,6 +379,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
   const handleOpenMeta = () => {
     if (!isAdmin) return;
     setFormError("");
+    setFormLoadFailed(false);
     setSuccessMessage("");
     setMetaForm({ vendedor_id: selectedSeller || "", ano: selectedYear, m: Array(12).fill(0) });
     setMonthlyInputs(Array(12).fill("0,00"));
@@ -384,7 +388,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
   };
 
   const saveMeta = async () => {
-    if (!isAdmin || savingMeta || formLoading || formError) return;
+    if (!isAdmin || savingMeta || formLoading || formLoadFailed) return;
     setFormError("");
     if (!metaForm.vendedor_id) { setFormError("Selecione um vendedor."); return; }
     const authId = getAuthByUserId(metaForm.vendedor_id);
@@ -603,6 +607,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                   onChange={(e) => {
                     const id = e.target.value;
                     setFormError("");
+                    setFormLoadFailed(false);
                     setFormLoading(Boolean(id));
                     setMetaForm((p) => ({ ...p, vendedor_id: id, m: Array(12).fill(0) }));
                     setMonthlyInputs(Array(12).fill("0,00"));
@@ -626,6 +631,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                   onChange={(e) => {
                     const newYear = Number(e.target.value);
                     setFormError("");
+                    setFormLoadFailed(false);
                     setFormLoading(Boolean(metaForm.vendedor_id));
                     setMetaForm((p) => ({ ...p, ano: newYear, m: Array(12).fill(0) }));
                     setMonthlyInputs(Array(12).fill("0,00"));
@@ -656,6 +662,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                     disabled={formLoading || savingMeta}
                     onChange={(e) => {
                       const raw = e.target.value;
+                      setFormError("");
                       setMonthlyInputs((prev) => prev.map((v, j) => j === i ? raw : v));
                       const normalized = raw.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
                       const parsed = normalized ? Number(normalized) : 0;
@@ -681,7 +688,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
               <button className="px-4 py-2 rounded-xl border" onClick={() => setMetaOverlay({ open: false })}>
                 Cancelar
               </button>
-              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={saveMeta} disabled={savingMeta || formLoading || Boolean(formError)}>
+              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={saveMeta} disabled={savingMeta || formLoading || formLoadFailed}>
                 {savingMeta ? "Salvando..." : formLoading ? "Carregando..." : "Salvar"}
               </button>
             </div>

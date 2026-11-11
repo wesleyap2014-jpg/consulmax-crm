@@ -3,6 +3,11 @@ import fs from "node:fs";
 const filePath = "src/pages/simuladores/MaggiSimulator.tsx";
 let source = fs.readFileSync(filePath, "utf8");
 
+if (source.includes("MAGGI_LEAD_SEARCH_REMOTE_V2")) {
+  console.log("[patch-maggi-lead-select] Busca remota V2 nativa detectada; patch legado ignorado.");
+  process.exit(0);
+}
+
 const marker = "MAGGI_LEAD_SELECT_POPOVER_V1";
 if (source.includes(marker)) {
   console.log("[patch-maggi-lead-select] já aplicado.");

@@ -1,5 +1,6 @@
 // src/pages/simuladores/MaggiSimulator.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { Popover, PopoverButton, PopoverContent } from "@/components/ui/popover";
 import { supabase } from "@/lib/supabaseClient";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +13,7 @@ import {
   Calculator,
   Car,
   CheckCircle2,
+  ChevronsUpDown,
   Copy,
   Home,
   Loader2,
@@ -158,9 +160,9 @@ type Lead = {
   nome: string;
   telefone: string | null;
   email: string | null;
-  origem: string | null;
-  descricao: string | null;
-  owner_id: string;
+  origem?: string | null;
+  descricao?: string | null;
+  owner_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -1819,7 +1821,12 @@ export default function MaggiSimulator() {
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(true);
+  // MAGGI_LEAD_SEARCH_REMOTE_V2: não depender do recorte dos últimos leads.
+  const [leadOpen, setLeadOpen] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
+  const [remoteLeads, setRemoteLeads] = useState<Lead[]>([]);
+  const [searchingLeads, setSearchingLeads] = useState(false);
+  const [leadSearchError, setLeadSearchError] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
 
   const [selectedGroupId, setSelectedGroupId] = useState("");
@@ -1880,15 +1887,19 @@ export default function MaggiSimulator() {
 
     const { data, error } = await supabase
       .from("leads")
-      .select("id, nome, telefone, email, origem, descricao, owner_id, created_at, updated_at")
+      .select("id, nome, telefone, email")
       .order("created_at", { ascending: false })
-      .limit(300);
+      .limit(80);
 
     if (error) {
       console.error("Erro ao carregar leads:", error.message);
       setLeads([]);
     } else {
-      setLeads((data ?? []) as Lead[]);
+      setLeads((previous) => {
+        const list = new Map<string, Lead>();
+        for (const row of [...((data ?? []) as Lead[]), ...previous]) list.set(row.id, row);
+        return [...list.values()];
+      });
     }
 
     setLoadingLeads(false);
@@ -1935,25 +1946,95 @@ export default function MaggiSimulator() {
     [leads, selectedLeadId]
   );
 
+  // A busca remota encontra leads antigos, sem trazer toda a base para o navegador.
+  useEffect(() => {
+    if (!leadOpen) {
+      setLeadSearch("");
+      setRemoteLeads([]);
+      setSearchingLeads(false);
+      setLeadSearchError("");
+      return;
+    }
+    const q = leadSearch.trim();
+    const digits = q.replace(/\D/g, "");
+    if (q.length < 2 && digits.length < 4) {
+      setRemoteLeads([]);
+      setSearchingLeads(false);
+      setLeadSearchError("");
+      return;
+    }
+
+    let cancelled = false;
+    setSearchingLeads(true);
+    setLeadSearchError("");
+    const timer = window.setTimeout(async () => {
+      try {
+        const columns = "id,nome,telefone,email";
+        const queryName = supabase.from("leads")
+          .select(columns)
+          .ilike("nome", `%${q}%`)
+          .order("nome", { ascending: true })
+          .limit(60);
+        const queryEmail = supabase.from("leads")
+          .select(columns)
+          .ilike("email", `%${q}%`)
+          .order("nome", { ascending: true })
+          .limit(30);
+        const queryPhone = digits.length >= 4
+          ? supabase.from("leads")
+              .select(columns)
+              .ilike("telefone", `%${digits}%`)
+              .order("nome", { ascending: true })
+              .limit(60)
+          : Promise.resolve({ data: [] as Lead[], error: null });
+
+        const [byName, byEmail, byPhone] = await Promise.all([
+          queryName, queryEmail, queryPhone
+        ]);
+        if (cancelled) return;
+        const error = byName.error || byEmail.error || byPhone.error;
+        if (error) {
+          setLeadSearchError("Não foi possível consultar os leads. Tente novamente.");
+          setRemoteLeads([]);
+          return;
+        }
+        const unique = new Map<string, Lead>();
+        for (const row of [...(byName.data ?? []), ...(byEmail.data ?? []), ...(byPhone.data ?? [])] as Lead[]) {
+          if (row.id) unique.set(row.id, row);
+        }
+        setRemoteLeads([...unique.values()]);
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Erro na busca remota de leads da Maggi:", error);
+          setLeadSearchError("Não foi possível consultar os leads. Tente novamente.");
+          setRemoteLeads([]);
+        }
+      } finally {
+        if (!cancelled) setSearchingLeads(false);
+      }
+    }, 300);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [leadOpen, leadSearch]);
+
   const filteredLeads = useMemo(() => {
-    const q = leadSearch.trim().toLowerCase();
+    const normalize = (value: string) => value.normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    const q = normalize(leadSearch.trim());
+    const digits = leadSearch.replace(/\D/g, "");
+    if (!q) return leads.slice(0, 40);
 
-    if (!q) return leads.slice(0, 30);
-
-    return leads
-      .filter((lead) => {
-        const hay = [
-          getLeadName(lead),
-          getLeadPhone(lead),
-          lead.email || "",
-        ]
-          .join(" ")
-          .toLowerCase();
-
-        return hay.includes(q);
-      })
-      .slice(0, 30);
-  }, [leads, leadSearch]);
+    const unique = new Map<string, Lead>();
+    for (const lead of [...remoteLeads, ...leads]) {
+      const name = normalize(getLeadName(lead));
+      const email = normalize(lead.email || "");
+      const phone = getLeadPhone(lead).replace(/\D/g, "");
+      if (name.includes(q) || email.includes(q) || (digits.length >= 4 && phone.includes(digits))) {
+        unique.set(lead.id, lead);
+      }
+    }
+    return [...unique.values()].slice(0, 60);
+  }, [leads, remoteLeads, leadSearch]);
 
   const previewRows = useMemo(() => {
     if (!selectedGroup) return [];
@@ -2005,6 +2086,7 @@ export default function MaggiSimulator() {
   }, [activeLanceOptions, lanceKey]);
 
   const { result, error: calcError } = useMemo(() => {
+    if (!selectedLead) return { result: null, error: null };
     return calcMaggi({
       group: selectedGroup,
       credito,
@@ -2016,6 +2098,7 @@ export default function MaggiSimulator() {
       parcelaContemplacao,
     });
   }, [
+    selectedLead,
     selectedGroup,
     credito,
     prazoRuleId,
@@ -2065,7 +2148,7 @@ ${wa}`;
   ]);
 
   async function copiarResumo() {
-    if (!resumoTexto) return;
+    if (!selectedLead || !resumoTexto) return;
 
     try {
       await navigator.clipboard.writeText(resumoTexto);
@@ -2271,6 +2354,88 @@ ${wa}`;
         </div>
       </section>
 
+      <Card className="rounded-[28px] border border-[#A11C27]/25 bg-white shadow-sm">
+        <CardHeader>
+          <SectionTitle
+            icon={UserRound}
+            title="1. Selecionar lead / cliente"
+            subtitle="Obrigatório: escolha um contato antes de montar qualquer simulação."
+          />
+        </CardHeader>
+        <CardContent>
+          <div className="max-w-2xl space-y-3">
+            <Popover open={leadOpen} onOpenChange={setLeadOpen}>
+              <PopoverButton
+                aria-label="Selecionar lead para simulação Maggi"
+                className="h-12 w-full rounded-xl border-slate-300 px-4 text-left font-semibold"
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  {selectedLead ? getLeadName(selectedLead) : "Buscar e selecionar um lead"}
+                </span>
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+              </PopoverButton>
+              <PopoverContent align="start" className="z-50 w-[min(560px,calc(100vw-32px))] p-3">
+                <div className="flex items-center gap-2 rounded-xl border px-3">
+                  <Search className="h-4 w-4 shrink-0 text-slate-400" />
+                  <Input
+                    aria-label="Buscar lead por nome, telefone ou e-mail"
+                    className="h-10 border-0 bg-transparent pl-0 focus-visible:ring-0"
+                    value={leadSearch}
+                    onChange={(event) => setLeadSearch(event.target.value)}
+                    placeholder="Nome, telefone ou e-mail (inclusive leads antigos)"
+                    autoFocus
+                  />
+                </div>
+                <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border">
+                  {(loadingLeads || searchingLeads) && (
+                    <div role="status" className="flex items-center gap-2 border-b p-3 text-xs text-slate-500">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {searchingLeads ? "Buscando em todo o cadastro de leads..." : "Carregando contatos recentes..."}
+                    </div>
+                  )}
+                  {filteredLeads.map((lead) => (
+                    <button
+                      type="button"
+                      key={lead.id}
+                      className="flex w-full items-center justify-between gap-3 border-b px-3 py-3 text-left last:border-0 hover:bg-slate-50"
+                      onClick={() => {
+                        setLeads((prev) => prev.some((item) => item.id === lead.id) ? prev : [lead, ...prev]);
+                        setSelectedLeadId(lead.id);
+                        setLeadOpen(false);
+                      }}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-bold text-[#1E293F]">{getLeadName(lead)}</span>
+                        <span className="block truncate text-xs text-slate-500">{getLeadPhone(lead) || lead.email || "Sem contato"}</span>
+                      </span>
+                      {selectedLeadId === lead.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-[#A11C27]" />}
+                    </button>
+                  ))}
+                  {!loadingLeads && !searchingLeads && !filteredLeads.length && !leadSearchError && (
+                    <p className="p-4 text-center text-sm text-slate-500">Nenhum lead encontrado. Experimente o nome, telefone ou e-mail.</p>
+                  )}
+                </div>
+                {leadSearchError && <p role="alert" className="mt-2 text-xs text-red-700">{leadSearchError}</p>}
+                <p className="mt-2 text-[11px] text-slate-500">Digite 2 ou mais letras do nome ou 4 números do telefone. A pesquisa consulta também os leads antigos.</p>
+              </PopoverContent>
+            </Popover>
+            {selectedLead ? (
+              <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                <CheckCircle2 className="h-4 w-4" />
+                Lead vinculado: <strong>{getLeadName(selectedLead)}</strong>
+                {getLeadPhone(selectedLead) && <span className="text-xs text-emerald-700">{getLeadPhone(selectedLead)}</span>}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                Selecione um lead para liberar os grupos, créditos, prazos e resultados do simulador.
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {selectedLead ? (
+      <>
       <Card className="rounded-[28px] border bg-white/75 shadow-sm backdrop-blur">
         <CardHeader>
           <CardTitle className="text-base" style={{ color: C.navy }}>
@@ -2321,83 +2486,6 @@ ${wa}`;
           </CardHeader>
 
           <CardContent className="space-y-5">
-            <div className="rounded-3xl border p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <UserRound className="h-4 w-4" style={{ color: C.ruby }} />
-                <div>
-                  <div className="font-black" style={{ color: C.navy }}>
-                    Lead / Cliente
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    Selecione o lead para vincular e salvar a simulação.
-                  </div>
-                </div>
-              </div>
-
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  className="pl-9"
-                  value={leadSearch}
-                  onChange={(e) => setLeadSearch(e.target.value)}
-                  placeholder={
-                    loadingLeads
-                      ? "Carregando leads..."
-                      : "Buscar por nome, telefone ou e-mail"
-                  }
-                />
-              </div>
-
-              <div className="mt-3 max-h-52 overflow-y-auto rounded-2xl border">
-                {filteredLeads.map((lead) => {
-                  const active = selectedLeadId === lead.id;
-
-                  return (
-                    <button
-                      key={lead.id}
-                      type="button"
-                      onClick={() => setSelectedLeadId(lead.id)}
-                      className="flex w-full items-center justify-between gap-3 border-b px-3 py-3 text-left text-sm last:border-b-0 hover:bg-slate-50"
-                      style={{
-                        background: active ? "rgba(161,28,39,.06)" : undefined,
-                      }}
-                    >
-                      <div>
-                        <div className="font-bold" style={{ color: C.navy }}>
-                          {getLeadName(lead)}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {getLeadPhone(lead) || lead.email || "Sem contato"}
-                        </div>
-                      </div>
-
-                      {active && (
-                        <CheckCircle2
-                          className="h-4 w-4"
-                          style={{ color: C.ruby }}
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-
-                {!loadingLeads && filteredLeads.length === 0 && (
-                  <div className="p-4 text-center text-sm text-slate-500">
-                    Nenhum lead encontrado.
-                  </div>
-                )}
-              </div>
-
-              {selectedLead && (
-                <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
-                  Lead selecionado:{" "}
-                  <strong style={{ color: C.navy }}>
-                    {getLeadName(selectedLead)}
-                  </strong>
-                </div>
-              )}
-            </div>
-
             <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <Label>Grupo Maggi</Label>
@@ -2831,6 +2919,18 @@ ${wa}`;
           </CardContent>
         </Card>
       </div>
+
+      </>
+      ) : (
+        <Card className="rounded-[28px] border border-dashed border-[#A11C27]/30 bg-white">
+          <CardContent className="flex min-h-36 flex-col items-center justify-center gap-3 p-8 text-center">
+            <UserRound className="h-7 w-7 text-[#A11C27]" />
+            <p className="text-sm font-semibold text-[#1E293F]">
+              Selecione um lead acima para iniciar a simulação Maggi.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <ConfigGroupsOverlay
         open={configOpen}

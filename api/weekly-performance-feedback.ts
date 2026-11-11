@@ -170,8 +170,19 @@ function average(values: number[]) {
   return values.reduce((sum, n) => sum + n, 0) / values.length;
 }
 
-function sumSales(rows: any[]) {
-  return rows.reduce((sum, row) => sum + asNumber(row.valor_venda), 0);
+function encarteiramentoDay(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : localYmd(date);
+}
+
+function sumSales(rows: any[], start: string, end: string) {
+  return rows.reduce((sum, row) => {
+    const valor = asNumber(row.valor_venda);
+    const entrada = encarteiramentoDay(row.encarteirada_em);
+    const cancelamento = encarteiramentoDay(row.cancelada_em);
+    return sum + (entrada >= start && entrada <= end ? valor : 0) - (cancelamento >= start && cancelamento <= end ? valor : 0);
+  }, 0);
 }
 
 function metricCard(label: string, value: string | number, helper = "") {
@@ -421,7 +432,10 @@ async function loadData(periodEnd: string) {
     goalsRes,
   ] = await Promise.all([
     supabaseAdmin.from("users").select("id,auth_user_id,nome,email,role,user_role,is_active").eq("is_active", true),
-    supabaseAdmin.from("vendas").select("id,data_venda,vendedor_id,valor_venda,cancelada_em,status").gte("data_venda", currentYearStart).lte("data_venda", periodEnd),
+    supabaseAdmin.from("vendas")
+      .select("id,vendedor_id,valor_venda,encarteirada_em,cancelada_em,status")
+      .eq("status", "encarteirada")
+      .or(`and(encarteirada_em.gte.${isoStart(periodStart < currentYearStart ? periodStart : currentYearStart)},encarteirada_em.lt.${isoStart(endExclusive)}),and(cancelada_em.gte.${isoStart(periodStart < currentYearStart ? periodStart : currentYearStart)},cancelada_em.lt.${isoStart(endExclusive)})`),
     supabaseAdmin.from("leads").select("id,owner_id,created_at").gte("created_at", isoStart(historyStart)).lt("created_at", isoStart(endExclusive)),
     supabaseAdmin
       .from("opportunities")
@@ -531,13 +545,13 @@ function computeForUser(data: any, user: UserRow) {
       ? clamp(45 + activityNow * 3)
       : 20;
 
-  const salesRows = data.sales.filter((row: any) => {
-    const cancelled = Boolean(row.cancelada_em) || normalize(row.status).includes("cancel");
-    return row.vendedor_id === user.auth_user_id && !cancelled;
+  const salesRows = data.sales.filter((row: any) =>
+    row.vendedor_id === user.auth_user_id && normalize(row.status) === "encarteirada"
+  );
+  const weekSales = salesRows.filter((row: any) => {
+    const dia = encarteiramentoDay(row.encarteirada_em);
+    return dia >= periodStart && dia <= data.periodEnd;
   });
-  const weekSales = salesRows.filter((row: any) => row.data_venda >= periodStart && row.data_venda <= data.periodEnd);
-  const monthSales = salesRows.filter((row: any) => row.data_venda >= data.currentMonthStart && row.data_venda <= data.periodEnd);
-  const yearSales = salesRows.filter((row: any) => row.data_venda >= data.currentYearStart && row.data_venda <= data.periodEnd);
 
   const goal = data.goals.find((row: any) => row.vendedor_id === user.id || row.auth_user_id === user.auth_user_id) || null;
   const monthNumber = Number(data.periodEnd.slice(5, 7));
@@ -547,8 +561,8 @@ function computeForUser(data: any, user: UserRow) {
     ? Array.from({ length: 12 }, (_, index) => asNumber(goal[`m${String(index + 1).padStart(2, "0")}`])).reduce((a, b) => a + b, 0)
     : 0;
 
-  const monthActual = sumSales(monthSales);
-  const annualActual = sumSales(yearSales);
+  const monthActual = sumSales(salesRows, data.currentMonthStart, data.periodEnd);
+  const annualActual = sumSales(salesRows, data.currentYearStart, data.periodEnd);
   const monthBusinessTotal = businessDays(monthStart(data.periodEnd), monthEnd(data.periodEnd));
   const monthBusinessElapsed = businessDays(monthStart(data.periodEnd), data.periodEnd);
   const yearBusinessTotal = businessDays(yearStart(data.periodEnd), yearEnd(data.periodEnd));
@@ -640,7 +654,7 @@ function computeForUser(data: any, user: UserRow) {
   if (weekly.meetings > 0) positives.push(`${weekly.meetings} reunião(ões) confirmada(s) nesta semana.`);
   if (activityNow > priorAverage && priorAverage > 0) positives.push("Seu nível de atividade comercial ficou acima da média das quatro semanas anteriores.");
   if (monthGoal > 0 && monthActual >= monthExpected) positives.push("Seu volume de vendas está no ritmo ou acima do esperado para o mês.");
-  if (weekSales.length > 0) positives.push(`${weekSales.length} venda(s) registrada(s) na semana, totalizando ${formatBRL(sumSales(weekSales))}.`);
+  if (weekSales.length > 0) positives.push(`${weekSales.length} venda(s) registrada(s) na semana, totalizando ${formatBRL(sumSales(salesRows, periodStart, data.periodEnd))}.`);
 
   const priorities: string[] = [];
   if (highPotentialOverdue.length) {
@@ -658,7 +672,7 @@ function computeForUser(data: any, user: UserRow) {
   while (priorities.length < 3) priorities.push("Manter constância nas abordagens, diagnóstico e follow-ups ao longo da próxima semana.");
 
   const week = {
-    salesAmount: sumSales(weekSales),
+    salesAmount: sumSales(salesRows, periodStart, data.periodEnd),
     salesCount: weekSales.length,
     simulations: weekly.simulations,
     prospections: weekly.prospections,

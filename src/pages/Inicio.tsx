@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { loadCommissionFinancialLedger, selectCommissionFinance, summarizeCommissionFinance } from "@/lib/commission-financial";
+import { portfolioMovementTotals } from "@/lib/portfolioMetrics";
 import AceleraConsulmax from "@/components/campaigns/AceleraConsulmax";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -393,11 +394,17 @@ export default function Inicio() {
     if (sorteioDates.length) { const { data: draws, error: drawsErr } = await supabase.from("lottery_draws").select("draw_date").in("draw_date", sorteioDates); if (drawsErr) console.warn("[Inicio] Não foi possível carregar resultados da loteria:", drawsErr); (draws || []).forEach((d: any) => drawsByDate.set(toYMD(d.draw_date) as string, true)); }
 
     const { startYMD, endYMD, year, month } = rangeMonth;
-    let salesQ = supabase.from("vendas").select("valor_venda,vendedor_id,data_venda").gte("data_venda", startYMD).lt("data_venda", endYMD);
+    // Competência comercial: somente cotas encarteiradas; cancelamentos descontados em sua data.
+    const salesStartISO = new Date(`${startYMD}T00:00:00-04:00`).toISOString();
+    const salesEndISO = new Date(`${endYMD}T00:00:00-04:00`).toISOString();
+    let salesQ = supabase.from("vendas")
+      .select("valor_venda,vendedor_id,encarteirada_em,cancelada_em")
+      .eq("status", "encarteirada")
+      .or(`and(encarteirada_em.gte.${salesStartISO},encarteirada_em.lt.${salesEndISO}),and(cancelada_em.gte.${salesStartISO},cancelada_em.lt.${salesEndISO})`);
     salesQ = applyVendedorScope(salesQ);
     const { data: salesRows, error: salesErr } = await salesQ;
-    if (salesErr) console.warn("[Inicio] Não foi possível carregar vendas do mês:", salesErr);
-    const monthSalesTotal = (salesRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
+    if (salesErr) console.warn("[Inicio] Não foi possível carregar encarteiramentos do mês:", salesErr);
+    const monthSalesTotal = portfolioMovementTotals(salesRows || [], startYMD, addDaysYMD(endYMD, -1)).liquido;
 
     const field = metaFieldForMonth(month);
     let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
@@ -1136,8 +1143,8 @@ export default function Inicio() {
             <CardContent className="flex items-center gap-4 p-5">
               <Donut pct={kpi.monthSalesPct} size={112} stroke={10} centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`} centerBottom="da meta" />
               <div className="min-w-0">
-                <div className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Meta x Vendas</div>
-                <div className="mt-2 text-sm text-slate-500">Realizado</div>
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Meta x Encarteiramento</div>
+                <div className="mt-2 text-sm text-slate-500">Realizado líquido</div>
                 <div className="text-base font-bold text-slate-950">{fmtBRL(kpi.monthSalesTotal)}</div>
                 <div className="mt-1 text-xs text-slate-500">Meta: {fmtBRL(kpi.monthSalesMeta)}</div>
               </div>

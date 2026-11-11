@@ -798,7 +798,7 @@ const AtingimentoMeses: React.FC<AtingimentoMesesProps> = ({ selectedYear, metas
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-sm font-semibold text-gray-900">Atingimento</div>
-          <div className="text-xs text-gray-500">Meta mensal</div>
+          <div className="text-xs text-gray-500">Encarteiramento líquido por mês</div>
         </div>
         <div className="text-xs text-gray-500">{selectedYear}</div>
       </div>
@@ -1847,7 +1847,7 @@ const Carteira: React.FC = () => {
           <div className="xl:col-span-2 rounded-2xl border bg-white p-4 shadow-sm">
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.7fr_120px] gap-5 items-center">
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-gray-900">Meta Anual</div>
+                <div className="text-sm font-semibold text-gray-900">Meta Anual • Encarteiramento líquido</div>
 
                 <div className="mt-3 text-sm text-gray-700 space-y-1">
                   <div>

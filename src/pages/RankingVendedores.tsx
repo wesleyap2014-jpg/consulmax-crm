@@ -1,6 +1,7 @@
 // src/pages/RankingVendedores.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { portfolioDay } from "@/lib/portfolioMetrics";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -30,7 +31,7 @@ const CONFIG = {
 
   // Mantido apenas para ranking por administradora e realtime
   DEALS_TABLE: "vendas",
-  DEALS_DATE: "data_venda",
+  DEALS_DATE: "encarteirada_em",
   DEALS_STATUS: "status",
   DEALS_TIPO: "tipo_venda",
   DEAL_VALUE_KEY: "valor_venda",
@@ -496,11 +497,13 @@ export default function RankingVendedores() {
   const reloadDealsForAdminRanking = useCallback(async () => {
     setAdminLoading(true);
 
+    const startISO = new Date(`${startStr}T00:00:00-04:00`).toISOString();
+    const endISO = new Date(`${endStr}T00:00:00-04:00`).toISOString();
     const { data, error } = await supabase
       .from(CONFIG.DEALS_TABLE)
       .select("*")
-      .gte(CONFIG.DEALS_DATE, startStr)
-      .lt(CONFIG.DEALS_DATE, endStr);
+      .eq("status", "encarteirada")
+      .or(`and(encarteirada_em.gte.${startISO},encarteirada_em.lt.${endISO}),and(cancelada_em.gte.${startISO},cancelada_em.lt.${endISO})`);
 
     if (error) {
       console.error("Erro ao carregar ranking por administradora:", error);
@@ -529,9 +532,10 @@ export default function RankingVendedores() {
         { event: "INSERT", schema: "public", table: CONFIG.DEALS_TABLE },
         (payload) => {
           const row = payload.new as RawDeal;
-          const dateStr = String(row[CONFIG.DEALS_DATE] || "");
+          const dateStr = portfolioDay(row[CONFIG.DEALS_DATE]) || "";
+          const cancelDate = portfolioDay(row.cancelada_em) || "";
 
-          if (dateStr >= startStr && dateStr < endStr) {
+          if ((dateStr >= startStr && dateStr < endStr) || (cancelDate >= startStr && cancelDate < endStr)) {
             void reloadRanking(false);
             void reloadPreviousRanking();
             void reloadDealsForAdminRanking();
@@ -544,9 +548,10 @@ export default function RankingVendedores() {
         { event: "UPDATE", schema: "public", table: CONFIG.DEALS_TABLE },
         (payload) => {
           const row = payload.new as RawDeal;
-          const dateStr = String(row[CONFIG.DEALS_DATE] || "");
+          const dateStr = portfolioDay(row[CONFIG.DEALS_DATE]) || "";
+          const cancelDate = portfolioDay(row.cancelada_em) || "";
 
-          if (!(dateStr >= startStr && dateStr < endStr)) return;
+          if (!((dateStr >= startStr && dateStr < endStr) || (cancelDate >= startStr && cancelDate < endStr))) return;
 
           void reloadRanking(false);
           void reloadPreviousRanking();
@@ -640,8 +645,11 @@ export default function RankingVendedores() {
     const map: Record<string, { admin: string; vendas: number; producao: number }> = {};
 
     for (const d of deals) {
-      const tipo = String(d[CONFIG.DEALS_TIPO] || "").toLowerCase();
-      if (tipo === "contemplada") continue;
+      const encDia = portfolioDay(d.encarteirada_em) || "";
+      const cancelDia = portfolioDay(d.cancelada_em) || "";
+      const isEncarteiradaNoMes = encDia >= startStr && encDia < endStr;
+      const isCanceladaNoMes = cancelDia >= startStr && cancelDia < endStr;
+      if (!isEncarteiradaNoMes && !isCanceladaNoMes) continue;
 
       const admin = String(d[CONFIG.DEAL_ADMIN] || "—");
       const val = Number(d[CONFIG.DEAL_VALUE_KEY] ?? 0) || 0;
@@ -650,8 +658,8 @@ export default function RankingVendedores() {
         map[admin] = { admin, vendas: 0, producao: 0 };
       }
 
-      map[admin].vendas += 1;
-      map[admin].producao += val;
+      map[admin].vendas += isEncarteiradaNoMes ? 1 : 0;
+      map[admin].producao += (isEncarteiradaNoMes ? val : 0) - (isCanceladaNoMes ? val : 0);
     }
 
     return Object.values(map)
@@ -661,7 +669,7 @@ export default function RankingVendedores() {
         pctTotal: producaoTotal > 0 ? (row.producao / producaoTotal) * 100 : 0,
       }))
       .sort((a, b) => b.producao - a.producao);
-  }, [deals, producaoTotal]);
+  }, [deals, producaoTotal, startStr, endStr]);
 
   const highlights = useMemo(() => {
     const withProduction = ranking.filter((r) => Number(r.producao || 0) > 0);

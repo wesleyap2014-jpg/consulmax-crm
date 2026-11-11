@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
+import { portfolioDay, portfolioDateInRange, portfolioMonthlySeries, portfolioMovementTotals } from "@/lib/portfolioMetrics";
 import MeuPerfil from "./MeuPerfil";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -72,7 +73,7 @@ type VisibleUser = UserProfile & {
 
 type HrEmployee = { id: string; cargo?: string | null; setor?: string | null };
 type HrContract = { hire_date?: string | null; role_title?: string | null; department_name?: string | null };
-type SaleRow = { data_venda: string; valor_venda?: number | null; administradora?: string | null; segmento?: string | null };
+type SaleRow = { encarteirada_em?: string | null; cancelada_em?: string | null; valor_venda?: number | null; administradora?: string | null; segmento?: string | null };
 type OpportunityRow = {
   id: string;
   estagio?: string | null;
@@ -338,6 +339,8 @@ function PerfilPreposto({ profileId }: { profileId: string }) {
       const nextMonth = addMonths(monthStart, 1);
       const chartStart = addMonths(monthStart, -11);
       const goalYears = Array.from(new Set([chartStart.getFullYear(), now.getFullYear()]));
+      const salesStartISO = new Date(`${ymd(chartStart)}T00:00:00-04:00`).toISOString();
+      const salesEndISO = new Date(`${ymd(nextMonth)}T00:00:00-04:00`).toISOString();
 
       const [unitRes, hrRes, salesRes, oppRes, leadsRes, goalsRes, auditRes, avatarUrl] = await Promise.all([
         target.unit_id
@@ -346,11 +349,11 @@ function PerfilPreposto({ profileId }: { profileId: string }) {
         supabase.from("hr_employees").select("id,cargo,setor").or(`auth_user_id.eq.${target.auth_user_id},user_id.eq.${target.id}`).maybeSingle(),
         supabase
           .from("vendas")
-          .select("data_venda,valor_venda,administradora,segmento")
+          .select("encarteirada_em,cancelada_em,valor_venda,administradora,segmento")
           .eq("vendedor_id", target.auth_user_id)
-          .gte("data_venda", ymd(chartStart))
-          .lt("data_venda", ymd(nextMonth))
-          .order("data_venda", { ascending: true }),
+          .eq("status", "encarteirada")
+          .or(`and(encarteirada_em.gte.${salesStartISO},encarteirada_em.lt.${salesEndISO}),and(cancelada_em.gte.${salesStartISO},cancelada_em.lt.${salesEndISO})`)
+          .order("encarteirada_em", { ascending: true }),
         supabase
           .from("opportunities")
           .select("id,estagio,stage,score,qualification_score,segmento,created_at,updated_at,qualified_at,won_at,lost_at,next_follow_up_at")
@@ -426,8 +429,8 @@ function PerfilPreposto({ profileId }: { profileId: string }) {
     const nextMonth = addMonths(monthStart, 1);
     const monthStartYMD = ymd(monthStart);
     const nextMonthYMD = ymd(nextMonth);
-    const salesMonth = data.sales.filter((s) => s.data_venda >= monthStartYMD && s.data_venda < nextMonthYMD);
-    const salesMonthTotal = salesMonth.reduce((sum, s) => sum + Number(s.valor_venda || 0), 0);
+    const salesMonth = data.sales.filter((s) => portfolioDateInRange(s.encarteirada_em, monthStartYMD, nextMonthYMD) && portfolioDay(s.encarteirada_em) !== nextMonthYMD);
+    const salesMonthTotal = portfolioMovementTotals(data.sales, monthStartYMD, new Date(new Date(`${nextMonthYMD}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)).liquido;
     const ticket = salesMonth.length ? salesMonthTotal / salesMonth.length : 0;
     const wonMonth = data.opportunities.filter((o) => {
       const d = onlyDate(o.won_at);
@@ -461,7 +464,7 @@ function PerfilPreposto({ profileId }: { profileId: string }) {
       const date = addMonths(startOfMonth(now), idx - 11);
       const start = ymd(date);
       const end = ymd(addMonths(date, 1));
-      const sales = data.sales.filter((s) => s.data_venda >= start && s.data_venda < end).reduce((sum, s) => sum + Number(s.valor_venda || 0), 0);
+      const sales = portfolioMonthlySeries(data.sales, [start.slice(0, 7)])[0]?.liquido || 0;
       const goalRow = data.goals.find((g) => Number(g.ano) === date.getFullYear());
       const key = `m${String(date.getMonth() + 1).padStart(2, "0")}`;
       return {

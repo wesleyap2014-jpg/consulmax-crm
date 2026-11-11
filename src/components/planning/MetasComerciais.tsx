@@ -265,6 +265,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
     vendedor_id: "", ano: currentYear, m: Array(12).fill(0)
   });
   const [savingMeta, setSavingMeta] = useState(false);
+  const [monthlyInputs, setMonthlyInputs] = useState<string[]>(Array(12).fill("0,00"));
   const [formError, setFormError] = useState("");
   const latestRequestId = useRef(0);
   const latestFormRequestId = useRef(0);
@@ -342,6 +343,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
       }
       const values = Array.from({ length: 12 }, (_, i) => Number((data as any)?.[`m${String(i + 1).padStart(2, "0")}`] || 0));
       setMetaForm((prev) => prev.vendedor_id === sellerId && prev.ano === year ? { ...prev, m: values } : prev);
+      setMonthlyInputs(values.map(formatNumberBR));
     })();
   }, [metaOverlay.open, metaForm.vendedor_id, metaForm.ano, isAdmin]);
 
@@ -372,6 +374,7 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
     setFormError("");
     setSuccessMessage("");
     setMetaForm({ vendedor_id: selectedSeller || "", ano: selectedYear, m: Array(12).fill(0) });
+    setMonthlyInputs(Array(12).fill("0,00"));
     setMetaOverlay({ open: true });
   };
 
@@ -594,9 +597,9 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                   value={metaForm.vendedor_id}
                   onChange={(e) => {
                     const id = e.target.value;
-                    setMetaForm((p) => ({ ...p, vendedor_id: id }));
-                    if (id) loadMetaForForm(id, metaForm.ano);
-                    else setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
+                    setFormError("");
+                    setMetaForm((p) => ({ ...p, vendedor_id: id, m: Array(12).fill(0) }));
+                    setMonthlyInputs(Array(12).fill("0,00"));
                   }}
                   disabled={!isAdmin}
                 >
@@ -616,8 +619,9 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                   value={metaForm.ano}
                   onChange={(e) => {
                     const newYear = Number(e.target.value);
-                    setMetaForm((p) => ({ ...p, ano: newYear }));
-                    if (metaForm.vendedor_id) loadMetaForForm(metaForm.vendedor_id, newYear);
+                    setFormError("");
+                    setMetaForm((p) => ({ ...p, ano: newYear, m: Array(12).fill(0) }));
+                    setMonthlyInputs(Array(12).fill("0,00"));
                   }}
                 >
                   {Array.from({ length: 6 }).map((_, i) => {
@@ -639,17 +643,25 @@ export default function MetasComerciais({ currentUser, users }: MetasComerciaisP
                   <input
                     type="text"
                     className="w-full border rounded-xl px-3 py-2"
-                    value={formatNumberBR(metaForm.m[i] || 0)}
-                    onChange={(e) =>
-                      setMetaForm((p) => {
-                        const arr = [...p.m];
-                        const raw = e.target.value;
-                        const normalized = raw.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
-                        const n = normalized ? Number(normalized) : 0;
-                        arr[i] = Number.isNaN(n) ? 0 : n;
-                        return { ...p, m: arr };
-                      })
-                    }
+                    inputMode="decimal"
+                    aria-label={`Meta de ${m} de ${metaForm.ano}`}
+                    value={monthlyInputs[i] || ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setMonthlyInputs((prev) => prev.map((v, j) => j === i ? raw : v));
+                      const normalized = raw.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+                      const parsed = normalized ? Number(normalized) : 0;
+                      setMetaForm((prev) => {
+                        const arr = [...prev.m];
+                        arr[i] = Number.isFinite(parsed) ? parsed : NaN;
+                        return { ...prev, m: arr };
+                      });
+                    }}
+                    onBlur={() => {
+                      if (Number.isFinite(metaForm.m[i]) && metaForm.m[i] >= 0) {
+                        setMonthlyInputs((prev) => prev.map((v, j) => j === i ? formatNumberBR(metaForm.m[i]) : v));
+                      }
+                    }}
                   />
                 </div>
               ))}

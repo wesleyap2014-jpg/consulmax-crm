@@ -1,8 +1,7 @@
 // src/pages/Carteira.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { portfolioDateInputToISO, portfolioDay, portfolioMonthlySeries } from "@/lib/portfolioMetrics";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { portfolioDateInputToISO, portfolioDay } from "@/lib/portfolioMetrics";
 
 type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null };
 
@@ -71,8 +70,6 @@ const PRODUTOS: Produto[] = [
 
 const FORMAS: FormaVenda[] = ["Parcela Cheia", "Reduzida 25%", "Reduzida 50%"];
 
-const MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-
 const currency = (n: number) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -80,23 +77,9 @@ const currency = (n: number) =>
     maximumFractionDigits: 2,
   }).format(n || 0);
 
-const formatNumberBR = (n: number) =>
-  new Intl.NumberFormat("pt-BR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n || 0);
-
-const formatPctHuman = (n: number, digits = 1) =>
-  `${new Intl.NumberFormat("pt-BR", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: digits,
-  }).format(n || 0)}%`;
-
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
 const onlyDigits = (s: string) => (s || "").replace(/\D/g, "");
-
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 const formatDateBR = (isoDate?: string | null) => {
   if (!isoDate) return "—";
@@ -278,101 +261,6 @@ const formatPct4 = (n?: number | null) => {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
   }).format(Number(n));
-};
-
-const monthAlreadyHappened = (year: number, monthIndex: number) => {
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth();
-
-  if (year < currentYear) return true;
-  if (year > currentYear) return false;
-  return monthIndex <= currentMonth;
-};
-
-const annualExpectedPercent = (year: number) => {
-  const now = new Date();
-  const currentYear = now.getFullYear();
-
-  if (year < currentYear) return 100;
-  if (year > currentYear) return 0;
-
-  const start = new Date(year, 0, 1);
-  const end = new Date(year + 1, 0, 1);
-  const totalMs = end.getTime() - start.getTime();
-
-  const todayEnd = new Date(year, now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  const elapsedMs = todayEnd.getTime() - start.getTime();
-
-  return clamp((elapsedMs / totalMs) * 100, 0, 100);
-};
-
-type PaceStatus = {
-  label: "Vencendo" | "No jogo" | "Atenção" | "Risco" | "Virada necessária" | "Sem meta";
-  description: string;
-  pillClass: string;
-  barClass: string;
-  textClass: string;
-};
-
-const getPaceStatus = (diffPct: number | null, hasMeta: boolean): PaceStatus => {
-  if (!hasMeta || diffPct == null || !Number.isFinite(diffPct)) {
-    return {
-      label: "Sem meta",
-      description: "Cadastre uma meta anual para acompanhar o ritmo do jogo.",
-      pillClass: "bg-gray-100 text-gray-700 border-gray-200",
-      barClass: "bg-gray-300",
-      textClass: "text-gray-700",
-    };
-  }
-
-  if (diffPct >= 0) {
-    return {
-      label: "Vencendo",
-      description: "Você está acima do ritmo esperado. Continue acelerando para abrir vantagem.",
-      pillClass: "bg-[#1E293F]/10 text-[#1E293F] border-[#1E293F]/20",
-      barClass: "bg-[#1E293F]",
-      textClass: "text-[#1E293F]",
-    };
-  }
-
-  if (diffPct >= -5) {
-    return {
-      label: "No jogo",
-      description: "Você está muito próximo do ritmo. Pequenos avanços já colocam a meta em vantagem.",
-      pillClass: "bg-blue-100 text-blue-800 border-blue-200",
-      barClass: "bg-blue-600",
-      textClass: "text-blue-800",
-    };
-  }
-
-  if (diffPct >= -15) {
-    return {
-      label: "Atenção",
-      description: "Você está abaixo do ritmo, mas ainda em zona recuperável. Priorize oportunidades quentes.",
-      pillClass: "bg-amber-100 text-amber-800 border-amber-200",
-      barClass: "bg-amber-500",
-      textClass: "text-amber-800",
-    };
-  }
-
-  if (diffPct >= -30) {
-    return {
-      label: "Risco",
-      description: "O jogo está ficando perigoso. É hora de intensificar follow-ups e propostas.",
-      pillClass: "bg-orange-100 text-orange-800 border-orange-200",
-      barClass: "bg-orange-600",
-      textClass: "text-orange-800",
-    };
-  }
-
-  return {
-    label: "Virada necessária",
-    description: "Você está muito abaixo do ritmo esperado. Foque em ações de impacto imediato.",
-    pillClass: "bg-red-100 text-red-800 border-red-200",
-    barClass: "bg-red-700",
-    textClass: "text-red-800",
-  };
 };
 
 type LinhaEncarteirarProps = {
@@ -706,137 +594,6 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ ope
 
 type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer";
 
-type MiniDonutProps = {
-  label: string;
-  year: number;
-  meta: number;
-  realizado: number;
-};
-
-const MiniDonut: React.FC<MiniDonutProps> = ({ label, year, meta, realizado }) => {
-  const hasMeta = meta > 0;
-  const pct = hasMeta ? (realizado / meta) * 100 : null;
-
-  const data = useMemo(() => {
-    if (!hasMeta) {
-      if (realizado > 0) return [{ name: "Realizado", value: realizado }];
-      return [{ name: "Sem meta", value: 1 }];
-    }
-    if (realizado <= meta) {
-      return [
-        { name: "Realizado", value: Math.max(0, realizado) },
-        { name: "Restante", value: Math.max(0, meta - realizado) },
-      ];
-    }
-    return [
-      { name: "Meta", value: meta },
-      { name: "Excedente", value: Math.max(0, realizado - meta) },
-    ];
-  }, [hasMeta, meta, realizado]);
-
-  const centerText = useMemo(() => {
-    if (!hasMeta) return "—";
-    if (pct == null || !Number.isFinite(pct)) return "—";
-    return formatPctHuman(pct, 0);
-  }, [hasMeta, pct]);
-
-  const diffLabel = hasMeta && realizado > meta ? "Excedente" : "Falta";
-  const diffValue = hasMeta ? Math.abs(meta - realizado) : 0;
-
-  return (
-    <div className="rounded-2xl border bg-white p-3 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold text-gray-900">
-            {label}/{year}
-          </div>
-          <div className="mt-1 space-y-0.5 text-xs text-gray-600">
-            <div>
-              Meta: <strong className="text-gray-900">{currency(meta || 0)}</strong>
-            </div>
-            <div>
-              Realizado: <strong className="text-gray-900">{currency(realizado || 0)}</strong>
-            </div>
-            <div>
-              {diffLabel}: <strong className="text-gray-900">{hasMeta ? currency(diffValue) : "—"}</strong>
-            </div>
-          </div>
-        </div>
-
-        <div className="relative h-16 w-16 shrink-0">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={data} innerRadius={22} outerRadius={31} dataKey="value" stroke="none">
-                {data.map((d, i) => {
-                  if (!hasMeta) return <Cell key={`${label}-${i}`} fill={realizado > 0 ? "#1E293F" : "#E5E7EB"} />;
-                  if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`${label}-${i}`} fill="#1E293F" />;
-                  if (d.name === "Restante") return <Cell key={`${label}-${i}`} fill="#A11C27" />;
-                  return <Cell key={`${label}-${i}`} fill="#B5A573" />;
-                })}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
-
-          <div className="absolute inset-0 grid place-items-center pointer-events-none">
-            <div className="text-xs font-bold text-gray-900">{centerText}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-type AtingimentoMesesProps = {
-  selectedYear: number;
-  metas: number[];
-  realizados: number[];
-};
-
-const AtingimentoMeses: React.FC<AtingimentoMesesProps> = ({ selectedYear, metas, realizados }) => {
-  return (
-    <div className="rounded-2xl border bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold text-gray-900">Atingimento</div>
-          <div className="text-xs text-gray-500">Encarteiramento líquido por mês</div>
-        </div>
-        <div className="text-xs text-gray-500">{selectedYear}</div>
-      </div>
-
-      <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
-        {MONTHS.map((m, idx) => {
-          const meta = metas[idx] || 0;
-          const realizado = realizados[idx] || 0;
-          const happened = monthAlreadyHappened(selectedYear, idx);
-
-          let icon = "—";
-          let cls = "text-gray-400";
-          let title = "Mês ainda não ocorreu ou sem meta";
-
-          if (meta > 0 && happened) {
-            if (realizado >= meta) {
-              icon = "✓";
-              cls = "text-[#1E293F]";
-              title = "Meta atingida";
-            } else {
-              icon = "×";
-              cls = "text-red-600";
-              title = "Meta não atingida";
-            }
-          }
-
-          return (
-            <div key={m} className="flex items-center justify-between rounded-xl bg-gray-50 px-2 py-1.5" title={title}>
-              <span className="text-xs font-medium text-gray-700">{m}</span>
-              <span className={`text-base font-black leading-none ${cls}`}>{icon}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
 const Carteira: React.FC = () => {
   const [userId, setUserId] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
@@ -891,40 +648,7 @@ const Carteira: React.FC = () => {
   >([]);
 
   const [users, setUsers] = useState<AppUser[]>([]);
-  const [metaOverlay, setMetaOverlay] = useState<{ open: boolean }>({ open: false });
-  const [metaForm, setMetaForm] = useState<{ vendedor_id: string; ano: number; m: number[] }>({
-    vendedor_id: "",
-    ano: new Date().getFullYear(),
-    m: Array(12).fill(0),
-  });
-
   const [selectedSeller, setSelectedSeller] = useState<string>("");
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
-  const [realizadoMensal, setRealizadoMensal] = useState<number[]>(Array(12).fill(0));
-
-  const metaAnual = useMemo(() => metaMensal.reduce((a, b) => a + b, 0), [metaMensal]);
-  const realizadoAnual = useMemo(() => realizadoMensal.reduce((a, b) => a + b, 0), [realizadoMensal]);
-
-  const pctAnual = useMemo(() => {
-    if (metaAnual <= 0) return null;
-    const p = (realizadoAnual / metaAnual) * 100;
-    if (!Number.isFinite(p)) return null;
-    return p;
-  }, [metaAnual, realizadoAnual]);
-
-  const expectedAnnualPct = useMemo(() => annualExpectedPercent(selectedYear), [selectedYear]);
-  const expectedAnnualValue = useMemo(() => (metaAnual > 0 ? metaAnual * (expectedAnnualPct / 100) : 0), [metaAnual, expectedAnnualPct]);
-  const annualPaceGapValue = useMemo(() => realizadoAnual - expectedAnnualValue, [realizadoAnual, expectedAnnualValue]);
-  const annualPaceGapPct = useMemo(() => {
-    if (metaAnual <= 0 || pctAnual == null) return null;
-    return pctAnual - expectedAnnualPct;
-  }, [metaAnual, pctAnual, expectedAnnualPct]);
-
-  const paceStatus = useMemo(() => getPaceStatus(annualPaceGapPct, metaAnual > 0), [annualPaceGapPct, metaAnual]);
-  const annualFillPct = useMemo(() => clamp(pctAnual ?? 0, 0, 100), [pctAnual]);
-  const annualExpectedMarkerPct = useMemo(() => clamp(expectedAnnualPct, 0, 100), [expectedAnnualPct]);
-
   const [leadSearch, setLeadSearch] = useState<string>("");
 
   const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
@@ -954,11 +678,6 @@ const Carteira: React.FC = () => {
   const [ceInadFlag, setCeInadFlag] = useState<boolean>(false);
   const [ceInadEm, setCeInadEm] = useState<string>("");
   const [ceInadRev, setCeInadRev] = useState<string>("");
-
-  const authIdFromSellerId = useMemo(() => {
-    if (!selectedSeller) return "";
-    return users.find((u) => u.id === selectedSeller)?.auth_user_id ?? "";
-  }, [selectedSeller, users]);
 
   const getAuthByUserId = (sellerUserId: string) => {
     if (!sellerUserId) return "";
@@ -1292,7 +1011,6 @@ const Carteira: React.FC = () => {
 
       setPendentes((pend ?? []) as Venda[]);
       setEncarteiradas((enc ?? []) as Venda[]);
-      await loadMetrics(selectedSeller, selectedYear);
     } catch (e: any) {
       alert(e.message ?? "Erro ao encarteirar.");
     }
@@ -1445,209 +1163,6 @@ const Carteira: React.FC = () => {
     }
   };
 
-  const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
-    if (sellerId) {
-      const authId = getAuthByUserId(sellerId);
-      let q = supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
-
-      if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
-      else q = q.eq("vendedor_id", sellerId);
-
-      const { data: metasRow } = await q.maybeSingle();
-
-      const m = metasRow
-        ? [
-            metasRow.m01,
-            metasRow.m02,
-            metasRow.m03,
-            metasRow.m04,
-            metasRow.m05,
-            metasRow.m06,
-            metasRow.m07,
-            metasRow.m08,
-            metasRow.m09,
-            metasRow.m10,
-            metasRow.m11,
-            metasRow.m12,
-          ].map((x: any) => Number(x || 0))
-        : Array(12).fill(0);
-
-      setMetaMensal(m);
-    } else {
-      const { data: metasAll } = await supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
-
-      const sum = Array(12).fill(0);
-      (metasAll ?? []).forEach((row: any) => {
-        const arr = [
-          row.m01,
-          row.m02,
-          row.m03,
-          row.m04,
-          row.m05,
-          row.m06,
-          row.m07,
-          row.m08,
-          row.m09,
-          row.m10,
-          row.m11,
-          row.m12,
-        ].map((x: any) => Number(x || 0));
-        for (let i = 0; i < 12; i++) sum[i] += arr[i];
-      });
-
-      setMetaMensal(sum);
-    }
-
-    const yearStart = new Date(`${year}-01-01T00:00:00-04:00`).toISOString();
-    const yearEnd = new Date(`${year + 1}-01-01T00:00:00-04:00`).toISOString();
-
-    let vendasQuery = supabase
-      .from("vendas")
-      .select("valor_venda, encarteirada_em, cancelada_em, vendedor_id, codigo, status")
-      .eq("status", "encarteirada")
-      .or(
-        `and(encarteirada_em.gte.${yearStart},encarteirada_em.lt.${yearEnd}),and(cancelada_em.gte.${yearStart},cancelada_em.lt.${yearEnd})`
-      );
-
-    const authIdToFilter = sellerId ? getAuthByUserId(sellerId) : "";
-    if (sellerId) {
-      vendasQuery = authIdToFilter
-        ? vendasQuery.eq("vendedor_id", authIdToFilter)
-        : vendasQuery.eq("vendedor_id", "__none__");
-    }
-
-    const { data: vendasMovimentos } = await vendasQuery;
-    const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
-    const series = portfolioMonthlySeries(vendasMovimentos ?? [], months);
-    setRealizadoMensal(series.map((row: any) => Number(row.liquido || 0)));
-  };
-
-  const loadMetaForForm = async (sellerId: string, year: number): Promise<void> => {
-    if (!sellerId) {
-      setMetaForm((prev) => ({ ...prev, vendedor_id: sellerId, ano: year, m: Array(12).fill(0) }));
-      return;
-    }
-
-    const authId = getAuthByUserId(sellerId);
-    let q = supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
-
-    if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
-    else q = q.eq("vendedor_id", sellerId);
-
-    const { data: metasRow } = await q.maybeSingle();
-
-    const arr = metasRow
-      ? [
-          metasRow.m01,
-          metasRow.m02,
-          metasRow.m03,
-          metasRow.m04,
-          metasRow.m05,
-          metasRow.m06,
-          metasRow.m07,
-          metasRow.m08,
-          metasRow.m09,
-          metasRow.m10,
-          metasRow.m11,
-          metasRow.m12,
-        ].map((x: any) => Number(x || 0))
-      : Array(12).fill(0);
-
-    setMetaForm((prev) => ({ ...prev, vendedor_id: sellerId, ano: year, m: arr }));
-  };
-
-  useEffect(() => {
-    if (!isAdmin && !selectedSeller) return;
-    loadMetrics(selectedSeller, selectedYear);
-  }, [selectedSeller, selectedYear, users, isAdmin]);
-
-  const donutAnualData = useMemo(() => {
-    if (metaAnual <= 0) {
-      if (realizadoAnual > 0) return [{ name: "Realizado", value: realizadoAnual }];
-      return [{ name: "Sem meta", value: 1 }];
-    }
-
-    if (realizadoAnual <= metaAnual) {
-      return [
-        { name: "Realizado", value: Math.max(0, realizadoAnual) },
-        { name: "Restante", value: Math.max(0, metaAnual - realizadoAnual) },
-      ];
-    }
-
-    return [
-      { name: "Meta", value: metaAnual },
-      { name: "Excedente", value: Math.max(0, realizadoAnual - metaAnual) },
-    ];
-  }, [metaAnual, realizadoAnual]);
-
-  const handleOpenMeta = () => {
-    if (!isAdmin) return;
-
-    if (!users || users.length === 0) {
-      alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
-      return;
-    }
-
-    setMetaForm({
-      vendedor_id: selectedSeller || "",
-      ano: selectedYear,
-      m: Array(12).fill(0),
-    });
-
-    if (selectedSeller) loadMetaForForm(selectedSeller, selectedYear);
-
-    setMetaOverlay({ open: true });
-  };
-
-  const saveMeta = async () => {
-    try {
-      if (!isAdmin) throw new Error("Somente administradores podem cadastrar metas.");
-      if (!metaForm.vendedor_id) throw new Error("Selecione o vendedor.");
-
-      const authId = getAuthByUserId(metaForm.vendedor_id);
-
-      const payload: any = {
-        vendedor_id: metaForm.vendedor_id,
-        auth_user_id: authId || null,
-        ano: metaForm.ano,
-        m01: metaForm.m[0],
-        m02: metaForm.m[1],
-        m03: metaForm.m[2],
-        m04: metaForm.m[3],
-        m05: metaForm.m[4],
-        m06: metaForm.m[5],
-        m07: metaForm.m[6],
-        m08: metaForm.m[7],
-        m09: metaForm.m[8],
-        m10: metaForm.m[9],
-        m11: metaForm.m[10],
-        m12: metaForm.m[11],
-      };
-
-      let q = supabase.from("metas_vendedores").select("id").eq("ano", metaForm.ano);
-      if (authId) q = q.or(`vendedor_id.eq.${metaForm.vendedor_id},auth_user_id.eq.${authId}`);
-      else q = q.eq("vendedor_id", metaForm.vendedor_id);
-
-      const { data: exists } = await q.maybeSingle();
-
-      if (exists?.id) {
-        const { error } = await supabase.from("metas_vendedores").update(payload).eq("id", exists.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("metas_vendedores").insert(payload);
-        if (error) throw error;
-      }
-
-      setMetaOverlay({ open: false });
-
-      if (selectedSeller === metaForm.vendedor_id && selectedYear === metaForm.ano) {
-        setMetaMensal([...metaForm.m]);
-      }
-    } catch (e: any) {
-      alert(e.message || "Erro ao salvar metas.");
-    }
-  };
-
   const openViewVenda = (v: Venda, lead?: Lead) => setViewVendaModal({ open: true, venda: v, lead });
 
   const openCotaEditor = (v: Venda) => {
@@ -1707,7 +1222,6 @@ const Carteira: React.FC = () => {
 
       await updateVenda(v.id, patch);
       await reloadEncarteiradas();
-      await loadMetrics(selectedSeller, selectedYear);
 
       closeCotaEditor();
     } catch (e: any) {
@@ -1807,168 +1321,21 @@ const Carteira: React.FC = () => {
           </button>
 
           {isAdmin && (
-            <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
-              Cadastrar Meta
-            </button>
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <span className="whitespace-nowrap">Vendedor</span>
+              <select
+                aria-label="Filtrar carteira por vendedor"
+                className="max-w-[240px] rounded-xl border bg-white px-3 py-2 text-gray-800"
+                value={selectedSeller}
+                onChange={(event) => setSelectedSeller(event.target.value)}
+              >
+                <option value="">Todos os vendedores</option>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.nome || u.email || u.id}</option>)}
+              </select>
+            </label>
           )}
         </div>
       </div>
-
-      <section className="space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h2 className="text-lg font-medium">Metas</h2>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
-            <select className="w-full border rounded-xl px-3 py-2" value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
-              {Array.from({ length: 6 }).map((_, i) => {
-                const y = new Date().getFullYear() - 1 + i;
-                return (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                );
-              })}
-            </select>
-
-            {isAdmin && (
-              <select className="w-full border rounded-xl px-3 py-2" value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)}>
-                <option value="">Todos</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.nome || u.email || u.id}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-          <div className="xl:col-span-2 rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.7fr_120px] gap-5 items-center">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-gray-900">Meta Anual • Encarteiramento líquido</div>
-
-                <div className="mt-3 text-sm text-gray-700 space-y-1">
-                  <div>
-                    Meta: <strong>{currency(metaAnual)}</strong>
-                  </div>
-                  <div>
-                    Realizado: <strong>{currency(realizadoAnual)}</strong>
-                  </div>
-                  <div>
-                    {metaAnual > 0 && realizadoAnual > metaAnual ? "Excedente" : "Falta"}:{" "}
-                    <strong>{metaAnual > 0 ? currency(Math.abs(metaAnual - realizadoAnual)) : "—"}</strong>
-                  </div>
-                </div>
-
-                <div className="mt-3 inline-flex items-center rounded-full bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
-                  {pctAnual == null ? "Sem percentual" : `Atingiu ${formatPctHuman(pctAnual, 1)}`}
-                </div>
-              </div>
-
-              <div className="min-w-0 flex flex-col justify-center">
-                <div className="flex items-center justify-between text-xs text-gray-600 mb-2 max-w-[420px] mx-auto w-full">
-                  <span>
-                    Atingido: <strong className="text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}</strong>
-                  </span>
-                  <span>
-                    Esperado: <strong className="text-gray-900">{formatPctHuman(expectedAnnualPct, 1)}</strong>
-                  </span>
-                </div>
-
-                <div className="relative h-5 rounded-full bg-gray-100 border overflow-hidden max-w-[420px] mx-auto w-full">
-                  <div
-                    className={`absolute left-0 top-0 h-full rounded-full ${paceStatus.barClass}`}
-                    style={{ width: `${annualFillPct}%` }}
-                    title={`Atingido: ${pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}`}
-                  />
-
-                  <div
-                    className="absolute top-[-4px] h-7 w-[3px] rounded-full bg-[#1E293F]"
-                    style={{ left: `calc(${annualExpectedMarkerPct}% - 1.5px)` }}
-                    title={`Esperado: ${formatPctHuman(expectedAnnualPct, 1)}`}
-                  />
-
-                  <div
-                    className="absolute top-[3px] h-3 w-3 rounded-full bg-white border-2 border-[#1E293F]"
-                    style={{ left: `calc(${annualExpectedMarkerPct}% - 6px)` }}
-                  />
-                </div>
-
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-600 max-w-[420px] mx-auto w-full">
-                  <div className="rounded-xl bg-gray-50 px-3 py-2">
-                    Esperado até hoje
-                    <div className="text-sm font-semibold text-gray-900">{currency(expectedAnnualValue)}</div>
-                  </div>
-
-                  <div className="rounded-xl bg-gray-50 px-3 py-2">
-                    Ritmo do jogo
-                    <div className={`text-sm font-semibold ${paceStatus.textClass}`}>
-                      {annualPaceGapValue >= 0 ? "+" : "-"}
-                      {currency(Math.abs(annualPaceGapValue))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className={`mt-3 rounded-2xl border px-3 py-2 max-w-[420px] mx-auto w-full ${paceStatus.pillClass}`}>
-                  <div className="text-sm font-bold">{paceStatus.label}</div>
-                  <div className="text-xs mt-0.5">{paceStatus.description}</div>
-                </div>
-              </div>
-
-              <div className="h-28 w-28 relative mx-auto shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={donutAnualData} innerRadius={40} outerRadius={54} dataKey="value" stroke="none">
-                      {donutAnualData.map((d, i) => {
-                        if (metaAnual <= 0) return <Cell key={`anual-${i}`} fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"} />;
-                        if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`anual-${i}`} fill="#1E293F" />;
-                        if (d.name === "Restante") return <Cell key={`anual-${i}`} fill="#A11C27" />;
-                        return <Cell key={`anual-${i}`} fill="#B5A573" />;
-                      })}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-
-                <div className="absolute inset-0 grid place-items-center pointer-events-none">
-                  <div className="text-sm font-bold text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 0)}</div>
-                </div>
-              </div>
-            </div>
-
-            {isAdmin && selectedSeller && (
-              <div className="mt-3 text-[11px] text-gray-500">
-                Vendedor: <strong className="text-gray-800">{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong>
-              </div>
-            )}
-          </div>
-
-          <div className="xl:col-span-2">
-            <AtingimentoMeses selectedYear={selectedYear} metas={metaMensal} realizados={realizadoMensal} />
-          </div>
-        </div>
-
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-sm font-semibold text-gray-900">Metas mensais</div>
-            <div className="text-xs text-gray-500">Ano {selectedYear}</div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-            {MONTHS.map((m, idx) => (
-              <MiniDonut key={m} label={m} year={selectedYear} meta={metaMensal[idx] || 0} realizado={realizadoMensal[idx] || 0} />
-            ))}
-          </div>
-        </div>
-
-        {isAdmin && selectedSeller && (
-          <div className="text-xs text-gray-500">
-            Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> • auth_user_id:{" "}
-            <strong>{authIdFromSellerId || "—"}</strong>
-          </div>
-        )}
-      </section>
 
       <div className="flex items-center gap-3">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar cliente pelo nome…" className="w-full border rounded-xl px-3 py-2 outline-none focus:ring" />
@@ -2428,97 +1795,6 @@ const Carteira: React.FC = () => {
               </button>
               <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={handleTransferSave}>
                 Confirmar Transferência
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {metaOverlay.open && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xl font-semibold">Cadastrar Meta</h3>
-              <button onClick={() => setMetaOverlay({ open: false })} className="text-gray-500 hover:text-gray-800">
-                ✕
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-2">
-                <label className="text-sm text-gray-600">Vendedor</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={metaForm.vendedor_id}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setMetaForm((p) => ({ ...p, vendedor_id: id }));
-                    if (id) loadMetaForForm(id, metaForm.ano);
-                    else setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
-                  }}
-                  disabled={!isAdmin}
-                >
-                  <option value="">Selecione</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.nome || u.email || u.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-600">Ano</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={metaForm.ano}
-                  onChange={(e) => {
-                    const newYear = Number(e.target.value);
-                    setMetaForm((p) => ({ ...p, ano: newYear }));
-                    if (metaForm.vendedor_id) loadMetaForForm(metaForm.vendedor_id, newYear);
-                  }}
-                >
-                  {Array.from({ length: 6 }).map((_, i) => {
-                    const y = new Date().getFullYear() - 1 + i;
-                    return (
-                      <option key={y} value={y}>
-                        {y}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {MONTHS.map((m, i) => (
-                <div key={i}>
-                  <label className="text-sm text-gray-600">{m}</label>
-                  <input
-                    type="text"
-                    className="w-full border rounded-xl px-3 py-2"
-                    value={formatNumberBR(metaForm.m[i] || 0)}
-                    onChange={(e) =>
-                      setMetaForm((p) => {
-                        const arr = [...p.m];
-                        const raw = e.target.value;
-                        const normalized = raw.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
-                        const n = normalized ? Number(normalized) : 0;
-                        arr[i] = Number.isNaN(n) ? 0 : n;
-                        return { ...p, m: arr };
-                      })
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-end gap-3">
-              <button className="px-4 py-2 rounded-xl border" onClick={() => setMetaOverlay({ open: false })}>
-                Cancelar
-              </button>
-              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={saveMeta}>
-                Salvar
               </button>
             </div>
           </div>

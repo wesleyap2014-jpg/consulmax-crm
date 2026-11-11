@@ -1,6 +1,7 @@
 // src/pages/Planejamento.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import MetasComerciais from "@/components/planning/MetasComerciais";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -305,6 +306,7 @@ export default function Planejamento() {
   const [objections, setObjections] = useState<SalesObjection[]>([]);
 
   const [activeTab, setActiveTab] = useState<TabKey>("planejamento");
+  const [workspaceTab, setWorkspaceTab] = useState<"semanal" | "metas">("semanal");
   const [actionOpen, setActionOpen] = useState(false);
   const [strategyOpen, setStrategyOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<WeeklyPlanItem | null>(null);
@@ -1063,6 +1065,22 @@ Regras:
         </div>
       </div>
 
+      <div className="mb-5 flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm" role="tablist" aria-label="Áreas do planejamento comercial">
+        <button type="button" role="tab" aria-selected={workspaceTab === "semanal"}
+          onClick={() => setWorkspaceTab("semanal")}
+          className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${workspaceTab === "semanal" ? "bg-[#1E293F] text-white" : "text-slate-700 hover:bg-slate-100"}`}>
+          Sala de Guerra e Playbook
+        </button>
+        <button type="button" role="tab" aria-selected={workspaceTab === "metas"}
+          onClick={() => setWorkspaceTab("metas")}
+          className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${workspaceTab === "metas" ? "bg-[#A11C27] text-white" : "text-slate-700 hover:bg-slate-100"}`}>
+          Metas Comerciais
+        </button>
+      </div>
+
+      {workspaceTab === "metas" ? (
+        <MetasComerciais currentUser={currentUser} users={users} />
+      ) : (
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4">
         <div className="space-y-4">
           <Card>
@@ -1290,6 +1308,7 @@ Regras:
           </Card>
         </div>
       </div>
+      )}
 
       <Dialog open={actionOpen} onOpenChange={setActionOpen}>
         <DialogContent className="max-w-4xl w-[95vw]">

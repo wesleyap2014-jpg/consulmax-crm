@@ -1,6 +1,7 @@
 // Sala de Guerra Semanal: segunda planeja, sexta revisa.
 // Reaproveita weekly_plans e weekly_plan_items; históricos e playbooks anteriores são preservados no banco.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { useAccess } from "@/access/AccessContext";
 import { Button } from "@/components/ui/button";
@@ -543,10 +544,16 @@ export default function SalaDeGuerraSemanal() {
               <p className="mt-1 text-sm text-slate-200">Segunda a gente planeja. Sexta a gente revisa. Simples assim.</p>
             </div>
           </div>
-          <Button type="button" variant="secondary" onClick={() => setShowHistory(v => !v)}
-            className="h-10 shrink-0 gap-2 rounded-xl bg-white/10 text-white hover:bg-white/20">
-            <History className="h-4 w-4" /> {showHistory ? "Ocultar histórico" : "Histórico de semanas"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to="/metas-comerciais"
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/20 bg-white px-4 text-sm font-bold text-[#1E293F] transition hover:bg-[#E0CE8C]">
+              <Target className="h-4 w-4" /> Metas Comerciais
+            </Link>
+            <Button type="button" variant="secondary" onClick={() => setShowHistory(v => !v)}
+              className="h-10 shrink-0 gap-2 rounded-xl bg-white/10 text-white hover:bg-white/20">
+              <History className="h-4 w-4" /> {showHistory ? "Ocultar histórico" : "Histórico de semanas"}
+            </Button>
+          </div>
         </div>
       </header>
 

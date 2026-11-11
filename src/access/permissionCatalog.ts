@@ -41,7 +41,7 @@ export const ACCESS_GUIDES: GuideDefinition[] = [
     group: "vendas",
     label: "Sala de Guerra",
     path: "/planejamento",
-    pathPrefixes: ["/planejamento"],
+    pathPrefixes: ["/planejamento", "/metas-comerciais"],
     description: "Planejamento comercial, metas, prioridades e acompanhamento da execução da semana.",
     information: [
       { key: "own_plan", label: "Ver o próprio planejamento" },

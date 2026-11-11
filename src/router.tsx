@@ -50,6 +50,7 @@ const PublicAreaCandidato = React.lazy(() => import("./pages/PublicAreaCandidato
 const PublicPoliticaPrivacidade = React.lazy(() => import("./pages/PublicPoliticaPrivacidade"));
 const FluxoDeCaixa = React.lazy(() => import("./pages/FluxoDeCaixa"));
 const Planejamento = React.lazy(() => import("./pages/SalaDeGuerraSemanal"));
+const MetasComerciaisPage = React.lazy(() => import("./pages/MetasComerciaisPage"));
 const CentralProjetos = React.lazy(() => import("./pages/CentralProjetos"));
 const MarketingCreativePipeline = React.lazy(() => import("./pages/MarketingCreativePipeline"));
 const Marketing = React.lazy(() => import("./pages/Marketing"));
@@ -127,6 +128,7 @@ export const router = createBrowserRouter([
           { path: "clientes", element: withSuspense(<Clientes />) },
           { path: "agenda", element: withSuspense(<Agenda />) },
           { path: "planejamento", element: withSuspense(<Planejamento />) },
+          { path: "metas-comerciais", element: withSuspense(<MetasComerciaisPage />) },
           { path: "central-projetos", element: withSuspense(<CentralProjetos />) },
           { path: "marketing/esteira", element: withSuspense(<MarketingCreativePipeline standalone />) },
           { path: "marketing", element: withSuspense(<Marketing />) },

@@ -32,6 +32,7 @@ import {
   UsersRound,
   ShieldCheck,
   SlidersHorizontal,
+  Target,
   Trophy,
   UserCog,
   Wallet,
@@ -271,7 +272,7 @@ function groupForPath(pathname: string): GroupKey | null {
 
   if (isAnyPathActive(pathname, ["/marketing", "/meus-parceiros"])) return "marketing";
   if (isAnyPathActive(pathname, [
-    "/planejamento", "/oportunidades", "/meus-leads", "/leads",
+    "/planejamento", "/metas-comerciais", "/oportunidades", "/meus-leads", "/leads",
     "/central-grupos", "/grupos-disponiveis", "/radar-ofertas",
     "/estoque-contempladas", "/simuladores", "/propostas",
   ])) return "vendas";
@@ -461,6 +462,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         icon: Briefcase,
         items: [
           { to: "/planejamento", label: "Sala de Guerra", icon: ClipboardList, end: true },
+          { to: "/metas-comerciais", label: "Metas Comerciais", icon: Target, end: true },
           { to: "/oportunidades", label: "Oportunidades", icon: Briefcase, showDot: navAlerts.oportunidades, end: true },
           { to: "/meus-leads", label: "Meus Leads", icon: UsersRound, end: true },
           { to: "/central-grupos", label: "Central de Grupos", icon: Database, end: true },

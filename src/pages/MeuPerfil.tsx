@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
-import { portfolioDay, portfolioDateInRange, portfolioMonthlySeries, portfolioMovementTotals } from "@/lib/portfolioMetrics";
+import { portfolioDay, portfolioMonthlySeries } from "@/lib/portfolioMetrics";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -417,10 +417,10 @@ export default function MeuPerfil() {
     const monthStart = startOfMonth(now);
     const nextMonth = addMonths(monthStart, 1);
     const monthStartYMD = ymd(monthStart);
-    const nextMonthYMD = ymd(nextMonth);
 
-    const salesMonth = data.sales.filter((s) => portfolioDateInRange(s.encarteirada_em, monthStartYMD, nextMonthYMD) && portfolioDay(s.encarteirada_em) !== nextMonthYMD);
-    const salesMonthTotal = portfolioMovementTotals(data.sales, monthStartYMD, nextMonthYMD.slice(0, 7) === monthStartYMD.slice(0, 7) ? nextMonthYMD : new Date(new Date(`${nextMonthYMD}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)).liquido;
+    const salesMonthKey = monthStartYMD.slice(0, 7);
+    const salesMonth = data.sales.filter((s) => portfolioDay(s.encarteirada_em)?.startsWith(salesMonthKey));
+    const salesMonthTotal = portfolioMonthlySeries(data.sales, [salesMonthKey])[0]?.liquido || 0;
     const ticket = salesMonth.length ? salesMonthTotal / salesMonth.length : 0;
 
     const wonMonth = data.opportunities.filter((o) => {
@@ -467,10 +467,7 @@ export default function MeuPerfil() {
     const chart = Array.from({ length: 12 }, (_, idx) => {
       const date = addMonths(startOfMonth(now), idx - 11);
       const start = ymd(date);
-      const end = ymd(addMonths(date, 1));
-      const sales = data.sales
-        .filter((s) => portfolioDay(s.encarteirada_em)?.startsWith(start.slice(0, 7)) || portfolioDay(s.cancelada_em)?.startsWith(start.slice(0, 7)));
-      const salesNet = portfolioMonthlySeries(sales, [start.slice(0, 7)])[0]?.liquido || 0;
+      const salesNet = portfolioMonthlySeries(data.sales, [start.slice(0, 7)])[0]?.liquido || 0;
       const goalRow = data.goals.find((g) => Number(g.ano) === date.getFullYear());
       const key = `m${String(date.getMonth() + 1).padStart(2, "0")}`;
       return {

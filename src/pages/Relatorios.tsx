@@ -1421,13 +1421,14 @@ export default function Relatorios() {
     }
 
     let q = buildBaseVendasQuery();
-    q = q.not("grupo", "is", null);
+    // Apenas cotas vigentes, contempladas ou não; nunca cotas canceladas.
+    q = q.not("grupo", "is", null).eq("codigo", "00").is("cancelada_em", null);
 
     const { data: vendasData, error: vendasErr } = await q;
     if (vendasErr) throw vendasErr;
 
     let rows = (vendasData || []) as VendaRow[];
-    rows = applyBaseFiltersToRows(rows);
+    rows = applyBaseFiltersToRows(rows).filter(isActive);
 
     const groupCodes = Array.from(new Set(rows.map((v) => normalizeGroupDigits(v.grupo)).filter(Boolean)));
     if (!groupCodes.length) {
@@ -1496,7 +1497,7 @@ export default function Relatorios() {
         v.grupo || group?.codigo || "",
         v.cota || "",
         safeNum(v.valor_venda),
-        Boolean(v.contemplada) ? "Contemplada" : "Não contemplada",
+        Boolean(v.contemplada) ? "Contemplada" : "Ativa",
         group?.prox_vencimento || "",
       ];
     });
@@ -1752,7 +1753,7 @@ export default function Relatorios() {
 
   const exportHint = useMemo(() => {
     if (exportType === "vencimento") {
-      return "Esse relatório busca os grupos em public.groups pela coluna prox_vencimento e localiza as cotas relacionadas a esses grupos.";
+      return "Esse relatório busca os grupos pelo próximo vencimento e inclui somente cotas ativas (código 00, sem cancelamento), contempladas ou não. Cotas canceladas são excluídas.";
     }
     if (exportType === "result_assembleia") {
       return "Esse relatório usa o intervalo da assembleia em public.assembly_results (coluna date) e consolida uma linha por cliente dentro do mesmo grupo, incluindo a referência salva no resultado da assembleia.";

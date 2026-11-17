@@ -513,7 +513,8 @@ function calcularSimulacao(i: CalcInput) {
   const novoCredito = Math.max(0, C - recursosOfertados);
   const saldoDevedorFinal = Math.max(0, valorCategoria - totalPagoSemSeguro - lanceOfertadoValor);
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
-  const parcelaLimitante = limitEnabled ? valorCategoria * limitadorPct : 0;
+  // Limitador pós-contemplação: percentual sobre o crédito contratado, sem taxas ou FR.
+  const parcelaLimitante = limitEnabled ? C * limitadorPct : 0;
   const isServicos = (segmento || "").toLowerCase().includes("serv");
 
   let aplicouLimitador = false;

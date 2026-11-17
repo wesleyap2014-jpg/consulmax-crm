@@ -115,7 +115,8 @@ function calcEmbracon(params: {
   const creditoLiquido = Math.max(0, credit - lanceEmbutidoValor);
   const saldoDevedor = Math.max(0, valorCategoria - totalPagoSemSeguro - lanceOfertadoValor);
   const novaParcelaSemLimite = saldoDevedor / prazoRestante;
-  const parcelaLimitante = rules.limit_enabled ? valorCategoria * limitadorPct : 0;
+  // Mesma base do Simulador Embracon: crédito contratado, sem taxa de adm. e FR.
+  const parcelaLimitante = rules.limit_enabled ? credit * limitadorPct : 0;
   const isServicos = normalizeText(table.segmento).includes("serv");
   const parcelaApos =
     !isServicos && rules.limit_enabled && parcelaLimitante > novaParcelaSemLimite

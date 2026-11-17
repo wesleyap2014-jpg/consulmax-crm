@@ -427,7 +427,7 @@ function Editor({
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <PercentField label="Limitador da parcela" value={limitador} onChange={setLimitador} />
+            <PercentField label="Limitador da parcela (% do crédito)" value={limitador} onChange={setLimitador} />
             <PercentField label="Seguro por parcela" value={seguro} onChange={setSeguro} />
             <div>
               <Label>Índice de correção</Label>

@@ -52,7 +52,7 @@ type CommissionBatchRow = { id: string; venda_id: string; vendedor_id: string; b
 type CommissionEntryRow = { id: string; batch_id: string; recipient_user_id?: string | null; recipient_unit_id?: string | null; business_unit_id?: string | null; status?: string | null };
 type CommissionEntryFlowRow = { id: string; entry_id: string; batch_id: string; valor_previsto: number | null; valor_pago: number | null; data_pagamento: string | null; status?: string | null };
 type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; reativada_em?: string | null; segmento?: string | null; produto?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null; telefone?: string | null };
-type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string }; boletoDue?: string };
+type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string }; boletoDue?: string; inadBucket?: string };
 type BoletoActivity = {
   group_id: string; due_date: string; administradora: string; group_code: string; venda_id: string;
   vendedor_id: string; cota: string | null; cliente_id: string | null; cliente_nome: string;
@@ -71,6 +71,13 @@ function boletoClients(rows: BoletoActivity[]) {
     clients.set(key, [...(clients.get(key) || []), row]);
   }
   return [...clients.entries()].sort((a,b) => Number(!a[1].some(r => r.status === "pendente")) - Number(!b[1].some(r => r.status === "pendente")) || a[1][0].cliente_nome.localeCompare(b[1][0].cliente_nome));
+}
+type InadActivity = { venda_id: string; cliente_id: string; cliente_nome: string; grupo: string; cota: string; administradora: string; dias: number; bucket: string; round_date: string; inad_since: string; status: "manual" | "automatico" | "pendente"; reason?: string; completed_at?: string };
+const INAD_REASONS: Record<string,string> = { telefone:"Cobrança realizada por telefone", outro_canal:"Cobrança realizada por outro canal", pagamento_informado:"Cliente informou pagamento", presencial:"Atendimento presencial", outro:"Outro motivo" };
+function inadClients(rows: InadActivity[]) {
+  const clients = new Map<string, InadActivity[]>();
+  for (const row of rows) { const key = row.cliente_id || row.venda_id; clients.set(key,[...(clients.get(key)||[]),row]); }
+  return [...clients.entries()].sort((a,b)=>Number(!a[1].some(r=>r.status==="pendente"))-Number(!b[1].some(r=>r.status==="pendente")) || a[1][0].cliente_nome.localeCompare(b[1][0].cliente_nome));
 }
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
@@ -301,6 +308,15 @@ export default function Inicio() {
   function openBoleto(due: string) {
     setBoletoDue(due); setBoletoSelected([]); setBoletoReason(""); setBoletoError(null);
   }
+  const [inadRows,setInadRows] = useState<InadActivity[]>([]);
+  const [inadBucket,setInadBucket] = useState<string|null>(null);
+  const [inadSelected,setInadSelected] = useState<string[]>([]);
+  const [inadReason,setInadReason] = useState("");
+  const [inadSaving,setInadSaving] = useState(false);
+  const [inadError,setInadError] = useState<string|null>(null);
+  const inadModalClients = useMemo(()=>inadClients(inadRows.filter(r=>r.bucket===inadBucket)),[inadRows,inadBucket]);
+  const inadPendingClients = inadModalClients.filter(([,rows])=>rows.some(r=>r.status==="pendente"));
+  function openInad(bucket:string) { setInadBucket(bucket); setInadSelected([]); setInadReason(""); setInadError(null); }
   const MY_DAY_PAGE_SIZE = 7;
   const [thoughtOfDay, setThoughtOfDay] = useState<string>(pickThought(rangeToday.ymd));
   const [carteiraHealth, setCarteiraHealth] = useState<CarteiraHealth>(EMPTY_CARTEIRA_HEALTH);
@@ -560,7 +576,7 @@ export default function Inicio() {
       .filter((e) => normalizeText(e.tipo) === "aniversario" && toYMD(e.inicio_at) === today)
       .map((e) => ({ id: e.cliente?.id || e.lead?.id || e.id, nome: e.cliente?.nome || e.lead?.nome || e.titulo || "Cliente", data_nascimento: e.inicio_at, telefone: e.cliente?.telefone || e.lead?.telefone || null }))
       .slice(0, 50) as ClienteRow[];
-    const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
+    const nextInadRows: InadActivity[] = [];
     const currentBillingRoundYMD = latestBillingRuleYMD(today);
     let carteiraHealthNext: CarteiraHealth = { ...EMPTY_CARTEIRA_HEALTH };
     const carteiraHealthListsNext: CarteiraHealthLists = {
@@ -582,6 +598,16 @@ export default function Inicio() {
       const { data: healthRowsRaw, error: healthErr } = await healthQ;
       if (healthErr) throw healthErr;
       const healthRows = (healthRowsRaw || []) as any as VendaMini[];
+      const manualInad = new Map<string,{reason:string;completed_at:string}>();
+      try {
+        for (let from=0;;from+=500) {
+          const {data,error} = await supabase.from("meu_dia_inad_conclusoes" as any).select("venda_id,inad_since,reason,completed_at").eq("round_date",currentBillingRoundYMD).order("venda_id").order("inad_since").range(from,from+499);
+          if(error) throw error;
+          const page=(data||[]) as unknown as {venda_id:string;inad_since:string;reason:string;completed_at:string}[];
+          page.forEach(r=>manualInad.set(r.venda_id+":"+r.inad_since,r));
+          if(page.length<500) break;
+        }
+      } catch(error) { manualInad.clear(); console.warn("[Inicio] Conclusões manuais de inadimplência indisponíveis",error); }
       const leadIds = Array.from(new Set(healthRows.map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
       const namesMap = await tryLoadLeadsMap(leadIds);
       const sellerIds = Array.from(new Set(healthRows.map((v) => String(v.vendedor_id || "")).filter(Boolean)));
@@ -705,12 +731,10 @@ export default function Inicio() {
             return phoneAliases.some((alias) => message.phoneAliases.has(alias));
           });
           // A Carteira continua inadimplente; só a tarefa de cobrança sai do Meu Dia.
-          if (eligibleForBillingRound && !regularizacaoConcluida) {
+          if (eligibleForBillingRound) {
             const bucket = dias <= 30 ? "1-30" : dias <= 60 ? "31-60" : "61+";
-            const cur = inadimplentesByBucket.get(bucket) || { count: 0, names: [] };
-            cur.count += 1;
-            if (cur.names.length < 5) cur.names.push(nome);
-            inadimplentesByBucket.set(bucket, cur);
+            const manual = manualInad.get(v.id+":"+inadStart);
+            nextInadRows.push({venda_id:v.id,cliente_id:leadId||v.id,cliente_nome:nome,grupo:v.grupo||"—",cota:v.cota||"—",administradora:v.administradora||"—",dias,bucket,round_date:currentBillingRoundYMD,inad_since:inadStart,status:manual?"manual":regularizacaoConcluida?"automatico":"pendente",reason:manual?.reason,completed_at:manual?.completed_at});
           }
 
           if (dias <= 30) {
@@ -871,19 +895,15 @@ export default function Inicio() {
       { key: "61+", title: "Inadimplência acima de 60 dias", desc: "Faixa crítica: MAX intensifica a comunicação e sinaliza risco de cancelamento." },
     ];
 
-    billingBuckets.forEach((b, idx) => {
-      const data = inadimplentesByBucket.get(b.key);
-      if (!data || data.count <= 0) return;
-      const nomes = data.names.length ? ` Clientes: ${data.names.join(", ")}${data.count > data.names.length ? ` +${data.count - data.names.length}` : ""}.` : "";
-      myDay.push({
-        id: `inad-${b.key}`,
-        priority: 65 + idx,
-        icon: "alert",
-        title: `${b.title}: ${data.count} cliente(s)`,
-        desc: `Rodada de cobrança de ${fmtDateBRFromYMD(currentBillingRoundYMD)}. Permanece pendente até o envio do modelo regularizacao_parcela_consorcio. ${b.desc}${nomes}`,
-        action: { label: "Abrir Carteira", to: "/carteira" },
-      });
+    billingBuckets.forEach((b,idx)=>{
+      const clients = inadClients(nextInadRows.filter(r=>r.bucket===b.key));
+      const pending = clients.filter(([,rows])=>rows.some(r=>r.status==="pendente"));
+      if(!pending.length) return;
+      myDay.push({id:`inad-${b.key}`,priority:65+idx,icon:"alert",title:`${b.title}: ${pending.length} cliente(s)`,
+        desc:`Rodada de cobrança de ${fmtDateBRFromYMD(currentBillingRoundYMD)}. ${clients.length-pending.length} de ${clients.length} cliente(s) concluído(s). ${b.desc}`,
+        inadBucket:b.key,action:{label:"Ver clientes"}});
     });
+    setInadRows(nextInadRows);
 
     birthdayToday.forEach((c) => myDay.push({ id: `birthday:${c.id}`, priority: 70, icon: "gift", title: `Hoje é aniversário do cliente ${c.nome}`, desc: "Parabenize-o e fortaleça o relacionamento.", action: { label: "Ver Clientes", to: "/clientes" } }));
     const commissionToday = scheduledByDate.get(today) || 0;
@@ -918,6 +938,18 @@ export default function Inicio() {
   function getScopes() { return me ? buildDashboardScope(me, users, units, vendorScope) : null; }
   async function reload(hard = false) { const scope = getScopes(); if (!scope) return; if (hard) setRefreshing(true); setErrMsg(null); try { await loadDashboard(scope); } catch (e) { console.error("[Inicio] loadDashboard error:", e); setErrMsg(humanErr(e)); } finally { if (hard) setRefreshing(false); } }
 
+  async function finishInadClients(keys:string[]) {
+    if(!inadBucket || !INAD_REASONS[inadReason] || !keys.length || inadSaving) return;
+    const targets=inadRows.filter(r=>r.bucket===inadBucket && r.status==="pendente" && keys.includes(r.cliente_id||r.venda_id));
+    if(!targets.length) return;
+    setInadSaving(true);setInadError(null);
+    try {
+      const {error}=await supabase.from("meu_dia_inad_conclusoes" as any).upsert(targets.map(r=>({round_date:r.round_date,venda_id:r.venda_id,inad_since:r.inad_since,reason:inadReason})),{onConflict:"round_date,venda_id,inad_since",ignoreDuplicates:true,defaultToNull:false});
+      if(error) throw error;
+      setInadSelected(prev=>prev.filter(k=>!keys.includes(k)));
+      await reload(false);
+    } catch(error) {setInadError(humanErr(error));} finally {setInadSaving(false);}
+  }
   async function finishBoletoClients(keys: string[]) {
     if (!boletoDue || !BOLETO_REASONS[boletoReason] || !keys.length || boletoSaving) return;
     const targets = boletoRows.filter(r => r.due_date === boletoDue && r.status === "pendente" && keys.includes(boletoClientKey(r)));
@@ -1083,8 +1115,8 @@ export default function Inicio() {
           <>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {myDaySlice.map((a) => (
-                <div key={a.id} className={`rounded-2xl border p-4 shadow-sm ${alertTone(a.icon)} ${a.boletoDue ? "cursor-pointer transition-colors hover:brightness-[0.98]" : ""}`}
-                  onClick={a.boletoDue ? () => openBoleto(a.boletoDue!) : undefined}>
+                <div key={a.id} className={`rounded-2xl border p-4 shadow-sm ${alertTone(a.icon)} ${a.boletoDue || a.inadBucket ? "cursor-pointer transition-colors hover:brightness-[0.98]" : ""}`}
+                  onClick={a.boletoDue ? () => openBoleto(a.boletoDue!) : a.inadBucket ? () => openInad(a.inadBucket!) : undefined}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 gap-3">
                       <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white/85 shadow-sm">
@@ -1101,6 +1133,7 @@ export default function Inicio() {
                         className="shrink-0 rounded-xl border border-white/70 bg-white/85 text-slate-900 shadow-sm hover:bg-white"
                         onClick={() => {
                           if (a.boletoDue) { openBoleto(a.boletoDue); return; }
+                          if (a.inadBucket) { openInad(a.inadBucket); return; }
                           if (a.action?.to) nav(a.action.to);
                           else if (a.action?.href) window.open(a.action.href, "_blank");
                         }}
@@ -1297,6 +1330,65 @@ export default function Inicio() {
               <Button className={primaryButton} disabled={!boletoReason || !boletoSelected.length || boletoSaving}
                 onClick={() => finishBoletoClients(boletoSelected)}>
                 {boletoSaving ? "Salvando..." : `Concluir selecionados (${boletoSelected.length})`}
+              </Button>
+            </div>}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={Boolean(inadBucket)} onOpenChange={open => { if (!open && !inadSaving) setInadBucket(null); }}>
+          <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-slate-950"><AlertTriangle className="h-5 w-5 text-[#A11C27]" /> Inadimplência · cobrança</DialogTitle>
+              <div className="text-sm text-slate-500">Rodada {fmtDateBRFromYMD(inadRows.find(r=>r.bucket===inadBucket)?.round_date)} · {inadModalClients.length-inadPendingClients.length} de {inadModalClients.length} cliente(s) concluído(s).</div>
+              <div className="text-xs text-slate-500">O modelo de regularização conclui a cobrança automaticamente. Concluir manualmente não baixa a inadimplência. Se a cota continuar em atraso, volta na próxima terça ou quinta.</div>
+            </DialogHeader>
+            {inadError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{inadError}</div>}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input type="checkbox" disabled={inadSaving || !inadPendingClients.length}
+                  checked={!!inadPendingClients.length && inadPendingClients.every(([key]) => inadSelected.includes(key))}
+                  onChange={e => setInadSelected(e.target.checked ? inadPendingClients.map(([key]) => key) : [])} />
+                Selecionar pendentes ({inadPendingClients.length})
+              </label>
+              <Button variant="outline" size="sm" onClick={() => {setInadBucket(null); nav("/carteira");}}>Abrir Carteira</Button>
+            </div>
+            <div className="space-y-2">
+              {inadModalClients.map(([key, rows]) => {
+                const pending = rows.some(r => r.status==="pendente");
+                const automatic = rows.every(r => r.status==="automatico");
+                return <div key={key} className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-start gap-3">
+                    <input type="checkbox" className="mt-1" aria-label={`Selecionar ${rows[0].cliente_nome}`} disabled={!pending || inadSaving}
+                      checked={pending ? inadSelected.includes(key) : true}
+                      onChange={e => setInadSelected(prev => e.target.checked ? [...new Set([...prev,key])] : prev.filter(k=>k!==key))} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-950">{rows[0].cliente_nome}</span>
+                        <Badge variant="outline" className={pending ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}>
+                          {pending ? "Pendente" : automatic ? "Concluído automaticamente" : "Concluído"}
+                        </Badge>
+                      </div>
+                      {rows.map(r => <div key={r.venda_id} className="mt-1 text-xs text-slate-600">
+                        {r.administradora} · Grupo {r.grupo} / Cota {r.cota || "—"} · {r.dias} dias · {r.status==="automatico" ? "WhatsApp" : r.status==="manual" ? INAD_REASONS[r.reason || ""] || "Conclusão manual" : "Pendente"}
+                        {r.completed_at ? ` · ${fmtDTForOffset(r.completed_at, PV_OFFSET_MIN)}` : ""}
+                      </div>)}
+                    </div>
+                    {pending && <Button size="sm" variant="outline" disabled={!inadReason || inadSaving} onClick={() => finishInadClients([key])}>Concluir</Button>}
+                  </div>
+                </div>;
+              })}
+              {!inadPendingClients.length && <div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">Todos os clientes desta faixa estão concluídos na rodada.</div>}
+            </div>
+            {!!inadPendingClients.length && <div className="sticky bottom-0 flex flex-col gap-2 border-t border-slate-200 bg-white pt-3 sm:flex-row sm:items-center">
+              <div className="flex-1">
+                <Select value={inadReason || undefined} onValueChange={setInadReason} disabled={inadSaving}>
+                  <SelectTrigger><SelectValue placeholder="Motivo da conclusão manual" /></SelectTrigger>
+                  <SelectContent>{Object.entries(INAD_REASONS).map(([value,label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <Button className={primaryButton} disabled={!inadReason || !inadSelected.length || inadSaving}
+                onClick={() => finishInadClients(inadSelected)}>
+                {inadSaving ? "Salvando..." : `Concluir selecionados (${inadSelected.length})`}
               </Button>
             </div>}
           </DialogContent>

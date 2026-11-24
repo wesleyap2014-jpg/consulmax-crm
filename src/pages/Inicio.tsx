@@ -52,7 +52,26 @@ type CommissionBatchRow = { id: string; venda_id: string; vendedor_id: string; b
 type CommissionEntryRow = { id: string; batch_id: string; recipient_user_id?: string | null; recipient_unit_id?: string | null; business_unit_id?: string | null; status?: string | null };
 type CommissionEntryFlowRow = { id: string; entry_id: string; batch_id: string; valor_previsto: number | null; valor_pago: number | null; data_pagamento: string | null; status?: string | null };
 type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; reativada_em?: string | null; segmento?: string | null; produto?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null; telefone?: string | null };
-type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
+type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string }; boletoDue?: string };
+type BoletoActivity = {
+  group_id: string; due_date: string; administradora: string; group_code: string; venda_id: string;
+  vendedor_id: string; cota: string | null; cliente_id: string | null; cliente_nome: string;
+  status: "manual" | "automatico" | "pendente"; reason: string | null; completed_at: string | null; completed_by: string | null;
+};
+const BOLETO_REASONS: Record<string, string> = {
+  boleto_pago: "Pagamento confirmado pelo cliente", cliente_app: "Cliente retirou pelo aplicativo",
+  outro_canal: "Enviado por outro canal", dispensado: "Envio dispensado / resolvido"
+};
+const boletoRowKey = (r: BoletoActivity) => [r.group_id, r.due_date, r.venda_id].join(":");
+const boletoClientKey = (r: BoletoActivity) => r.cliente_id || r.venda_id;
+function boletoClients(rows: BoletoActivity[]) {
+  const clients = new Map<string, BoletoActivity[]>();
+  for (const row of rows) {
+    const key = boletoClientKey(row);
+    clients.set(key, [...(clients.get(key) || []), row]);
+  }
+  return [...clients.entries()].sort((a,b) => Number(!a[1].some(r => r.status === "pendente")) - Number(!b[1].some(r => r.status === "pendente")) || a[1][0].cliente_nome.localeCompare(b[1][0].cliente_nome));
+}
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
 type CarteiraHealth = {
@@ -271,6 +290,17 @@ export default function Inicio() {
   const EVENTS_PAGE_SIZE = 7;
   const [myDayAlerts, setMyDayAlerts] = useState<MeuDiaAlert[]>([]);
   const [myDayPage, setMyDayPage] = useState(0);
+  const [boletoRows, setBoletoRows] = useState<BoletoActivity[]>([]);
+  const [boletoDue, setBoletoDue] = useState<string | null>(null);
+  const [boletoSelected, setBoletoSelected] = useState<string[]>([]);
+  const [boletoReason, setBoletoReason] = useState("");
+  const [boletoSaving, setBoletoSaving] = useState(false);
+  const [boletoError, setBoletoError] = useState<string | null>(null);
+  const boletoModalClients = useMemo(() => boletoClients(boletoRows.filter(r => r.due_date === boletoDue)), [boletoRows, boletoDue]);
+  const boletoPendingClients = boletoModalClients.filter(([, rows]) => rows.some(r => r.status === "pendente"));
+  function openBoleto(due: string) {
+    setBoletoDue(due); setBoletoSelected([]); setBoletoReason(""); setBoletoError(null);
+  }
   const MY_DAY_PAGE_SIZE = 7;
   const [thoughtOfDay, setThoughtOfDay] = useState<string>(pickThought(rangeToday.ymd));
   const [carteiraHealth, setCarteiraHealth] = useState<CarteiraHealth>(EMPTY_CARTEIRA_HEALTH);
@@ -787,8 +817,44 @@ export default function Inicio() {
 
     const myDay: MeuDiaAlert[] = [];
     if (pendingGroupRegistrationCount > 0) { const groups = Array.from(missingGroupsMap.values()).map((v) => ({ codigo: normalizeGroupDigits(v.grupo) })); myDay.push({ id: "pending-groups", priority: 10, icon: "alert", title: `Grupos pendentes de cadastro: ${groupListLabel(groups)}`, desc: "Há vendas em grupos que ainda não estão cadastrados na Gestão de Grupos.", action: { label: "Cadastrar Grupos", to: "/gestao-de-grupos" } }); }
-    const boletoGroups = groupRows.filter((g) => groupVencYMD(g) === tomorrow);
-    if (boletoGroups.length) myDay.push({ id: "boleto-groups", priority: 20, icon: "ticket", title: `Enviar boleto dos grupos ${groupListLabel(boletoGroups)}`, desc: `Vencimento previsto para ${fmtDateBRFromYMD(tomorrow)}.`, action: { label: "Ver Grupos", to: "/gestao-de-grupos" } });
+    let nextBoletoRows: BoletoActivity[] = [];
+    try {
+      // O banco mantém os ciclos e verifica o modelo enviado com a data de vencimento.
+      const pageSize = 500;
+      for (let from = 0; ; from += pageSize) {
+        let q = supabase.from("meu_dia_boleto_atividades" as any)
+          .select("group_id,due_date,administradora,group_code,venda_id,vendedor_id,cota,cliente_id,cliente_nome,status,reason,completed_by,completed_at")
+          .order("due_date").order("group_id").order("venda_id").range(from, from+pageSize-1);
+        q = applyVendedorScope(q);
+        const { data, error } = await q;
+        if (error) throw error;
+        const page = (data || []) as unknown as BoletoActivity[];
+        nextBoletoRows.push(...page);
+        if (page.length < pageSize) break;
+      }
+      const dueDates = Array.from(new Set(nextBoletoRows.map(r => r.due_date))).sort();
+      for (const due of dueDates) {
+        const rows = nextBoletoRows.filter(r => r.due_date === due);
+        const clients = boletoClients(rows);
+        const pending = clients.filter(([, items]) => items.some(r => r.status === "pendente"));
+        if (!pending.length) continue;
+        const codes = Array.from(new Set(pending.flatMap(([, items]) => items.filter(r => r.status === "pendente").map(r => r.group_code))));
+        myDay.push({ id: "boleto-groups:"+due, priority: 20, icon: "ticket",
+          title: `Enviar boleto dos grupos ${groupListLabel(codes.map(codigo => ({codigo})))}`,
+          desc: `Vencimento previsto para ${fmtDateBRFromYMD(due)}. ${clients.length-pending.length} de ${clients.length} cliente(s) concluído(s).`,
+          boletoDue: due, action: { label: "Ver clientes" } });
+      }
+      setBoletoRows(nextBoletoRows);
+    } catch (error) {
+      // Em falha de carregamento, o alerta original continua visível; não presumimos conclusão.
+      console.warn("[Inicio] Não foi possível carregar atividades de boleto:", error);
+      setBoletoRows([]);
+      const fallback = groupRows.filter(g => { const d=groupVencYMD(g); return !!d && d===tomorrow; });
+      if (fallback.length) myDay.push({id:"boleto-groups",priority:20,icon:"ticket",
+        title:`Enviar boleto dos grupos ${groupListLabel(fallback)}`,
+        desc:`Vencimento previsto para ${fmtDateBRFromYMD(tomorrow)}. Controle de conclusão temporariamente indisponível.`,
+        action:{label:"Ver Grupos",to:"/gestao-de-grupos"}});
+    }
     const vencimentoTodayGroups = groupRows.filter((g) => groupVencYMD(g) === today);
     if (vencimentoTodayGroups.length) myDay.push({ id: "vencimento-today-groups", priority: 25, icon: "ticket", title: `Vencimento dos grupos ${groupListLabel(vencimentoTodayGroups)}`, desc: "Verificar se há clientes com pagamento pendente e emitir alerta/recobrança.", action: { label: "Ver Grupos", to: "/gestao-de-grupos" } });
     const loteriaGroups = groupRows.filter((g) => { const sorteio = groupSorteioYMD(g); const asm = groupAsmYMD(g); if (!sorteio || !asm) return false; return today >= sorteio && today < asm && !hasDraw(drawsByDate, sorteio); });
@@ -851,6 +917,26 @@ export default function Inicio() {
 
   function getScopes() { return me ? buildDashboardScope(me, users, units, vendorScope) : null; }
   async function reload(hard = false) { const scope = getScopes(); if (!scope) return; if (hard) setRefreshing(true); setErrMsg(null); try { await loadDashboard(scope); } catch (e) { console.error("[Inicio] loadDashboard error:", e); setErrMsg(humanErr(e)); } finally { if (hard) setRefreshing(false); } }
+
+  async function finishBoletoClients(keys: string[]) {
+    if (!boletoDue || !BOLETO_REASONS[boletoReason] || !keys.length || boletoSaving) return;
+    const targets = boletoRows.filter(r => r.due_date === boletoDue && r.status === "pendente" && keys.includes(boletoClientKey(r)));
+    if (!targets.length) return;
+    setBoletoSaving(true); setBoletoError(null);
+    try {
+      const values = targets.map(r => ({group_id:r.group_id,due_date:r.due_date,venda_id:r.venda_id,reason:boletoReason}));
+      const { error } = await supabase.from("meu_dia_boleto_conclusoes" as any).upsert(values, {
+        onConflict: "group_id,due_date,venda_id", ignoreDuplicates:true, defaultToNull:false
+      });
+      if (error) throw error;
+      const keysDone = new Set(targets.map(boletoRowKey));
+      setBoletoRows(prev => prev.map(r => keysDone.has(boletoRowKey(r)) ? {...r,status:"manual",reason:boletoReason,completed_at:new Date().toISOString()} : r));
+      setBoletoSelected(prev => prev.filter(key => !keys.includes(key)));
+      await reload(false);
+    } catch (error) {
+      setBoletoError(humanErr(error));
+    } finally { setBoletoSaving(false); }
+  }
 
   useEffect(() => { let alive = true; (async () => { setLoading(true); setErrMsg(null); try { const { meRow, usersRows, unitsRows, initialScope } = await loadMeAndUsers(); if (!alive) return; setMe(meRow); setUsers(usersRows); setUnits(unitsRows); setVendorScope(initialScope); await loadDashboard(buildDashboardScope(meRow, usersRows, unitsRows, initialScope)); } catch (e) { console.error("[Inicio] init error:", e); if (alive) setErrMsg(humanErr(e)); } finally { if (alive) setLoading(false); } })(); return () => { alive = false; }; }, []);
   useEffect(() => { if (!me || !canManageTeam) return; if (vendorScope !== ALL && !selectableUsers.some((u) => u.id === vendorScope)) return; reload(false); }, [vendorScope]);
@@ -997,7 +1083,8 @@ export default function Inicio() {
           <>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {myDaySlice.map((a) => (
-                <div key={a.id} className={`rounded-2xl border p-4 shadow-sm ${alertTone(a.icon)}`}>
+                <div key={a.id} className={`rounded-2xl border p-4 shadow-sm ${alertTone(a.icon)} ${a.boletoDue ? "cursor-pointer transition-colors hover:brightness-[0.98]" : ""}`}
+                  onClick={a.boletoDue ? () => openBoleto(a.boletoDue!) : undefined}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 gap-3">
                       <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white/85 shadow-sm">
@@ -1013,6 +1100,7 @@ export default function Inicio() {
                         size="sm"
                         className="shrink-0 rounded-xl border border-white/70 bg-white/85 text-slate-900 shadow-sm hover:bg-white"
                         onClick={() => {
+                          if (a.boletoDue) { openBoleto(a.boletoDue); return; }
                           if (a.action?.to) nav(a.action.to);
                           else if (a.action?.href) window.open(a.action.href, "_blank");
                         }}
@@ -1154,6 +1242,65 @@ export default function Inicio() {
         </div>
 
         {MeuDiaCard}
+
+        <Dialog open={Boolean(boletoDue)} onOpenChange={open => { if (!open && !boletoSaving) setBoletoDue(null); }}>
+          <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-slate-950"><Ticket className="h-5 w-5 text-[#A11C27]" /> Enviar boleto dos grupos</DialogTitle>
+              <div className="text-sm text-slate-500">Vencimento {fmtDateBRFromYMD(boletoDue)} · {boletoModalClients.length-boletoPendingClients.length} de {boletoModalClients.length} cliente(s) concluído(s).</div>
+              <div className="text-xs text-slate-500">Os envios identificados no WhatsApp são concluídos automaticamente. Marque somente os clientes cujo envio já foi resolvido por outro meio. Isso não altera o pagamento na Carteira.</div>
+            </DialogHeader>
+            {boletoError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{boletoError}</div>}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input type="checkbox" disabled={boletoSaving || !boletoPendingClients.length}
+                  checked={!!boletoPendingClients.length && boletoPendingClients.every(([key]) => boletoSelected.includes(key))}
+                  onChange={e => setBoletoSelected(e.target.checked ? boletoPendingClients.map(([key]) => key) : [])} />
+                Selecionar pendentes ({boletoPendingClients.length})
+              </label>
+              <Button variant="outline" size="sm" onClick={() => {setBoletoDue(null); nav("/gestao-de-grupos");}}>Ver Grupos</Button>
+            </div>
+            <div className="space-y-2">
+              {boletoModalClients.map(([key, rows]) => {
+                const pending = rows.some(r => r.status==="pendente");
+                const automatic = rows.every(r => r.status==="automatico");
+                return <div key={key} className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-start gap-3">
+                    <input type="checkbox" className="mt-1" aria-label={`Selecionar ${rows[0].cliente_nome}`} disabled={!pending || boletoSaving}
+                      checked={pending ? boletoSelected.includes(key) : true}
+                      onChange={e => setBoletoSelected(prev => e.target.checked ? [...new Set([...prev,key])] : prev.filter(k=>k!==key))} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-950">{rows[0].cliente_nome}</span>
+                        <Badge variant="outline" className={pending ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}>
+                          {pending ? "Pendente" : automatic ? "Concluído automaticamente" : "Concluído"}
+                        </Badge>
+                      </div>
+                      {rows.map(r => <div key={boletoRowKey(r)} className="mt-1 text-xs text-slate-600">
+                        {r.administradora} · Grupo {r.group_code} / Cota {r.cota || "—"} · {r.status==="automatico" ? "WhatsApp" : r.status==="manual" ? BOLETO_REASONS[r.reason || ""] || "Conclusão manual" : "Pendente"}
+                        {r.completed_at ? ` · ${fmtDTForOffset(r.completed_at, PV_OFFSET_MIN)}` : ""}
+                      </div>)}
+                    </div>
+                    {pending && <Button size="sm" variant="outline" disabled={!boletoReason || boletoSaving} onClick={() => finishBoletoClients([key])}>Concluir</Button>}
+                  </div>
+                </div>;
+              })}
+              {!boletoPendingClients.length && <div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">Todos os clientes deste vencimento estão concluídos.</div>}
+            </div>
+            {!!boletoPendingClients.length && <div className="sticky bottom-0 flex flex-col gap-2 border-t border-slate-200 bg-white pt-3 sm:flex-row sm:items-center">
+              <div className="flex-1">
+                <Select value={boletoReason || undefined} onValueChange={setBoletoReason} disabled={boletoSaving}>
+                  <SelectTrigger><SelectValue placeholder="Motivo da conclusão manual" /></SelectTrigger>
+                  <SelectContent>{Object.entries(BOLETO_REASONS).map(([value,label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <Button className={primaryButton} disabled={!boletoReason || !boletoSelected.length || boletoSaving}
+                onClick={() => finishBoletoClients(boletoSelected)}>
+                {boletoSaving ? "Salvando..." : `Concluir selecionados (${boletoSelected.length})`}
+              </Button>
+            </div>}
+          </DialogContent>
+        </Dialog>
 
         <Card className={`${glassCard} border-[#B5A573]/40 bg-gradient-to-br from-white via-white to-[#F8F5EC]`}>
           <CardHeader className="pb-3">

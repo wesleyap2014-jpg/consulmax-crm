@@ -138,6 +138,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
 
   const canViewGuide = useCallback(
     (guideKey: string) => {
+      if (guideKey === "tabelas_comissoes") return isAdmin;
       if (isAdmin && guideKey === "usuarios") return true;
       return permissionAllowed(matrix, guideKey, "view");
     },

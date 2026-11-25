@@ -27,6 +27,7 @@ const BBConsorciosSimulator = React.lazy(() => import("./pages/simuladores/BBCon
 const Propostas = React.lazy(() => import("./pages/Propostas"));
 const PropostasProMax = React.lazy(() => import("./pages/PropostasProMax"));
 const PropostasCadenciado = React.lazy(() => import("./pages/PropostasCadenciado"));
+const TabelasComissoes = React.lazy(() => import("./pages/TabelasComissoes"));
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
 const Carteira = React.lazy(() => import("./pages/Carteira"));
 const Seguros = React.lazy(() => import("./pages/Seguros"));
@@ -196,6 +197,7 @@ export const router = createBrowserRouter([
           { path: "usuarios", element: withSuspense(<Usuarios />) },
           { path: "usuarios/perfis", element: withSuspense(<PerfisUsuarios />) },
           { path: "gestao-de-grupos", element: withSuspense(<GestaoDeGrupos />) },
+          { path: "tabelas-comissoes", element: withSuspense(<TabelasComissoes />) },
           { path: "parametros", element: withSuspense(<Parametros />) },
           { path: "lgpd", element: withSuspense(<TermsLGPD />) },
           { path: "links", element: withSuspense(<LinksUteis />) },

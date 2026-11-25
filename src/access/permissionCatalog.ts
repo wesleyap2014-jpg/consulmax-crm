@@ -365,6 +365,16 @@ export const ACCESS_GUIDES: GuideDefinition[] = [
     ],
   },
   {
+    key: "tabelas_comissoes",
+    group: "admin",
+    label: "Tabelas/Comissões",
+    path: "/tabelas-comissoes",
+    pathPrefixes: ["/tabelas-comissoes"],
+    description: "Configuração financeira da Matriz.",
+    information: [{ key: "view_values", label: "Consultar tabelas" }],
+    actions: [{ key: "edit", label: "Configurar tabelas" }],
+  },
+  {
     key: "parametros",
     group: "admin",
     label: "Parâmetros",

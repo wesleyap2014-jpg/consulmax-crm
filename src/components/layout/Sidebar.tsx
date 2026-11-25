@@ -281,7 +281,7 @@ function groupForPath(pathname: string): GroupKey | null {
     "/gestao-de-grupos", "/giro-de-carteira",
   ])) return "pos";
   if (isAnyPathActive(pathname, ["/ranking", "/relatorios", "/comissoes", "/fluxo-de-caixa"])) return "fin";
-  if (isAnyPathActive(pathname, ["/usuarios", "/parametros", "/rh", "/robos"])) return "admin";
+  if (isAnyPathActive(pathname, ["/usuarios", "/parametros", "/tabelas-comissoes", "/rh", "/robos"])) return "admin";
   if (isAnyPathActive(pathname, [
     "/central-projetos", "/gestao-de-projetos", "/projetos", "/links", "/procedimentos",
   ])) return "max";
@@ -511,6 +511,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         icon: SlidersHorizontal,
         items: [
           { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
+          { to: "/tabelas-comissoes", label: "Tabelas/Comissões", icon: Calculator, end: true },
           { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
           // Ferramenta administrativa preexistente, mantida apenas para usuário autorizado.
           { to: "/robos/area-restrita-maggi", label: "Robô Área Restrita", icon: Bot, onlyForWesley: true, end: true },
